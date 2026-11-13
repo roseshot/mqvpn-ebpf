@@ -23,7 +23,7 @@ const (
 	// upgrading an address configured by old releases. The flag MUST NOT
 	// be set: ordinary connected-prefix routes belong to the Linux kernel.
 	noPrefixRoute = 0x200
-	DefaultMTU = 1100
+	DefaultMTU = 1400
 	EthernetOverhead = 14
 )
 

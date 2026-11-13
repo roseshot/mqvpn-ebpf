@@ -2,6 +2,12 @@
 # DNS names below must resolve to the same host and match TLS certificate SAN.
 # listen: "0.0.0.0:443"  # Optional: default UDP/443
 
+# Optional: explicitly list WAN NICs (important for multi-uplink servers).
+# Defaults to the local public bind IP interface or main-table default route.
+# wan_interfaces: [enp1s0, enp2s0]
+# Automatic TUN MTU <= 1400; local WAN IPv4 MTU 1500 -> TUN 1400,
+# max_frame 1414. Omit mtu/max_frame for auto sizing.
+
 # Optional TCP/443 fallback. Independent TCP and UDP sockets can share 443.
 # tcp_fallback:
 #   enabled: true
@@ -22,22 +28,18 @@ instances:
     server_name: customer-a.vpn.example.com
     tun: mq0
     address: 10.77.0.1/24
-    mtu: 1100
     peers: /etc/mqvpn/peers-a.yaml
     path: /.well-known/masque/ethernet/
     cert: /etc/mqvpn/tls/a-server.crt
     key: /etc/mqvpn/tls/a-server.key
     client_ca: /etc/mqvpn/tls/a-clients.crt
-    max_frame: 1160
 
   - name: customer-b
     server_name: customer-b.vpn.example.com
     tun: mq1
     address: 10.77.0.1/24  # overlapping VPN segment; separate VRF
-    mtu: 1100
     peers: /etc/mqvpn/peers-b.yaml
     path: /.well-known/masque/ethernet/
     cert: /etc/mqvpn/tls/b-server.crt
     key: /etc/mqvpn/tls/b-server.key
     client_ca: /etc/mqvpn/tls/b-clients.crt
-    max_frame: 1160
