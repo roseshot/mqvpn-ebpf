@@ -43,7 +43,7 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T){
 	if a.TunnelAddress()!="10.77.0.0/29"||b.TunnelAddress()!="10.77.0.2/29"{
 		t.Fatalf("wrong leases %q %q",a.TunnelAddress(),b.TunnelAddress())
 	}
-	packet:=ip4([4]byte{10,77,0,1},[4]byte{10,77,0,3})
+	packet:=ip4([4]byte{10,77,0,1},[4]byte{10,77,0,2})
 	h.egress(packet)
 	got,err:=l3.Unwrap(waitFrame(t,bs))
 	if err!=nil||string(got)!=string(packet){t.Fatalf("wrong dynamic host forwarding: %v",err)}

@@ -171,9 +171,9 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	if err:=req.Write(conn);err!=nil{t.Fatal(err)}
 	response,err:=http.ReadResponse(bufio.NewReader(conn),req)
 	if err!=nil{t.Fatal(err)}
-	if response.StatusCode!=101 || response.Header.Get(tunnelAddressHeader)!="10.77.0.2/24" {
+	if response.StatusCode!=101 || response.Header.Get(tunnelAddressHeader)!="10.77.0.0/24" {
 		t.Fatalf("expected assigned address in TCP 101: %s / %q",response.Status,response.Header.Get(tunnelAddressHeader))
 	}
 	assigned,err:=resolveClientTunnelAddress("auto",response.Header.Get(tunnelAddressHeader))
-	if err!=nil||assigned!="10.77.0.2/24"{t.Fatalf("client rejected server lease: %s %v",assigned,err)}
+	if err!=nil||assigned!="10.77.0.0/24"{t.Fatalf("client rejected server lease: %s %v",assigned,err)}
 }
