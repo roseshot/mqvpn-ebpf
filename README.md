@@ -64,6 +64,51 @@ mqvpn-client \
   --cert /etc/mqvpn/b-client.crt --key /etc/mqvpn/b-client.key
 ~~~
 
+### Client connection IP versus authenticated tenant domain
+
+Clients can use a DNS name or an explicit server IP without changing the
+one-port Server configuration. **TLS SNI and HTTP/3 authority always
+refer to the selected Instance DNS name**, even when UDP dials a literal
+IP. TLS certificate chain and DNS SAN verification remain enabled.
+
+**DNS endpoint** (normal DNS resolution):
+
+~~~bash
+mqvpn-client \
+  --url https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --tun mq0 --ca /etc/mqvpn/a-ca.crt \
+  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+~~~
+
+**Pinned IP + tenant domain** (no DNS lookup for the remote endpoint):
+
+~~~bash
+mqvpn-client \
+  --url https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --connect-ip 198.51.100.10 \
+  --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --tun mq0 --ca /etc/mqvpn/a-ca.crt \
+  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+~~~
+
+**Literal IP URL + explicit tenant domain**:
+
+~~~bash
+mqvpn-client \
+  --url https://198.51.100.10:4433/.well-known/masque/ethernet/ \
+  --server-name customer-a.vpn.example.com \
+  --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --tun mq0 --ca /etc/mqvpn/a-ca.crt \
+  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+~~~
+
+IPv6 literals are also accepted (bracket the IPv6 address in the URL).
+IP-only connections without an authenticated tenant DNS name are rejected:
+all VPN instances use the same UDP port, so SNI is needed to select the
+correct instance and client CA. The explicit IP chooses only the QUIC UDP
+destination; it does not override TLS identity or VPN TUN routes.
+
 On separate client hosts, local `mq0` names may be the same. If both
 VPN instances are deployed on one client Linux host, use separate local
 TUNs and network routing domains as appropriate.
@@ -156,6 +201,17 @@ xdp:
 Install `clang`, `llvm`, `libbpf-dev` and `linux-libc-dev` to run
 `make bpf`; production Go binaries remain CGO-free.
 See [XDP control plane](docs/xdp-multi-instance.md).
+
+## Pull-request CI
+
+The GitHub Actions `Go` workflow runs on PRs targeting `main`, direct
+pushes to `main`, or manual dispatch. Feature-branch push events no longer
+cause duplicate PR checks. Three independent jobs run in parallel:
+**Native Go (CGO=0)** (build, tests, vet), **Race detector** (CGO enabled),
+and **eBPF ELF** (Clang compilation). The Go cache key uses `go.mod`.
+Superseded PR runs are canceled; CI permissions are read-only.
+
+The unconditional Dependabot auto-merge policy remains unchanged.
 
 ## Limitations
 
