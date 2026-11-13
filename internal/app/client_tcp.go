@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,12 +24,27 @@ type clientTCPOptions struct {
 	wanIP,wanInterface,tunName string
 	caFile,certFile,keyFile string
 	maxFrame int
+	tcpPort int
+}
+
+// tcpTarget supports an independent TCP port without weakening tenant TLS
+// SNI validation or the HTTP Host authority.
+func tcpTarget(o clientTCPOptions)(dialAddress,requestURL string,error){
+	host,_,err:=net.SplitHostPort(o.endpoint.dialAddress)
+	if err!=nil{return "","",err}
+	port:=strconv.Itoa(o.tcpPort)
+	u,err:=url.Parse(o.endpoint.requestURL)
+	if err!=nil{return "","",err}
+	u.Host=net.JoinHostPort(o.endpoint.serverName,port)
+	return net.JoinHostPort(host,port),u.String(),nil
 }
 
 // runTCPFallback sends HTTP/1.1 GET Upgrade and then exchanges RFC 9297
 // DATAGRAM Capsules bidirectionally over an authenticated TLS 1.3 stream.
 func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)error{
-	server,err:=net.ResolveTCPAddr("tcp",o.endpoint.dialAddress)
+	dialAddress,requestURL,err:=tcpTarget(o)
+	if err!=nil{return err}
+	server,err:=net.ResolveTCPAddr("tcp",dialAddress)
 	if err!=nil{return fmt.Errorf("resolve TCP fallback destination: %w",err)}
 	raw,ip,err:=wan.DialTCP(ctx,o.wanIP,o.wanInterface,server)
 	if err!=nil{return err}
@@ -55,7 +72,7 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if conn.ConnectionState().NegotiatedProtocol!="http/1.1" {
 		return fmt.Errorf("TCP fallback negotiated unexpected ALPN %q",conn.ConnectionState().NegotiatedProtocol)
 	}
-	request,err:=http.NewRequestWithContext(ctx,http.MethodGet,o.endpoint.requestURL,nil)
+	request,err:=http.NewRequestWithContext(ctx,http.MethodGet,requestURL,nil)
 	if err!=nil{return err}
 	request.Header.Set("Connection","Upgrade")
 	request.Header.Set("Upgrade","connect-ethernet")
@@ -77,6 +94,6 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if err!=nil{return err}
 	device,err:=tun.Open(o.tunName)
 	if err!=nil{return err}
-	logger.Info("TCP fallback VPN session established","remote",o.endpoint.dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)
+	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)
 	return p2mp.ClientPump(ctx,device,stream,o.maxFrame,logger)
 }

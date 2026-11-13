@@ -31,3 +31,19 @@ func TestTCPFallbackOnlyOnUDPHandshakeTimeout(t *testing.T){
 		t.Fatal("user cancellation must not trigger fallback")
 	}
 }
+
+
+func TestTCPPortIndependentOfUDPPort(t *testing.T){
+	ep,err:=planClientEndpoint("https://tenant.example.com:54433/.well-known/masque/ethernet/","198.51.100.77","")
+	if err!=nil{t.Fatal(err)}
+	dial,request,err:=tcpTarget(clientTCPOptions{endpoint:ep,tcpPort:443})
+	if err!=nil{t.Fatal(err)}
+	if dial!="198.51.100.77:443"||request!="https://tenant.example.com:443/.well-known/masque/ethernet/"{
+		t.Fatalf("wrong TCP default destination: %q %q",dial,request)
+	}
+	dial,request,err=tcpTarget(clientTCPOptions{endpoint:ep,tcpPort:8443})
+	if err!=nil{t.Fatal(err)}
+	if dial!="198.51.100.77:8443"||request!="https://tenant.example.com:8443/.well-known/masque/ethernet/"{
+		t.Fatalf("wrong custom TCP destination: %q %q",dial,request)
+	}
+}

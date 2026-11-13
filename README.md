@@ -228,6 +228,10 @@ mqvpn-client \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~
 
+An independent `--tcp-port` flag defaults to 443 even if the QUIC URL
+specifies a different UDP port. Use it when Server `tcp_fallback.listen`
+is configured to a nonstandard TCP port.
+
 Choose `--transport quic` to disable fallback, or `--transport tcp` to
 force TCP without an initial QUIC attempt. Both the pinned-IP
 (`--connect-ip`) and the literal-IP URL + `--server-name` forms

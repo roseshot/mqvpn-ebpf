@@ -108,3 +108,23 @@ provided. UDP/443 and TCP/443 are independent sockets and can both bind.
 Specifications:
 - CONNECT-ETHERNET draft-18: https://datatracker.ietf.org/doc/html/draft-ietf-masque-connect-ethernet-18
 - RFC 9297 Capsule Protocol: https://www.rfc-editor.org/rfc/rfc9297
+
+
+### Independent UDP/TCP port numbers
+
+Client `--url` selects the QUIC **UDP** port (443 if omitted).
+The independent `--tcp-port` selects the fallback **TCP** port
+(443 by default, regardless of the QUIC URL). For example:
+
+~~~bash
+mqvpn-client --transport auto --udp-dial-timeout 5s \
+  --url https://customer-a.vpn.example.com:54433/.well-known/masque/ethernet/ \
+  --tcp-port 8443 \
+  --source-interface enp1s0 --tun mq0 \
+  --ca /etc/mqvpn/a-ca.crt \
+  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+~~~
+
+Here QUIC attempts UDP/54433; TCP fallback connects to TCP/8443,
+with HTTP Host `customer-a.vpn.example.com:8443` and unchanged TLS SNI.
+Configure matching Server `listen` and `tcp_fallback.listen` addresses.

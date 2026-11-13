@@ -34,12 +34,14 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	maxFrame := fs.Int("max-frame", 1160, "maximum Ethernet frame bytes, excluding FCS")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
+	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	if err := fs.Parse(args); err != nil { return err }
 	if *maxFrame < 64 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
 	if *transportMode!="auto"&&*transportMode!="quic"&&*transportMode!="tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)",*transportMode)
 	}
 	if *udpTimeout<=0{return errors.New("--udp-dial-timeout must be positive")}
+	if *tcpPort<1||*tcpPort>65535{return fmt.Errorf("invalid --tcp-port %d",*tcpPort)}
 	if *wan1 == "" && *wan1Iface == "" { return errors.New("primary WAN requires --source-ip and/or --source-interface") }
 	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
 	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
@@ -47,7 +49,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	logger.Info("VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName,"transport",*transportMode)
 	tcpOptions:=clientTCPOptions{
-		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,
+		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,tcpPort:*tcpPort,
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
 	}
 	if *transportMode=="tcp" {
