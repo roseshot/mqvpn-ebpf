@@ -32,17 +32,12 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs.StringVar(wan2, "wan2-ip", "", "alias of --wan2")
 	fs.StringVar(wan2Iface, "wan2-iface", "", "alias of --wan2-interface")
 	tunName := fs.String("tun", "mq0", "single L3 TUN interface, IP-addressed and route-based")
-	groupCSV := fs.String("multicast-groups", "", "explicit IP multicast destinations, comma-separated, e.g. 224.0.0.251")
-	multicastPPS := fs.Int("multicast-pps", 20, "per-client multicast pps upper bound")
 	caFile := fs.String("ca", "", "CA verifying the remote server")
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
 	maxFrame := fs.Int("max-frame", 1160, "maximum Ethernet frame bytes, excluding FCS")
 	if err := fs.Parse(args); err != nil { return err }
 	if *maxFrame < 64 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
-	groups, err := p2mp.GroupList(*groupCSV)
-	if err != nil { return err }
-	if *multicastPPS < 1 || *multicastPPS > 1000 { return errors.New("--multicast-pps must be 1..1000") }
 	if *wan1 == "" && *wan1Iface == "" { return errors.New("primary WAN requires --source-ip and/or --source-interface") }
 	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
 	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
@@ -134,8 +129,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
-	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName, "groups", *groupCSV)
-	err = p2mp.ClientPump(ctx, dev, stream, *maxFrame, groups, *multicastPPS, logger)
+	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName)
+	err = p2mp.ClientPump(ctx, dev, stream, *maxFrame, logger)
 	close(done)
 	return err
 }

@@ -8,28 +8,32 @@ import (
 	"testing"
 )
 
-func TestConfigPermissions(t *testing.T){
+func TestConfigDestinationAndAuthentication(t *testing.T) {
 	a:=sha256.Sum256([]byte("peer-a"))
 	b:=sha256.Sum256([]byte("peer-b"))
-	conf,err:=Parse(FileConfig{Peers:[]PeerConfig{
-		{ID:"A",CertificateSHA256:hex.EncodeToString(a[:]),Routes:[]string{"10.77.0.2/32","192.168.20.0/24"},MulticastGroups:[]string{"224.0.0.251"}},
-		{ID:"B",CertificateSHA256:hex.EncodeToString(b[:]),Routes:[]string{"10.77.0.3/32","192.168.30.0/24"},MulticastGroups:[]string{"224.0.0.251"}},
+	c,err:=Parse(FileConfig{Peers:[]PeerConfig{
+		{ID:"A",CertificateSHA256:hex.EncodeToString(a[:]),Routes:[]string{"10.77.0.2/32","192.168.20.0/24"}},
+		{ID:"B",CertificateSHA256:hex.EncodeToString(b[:]),Routes:[]string{"10.77.0.3/32","192.168.30.0/24"}},
 	}})
 	if err!=nil{t.Fatal(err)}
-	if conf.Destination(netip.MustParseAddr("192.168.20.20")).ID!="A"{t.Fatal("bad site lookup")}
-	if conf.Destination(netip.MustParseAddr("10.77.0.3")).ID!="B"{t.Fatal("bad peer lookup")}
-	if !conf.Peers[0].Owns(netip.MustParseAddr("10.77.0.2")){t.Fatal("route ownership")}
-	if conf.Peers[0].Owns(netip.MustParseAddr("10.77.0.3")){t.Fatal("spoofed source allowed")}
-	if conf.PeerByCertificate([]byte("peer-a"))!=conf.Peers[0]{t.Fatal("fingerprint lookup")}
-	if conf.PeerByCertificate([]byte("unknown"))!=nil{t.Fatal("unauthorized peer allowed")}
+	if c.Destination(netip.MustParseAddr("10.77.0.3")).ID!="B"{t.Fatal("wrong session")}
+	if c.Destination(netip.MustParseAddr("192.168.20.44")).ID!="A"{t.Fatal("wrong LAN prefix")}
+	if c.PeerByCertificate([]byte("peer-a"))!=c.Peers[0]{t.Fatal("peer A not authenticated")}
+	if c.PeerByCertificate([]byte("unknown"))!=nil{t.Fatal("unknown certificate accepted")}
+	if c.Destination(netip.MustParseAddr("224.0.0.251"))!=nil{t.Fatal("multicast must use replication")}
 }
-
-func TestDuplicatePrefixesRejected(t *testing.T){
+func TestAmbiguousPeerDestinationsRejected(t *testing.T){
 	a:=strings.Repeat("a",64)
 	b:=strings.Repeat("b",64)
 	_,err:=Parse(FileConfig{Peers:[]PeerConfig{
 		{ID:"A",CertificateSHA256:a,Routes:[]string{"10.77.0.0/24"}},
 		{ID:"B",CertificateSHA256:b,Routes:[]string{"10.77.0.3/32"}},
 	}})
-	if err==nil{t.Fatal("overlap must fail")}
+	if err==nil{t.Fatal("overlapping destinations ambiguous")}
+}
+func TestDefaultRouteIsValidSessionDestination(t *testing.T){
+	_,err:=Parse(FileConfig{Peers:[]PeerConfig{
+		{ID:"all",CertificateSHA256:strings.Repeat("a",64),Routes:[]string{"0.0.0.0/0"}},
+	}})
+	if err!=nil{t.Fatal(err)}
 }

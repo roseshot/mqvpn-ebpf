@@ -1,40 +1,66 @@
-# mqvpn-ebpf
+# mqvpn-ebpf — transparent routed P2MP tunnel
 
-Experimental **route-based point-to-multipoint** MASQUE CONNECT-ETHERNET
-over encrypted HTTP/3 DATAGRAM + MPQUIC. Each VPN instance presents **one
-pre-existing, IP-addressed Linux TUN**, shared by its authenticated peers.
-There is no TAP bridge, Ethernet broadcast flooding, plain QUIC mode, or
-implemented AF_XDP userspace backend.
+Experimental Go CONNECT-ETHERNET over encrypted HTTP/3 DATAGRAM + Multipath
+QUIC. One VPN **instance** represents one IP-based P2MP virtual LAN:
 
-## Separation of responsibilities
+    mq0 (server, 10.77.0.1/24)
+      ↕ one shared Linux TUN
+      ├── authenticated MPQUIC site A (10.77.0.2, 192.168.20.0/24)
+      └── authenticated MPQUIC site B (10.77.0.3, 192.168.30.0/24)
 
-**Linux / network administrator owns network configuration.** The mqvpn
-daemon does **not** create or persist TUN devices, assign addresses, set MTU,
-install or delete IP routes, enable forwarding, modify ip rules, join IP
-multicast groups, or program kernel multicast routing/IGMP/MLD.
+Each server instance has a *single* IP-addressed TUN and accepts many
+clients. The server process may host multiple independent instances
+(mq0/UDP4433, mq1/UDP4434, etc.).
 
-Use systemd-networkd, NetworkManager, iproute2 or your own network management
-service to prepare each TUN and normal kernel routes **before** starting
-mqvpn. Daemon startup fails if its TUN does not exist, is DOWN or lacks an
-IP address.
+**This is a Layer-3 TUN overlay, not an Ethernet switch or Linux bridge.**
+"VPN LAN" means all peers participate in the same logical IP subnet and
+multicast/broadcast distribution domain, but Ethernet frames from the
+physical LAN (ARP/DHCP/unknown L2 broadcasts) are **not** bridged.
 
-The application still needs a **static authenticated peer-to-prefix
-forwarding map** to choose a remote MPQUIC session when Linux sends an IP
-packet to a single shared TUN. These entries are overlay destination
-selectors and ingress source-address authorizations, **not Linux routes**.
-This is inherent to a single-interface point-to-multipoint overlay.
+## Transparent inner traffic: no daemon ACLs
 
-The existing optional multicast relay in p2mp is likewise a **bounded
-data-plane forwarding mechanism** for explicitly configured peer groups,
-not management of kernel multicast memberships/routes. Configured IP
-multicast may be relayed, but there is no IGMP/MLD subscriber discovery and
-no LAN mDNS reflector. Site LAN mDNS needs a separate, carefully isolated
-mDNS reflector/service proxy; Linux or that external agent owns host
-multicast configuration.
+The daemon establishes authenticated CONNECT-ETHERNET/MPQUIC sessions
+and moves IP packets between Linux TUN and the corresponding QUIC stream.
+It does not classify inner traffic by source IP, destination transport
+port, protocol, mDNS content, TTL/HopLimit, or packet rate.
 
-## Linux interface and route preparation
+- **Unicast:** Linux decides whether to send a packet into TUN using its
+  own routing table. The daemon resolves the destination IP to a remote
+  session using the static peer-to-prefix map. This map is only next-hop
+  selection, *not* a source-address allowlist or kernel routing table.
+- **IP multicast and limited IP broadcast:** packets *received from the
+  TUN* are replicated to every connected peer in the same VPN instance.
+  Packets received from a peer are delivered to the server's TUN and to
+  every other peer in the instance. No membership lists, group filters,
+  mDNS-specific checks, TTL rewriting, or PPS rate limits are applied.
+- **No cross-instance replication:** separate server instances do not
+  share traffic. No physical-LAN L2 broadcast bridging occurs.
 
-Example for the first server instance:
+**Important operational consequence:** IP multicast/broadcast arriving
+at the VPN TUN can now be replicated to *every* connected peer.
+A broadcast/multicast flood *inside the VPN* can affect the entire VPN
+instance. Control it with the host firewall, traffic-control/qdisc, network
+multicast routing configuration, or an external multicast proxy—not with
+mqvpn packet filters. This is intentional per transparent-tunnel semantics.
+
+There is no IGMP/MLD membership discovery in mqvpn. The Linux networking
+stack or a dedicated service controls multicast subscription/routing. To
+carry local application-generated mDNS traffic over TUN, the OS must first
+send those packets to TUN. Physical LAN discovery requires an external
+mDNS reflector or service proxy; a TUN is not an Ethernet bridge.
+
+Transport still rejects malformed L3 packets and frames larger than the
+negotiated QUIC DATAGRAM / configured maximum Ethernet frame. This is a
+protocol/MTU limitation, not a user-configurable inner traffic policy.
+
+## The OS owns TUN addresses and all routing
+
+Daemon never creates TUN devices, configures IP addresses/MTU, edits Linux
+routes/rules, sets forwarding sysctls, manages multicast groups, or sets
+firewall/TC rules. Configure the TUN and routes *before* starting mqvpn via
+systemd-networkd, NetworkManager, iproute2, etc.
+
+Example **server**:
 
 ~~~bash
 sudo ip tuntap add dev mq0 mode tun
@@ -42,15 +68,11 @@ sudo ip address add 10.77.0.1/24 dev mq0
 sudo ip link set dev mq0 mtu 1100 up
 sudo ip route replace 192.168.20.0/24 dev mq0
 sudo ip route replace 192.168.30.0/24 dev mq0
-
-# Optional: kernel routed forwarding between sites.
+# Optional kernel routing between spokes:
 sudo sysctl -w net.ipv4.ip_forward=1
 ~~~
 
-For a second instance, separately configure mq1 with **another** tunnel
-network and routes; do not reuse an interface in two instances.
-
-Client-side TUN example (site A):
+Example **client A**:
 
 ~~~bash
 sudo ip tuntap add dev mq0 mode tun
@@ -59,15 +81,14 @@ sudo ip link set dev mq0 mtu 1100 up
 sudo ip route replace 192.168.30.0/24 dev mq0
 ~~~
 
-These are **administrator commands**, never executed by mqvpn. Make them
-persistent in your host network configuration. The tunnel IP and routes
-exist independently from the daemon's lifetime; it only opens /dev/net/tun.
+If you want overlay multicast, configure the relevant Linux multicast
+routes externally (if necessary) so packets reach mq0. No daemon changes
+to the host routing or multicast control plane.
 
 ## Build
 
-Requires Linux amd64, Go 1.26+, a preconfigured TUN (/dev/net/tun) and
-permission to open it (typically CAP_NET_ADMIN). Bind-to-device for WAN
-paths may also require privilege.
+Linux amd64, Go 1.26+, /dev/net/tun, preconfigured UP TUN and permissions
+to attach the TUN; SO_BINDTODEVICE may need additional permissions.
 
 ~~~bash
 go mod tidy
@@ -76,9 +97,50 @@ go build -o mqvpn-client ./cmd/mqvpn-client
 go test -race ./...
 ~~~
 
-The combined command mqvpn server|client remains available.
+The compatibility CLI (mqvpn server|client) is retained.
 
-## Single server instance
+## Peer directory (session next-hop lookup)
+
+Server file: /etc/mqvpn/peers.json, format in
+[configs/peers.example.json](configs/peers.example.json).
+Each peer has an **mTLS client certificate SHA-256 DER fingerprint**
+and a list of destination IP prefixes sent to that client. mTLS is required
+to authenticate tunnel sessions; inner IP packets receive no daemon ACLs.
+
+~~~json
+{
+  "peers": [
+    {
+      "id": "site-a",
+      "certificate_sha256": "<64-digit certificate SHA-256>",
+      "routes": ["10.77.0.2/32", "192.168.20.0/24"]
+    },
+    {
+      "id": "site-b",
+      "certificate_sha256": "<different 64-digit SHA-256>",
+      "routes": ["10.77.0.3/32", "192.168.30.0/24"]
+    }
+  ]
+}
+~~~
+
+The field "routes" is an overlay **IP-to-session destination map**, not
+kernel routes and not a source spoofing filter. A missing unicast mapping
+cannot be delivered because there is no next-hop session to select.
+Overlapping destination prefixes for different peers are rejected as
+ambiguous. Administrators remain responsible for kernel firewall/source
+validation if desired. This is separate from the VPN daemon.
+
+The previous "multicast_groups" and "multicast_pps" peer configuration
+fields are obsolete and have no effect; remove them from config files.
+
+To get the SHA-256 fingerprint for a test client certificate:
+
+~~~bash
+openssl x509 -in certs/client.crt -outform DER | sha256sum
+~~~
+
+## Single-instance server
 
 ~~~bash
 sudo ./mqvpn-server \
@@ -90,128 +152,55 @@ sudo ./mqvpn-server \
   --log-level info --log-format text
 ~~~
 
-No --tunnel-ip or --tunnel-mtu flags are accepted. They belong to the OS
-network configuration, not the tunnel daemon.
+## Multi-instance server
 
-The server verifies client TLS certificates and pins their DER SHA-256
-fingerprints to allowed site IP prefixes. The peer configuration format
-remains in [configs/peers.example.json](configs/peers.example.json).
-Overlapping peer prefixes across sites are rejected. Prefixes cover IP
-destination selection and anti-spoofing inside this one VPN instance.
-
-## Multi-instance server (one daemon process)
-
-Create the file
 [configs/server.instances.example.json](configs/server.instances.example.json)
-with entries such as:
-
-~~~json
-{
-  "instances": [
-    {
-      "name": "edge-a",
-      "listen": "0.0.0.0:4433",
-      "tun": "mq0",
-      "peers": "/etc/mqvpn/peers-a.json",
-      "cert": "/etc/mqvpn/tls/a.crt",
-      "key": "/etc/mqvpn/tls/a.key",
-      "client_ca": "/etc/mqvpn/tls/a-ca.crt"
-    },
-    {
-      "name": "edge-b",
-      "listen": "0.0.0.0:4434",
-      "tun": "mq1",
-      "peers": "/etc/mqvpn/peers-b.json",
-      "cert": "/etc/mqvpn/tls/b.crt",
-      "key": "/etc/mqvpn/tls/b.key",
-      "client_ca": "/etc/mqvpn/tls/b-ca.crt"
-    }
-  ]
-}
-~~~
-
-Start both instances:
+shows one process listening on separate UDP ports and attaching to separate
+pre-existing TUN devices. Each instance has its own certificates, peer
+directory and traffic forwarding domain.
 
 ~~~bash
 sudo ./mqvpn-server --config /etc/mqvpn/server.json \
   --log-level debug --log-format json
 ~~~
 
-Each instance has independent TLS credentials, peer authorization, QUIC
-listener, path handling, TUN and metrics. Log records include its instance
-name and TUN. A failure of one instance shuts down the other instances
-(clean fail-fast), rather than silently operating with partial coverage.
-A single daemon currently requires **distinct UDP ports and TUN names**
-per instance; no UDP listener sharing or live config reload is implemented.
+Instance startup fails if the TUN is unavailable. The server stops all
+instances if one fails unexpectedly. Static peer map updates require a
+process restart.
 
-## Client
+## Client (dual WAN)
 
 ~~~bash
 sudo ./mqvpn-client \
   --url https://vpn.local:4433/.well-known/masque/ethernet/ \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
   --wan2-ip 198.51.100.10 --wan2-interface enp2s0 \
-  --tun mq0 \
-  --max-frame 1160 \
+  --tun mq0 --max-frame 1160 \
   --ca /etc/mqvpn/ca.crt \
   --cert /etc/mqvpn/client.crt --key /etc/mqvpn/client.key \
   --log-level debug
 ~~~
 
-The local mq0 IP address, MTU, routes and any multicast routes must already
-exist. --source-interface / --wan2-interface bind the **underlay WAN UDP
-sockets** using SO_BINDTODEVICE; per-WAN source/policy routing required by
-your WAN topology remains the Linux administrator's responsibility.
-They do not implement a policy-based tunnel for inner VPN traffic.
+WAN source-interface options constrain the **outer** QUIC UDP paths via
+SO_BINDTODEVICE; Linux network administration is responsible for valid WAN
+source routes. The *inner* VPN still uses normal destination-based routing.
 
-## Structured slog logging
-
-Global flags accepted on both CLIs and on mqvpn subcommands:
-
-- --log-level debug|info|warn|error (default info)
-- --log-format text|json (default text)
-- MQVPN_LOG_LEVEL and MQVPN_LOG_FORMAT set defaults; CLI flags override them
-
-Example for systemd/journald:
-
-~~~bash
-MQVPN_LOG_LEVEL=warn MQVPN_LOG_FORMAT=json \
-  ./mqvpn-server --config /etc/mqvpn/server.json
-~~~
-
-Debug includes QUIC DATAGRAM drops and path diagnostics; info includes
-instance/session lifecycle. All levels use Go slog structured fields.
-
-## Multicast boundary
-
-The daemon **does not set up kernel multicast routes or subscriptions**.
-The optional overlay multicast forwarding logic only replicates packets
-that Linux has already delivered through the TUN, and only to the peer
-groups explicitly listed in peers.json and the client --multicast-groups
-flag. An ingress rate limiter bounds flooding. mDNS group 224.0.0.251
-requires UDP port 5353 and TTL 255. Ordinary L2 broadcast and unknown
-unicast are never flooded.
-
-For applications on the VPN TUN, the network administrator may need an
-explicit route to 224.0.0.251/32 via mq0, or a site-local mDNS reflector;
-the daemon will not install either. Cross-site LAN mDNS discovery is not
-provided by IP multicast routing alone, and external reflectors must have
-their own loop and traffic limits.
+The old --multicast-groups and --multicast-pps CLI flags are removed.
+Traffic is forwarded without inner multicast/packet rate policies.
 
 ## Current limitations
 
-- The N200 + Intel I226-V/LM 1–2.5 Gbps performance objective is unverified.
-- No AF_XDP production I/O backend; bpf/xdp_mqvpn.c is only a prototype.
-- HTTP/3 DATAGRAM cannot fragment full Ethernet frames. Current defaults:
-  tunnel IP MTU 1100 managed by Linux, max Ethernet frame 1160 in daemon.
-  Standard IPv6 link MTU 1280 needs a sufficiently large path PMTU.
-- No NHRP, direct spoke-to-spoke shortcuts, dynamic routing protocol,
-  IGMP/MLD membership tracking, or automatic reconnect.
-- Peer mapping and multicast allowlists are static (restart to reload).
-  Linux policy decisions, route management and kernel multicast tables
-  remain entirely outside mqvpn.
+- 1–2.5 Gbps Intel N200/I226 performance target is **not** measured.
+- AF_XDP Zero-Copy is not wired into Go; experimental XDP code exists.
+- QUIC DATAGRAM cannot transport Ethernet frames exceeding path PMTU;
+  default maximum frame=1160; default Linux TUN MTU in examples=1100.
+  IPv6 requires MTU >=1280 and sufficient QUIC underlay PMTU.
+- Full Cisco DMVPN/NHRP discovery/spoke-to-spoke direct paths, BGP and
+  dynamic peer learning are not implemented.
+- No LAN L2 bridging, no IGMP/MLD processing, no LAN mDNS reflector.
+- VPN-wide IP multicast/broadcast amplification can occur. This is a
+  shared IP overlay, not multicast isolation between sites.
 
-Protocols:
+Protocol specifications:
 - https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
 - https://www.rfc-editor.org/rfc/rfc10069.html
-- https://docs.kernel.org/networking/tuntap.html
