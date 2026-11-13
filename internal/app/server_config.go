@@ -29,7 +29,15 @@ type ServerInstance struct {
 	MaxFrame   int    `yaml:"max_frame,omitempty"`
 }
 
+// TCPFallbackConfig enables a separate TCP/443 TLS listener. It shares the
+// authenticated SNI instance registry, but not the UDP socket or MPQUIC.
+type TCPFallbackConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Listen string `yaml:"listen,omitempty"`
+}
+
 type ServerConfig struct {
+	TCPFallback TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen    string           `yaml:"listen,omitempty"`
 	XDP       *xdp.Config      `yaml:"xdp,omitempty"`
 	Instances []ServerInstance `yaml:"instances"`
@@ -44,6 +52,18 @@ func loadServerConfig(path string) (ServerConfig, error) {
 
 func (c *ServerConfig) Validate() error {
 	if c.Listen == "" { c.Listen = defaultServerListen }
+	if c.TCPFallback.Enabled && c.TCPFallback.Listen=="" {
+		c.TCPFallback.Listen="0.0.0.0:443"
+	}
+	if !c.TCPFallback.Enabled && c.TCPFallback.Listen!="" {
+		return errors.New("tcp_fallback.listen requires tcp_fallback.enabled: true")
+	}
+	if c.TCPFallback.Enabled {
+		_, tcpPort, err:=net.SplitHostPort(c.TCPFallback.Listen)
+		if err!=nil {return fmt.Errorf("invalid TCP fallback listen %q: %w",c.TCPFallback.Listen,err)}
+		n,err:=strconv.Atoi(tcpPort)
+		if err!=nil||n<1||n>65535{return fmt.Errorf("invalid TCP fallback port %q",tcpPort)}
+	}
 	_, port, err := net.SplitHostPort(c.Listen)
 	if err != nil { return fmt.Errorf("invalid shared listen %q: %w", c.Listen, err) }
 	n, err := strconv.Atoi(port)

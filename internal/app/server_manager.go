@@ -10,6 +10,7 @@ import (
 	"hash"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -34,6 +35,8 @@ type preparedInstance struct {
 
 type preparedServer struct {
 	listen string
+	tcpEnabled bool
+	tcpListen string
 	instances map[string]preparedInstance
 	xdp xdp.Config
 	fingerprint [32]byte
@@ -51,10 +54,13 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	if err := config.Validate(); err != nil { return preparedServer{}, err }
 	next := preparedServer{
 		listen: config.Listen,
+		tcpEnabled: config.TCPFallback.Enabled,
+		tcpListen: config.TCPFallback.Listen,
 		instances: make(map[string]preparedInstance, len(config.Instances)),
 	}
 	digest := sha256.New()
 	hashRecord(digest, []byte(config.Listen))
+	hashRecord(digest, []byte(fmt.Sprintf("tcp:%t:%s",config.TCPFallback.Enabled,config.TCPFallback.Listen)))
 	if config.XDP != nil {
 		next.xdp = *config.XDP
 		if len(next.xdp.Interfaces) > 0 {
@@ -148,6 +154,12 @@ type serverManager struct {
 	ctx context.Context
 	logger *slog.Logger
 	listen string
+	tcpEnabled bool
+	tcpListen string
+	tcpServer *http.Server
+	tcpListener net.Listener
+	tcpDone chan struct{}
+	tcpErr error
 	xdp *xdp.Controller
 	mux *serverMux
 	instances map[string]*liveInstance
@@ -202,6 +214,9 @@ func (m *serverManager) stop(name string) {
 }
 
 func (m *serverManager) close() {
+	if m.tcpServer!=nil { _ = m.tcpServer.Close() }
+	if m.tcpListener!=nil { _ = m.tcpListener.Close() }
+	if m.tcpDone!=nil { <-m.tcpDone }
 	if m.server != nil { _ = m.server.Close() }
 	if m.packetConn != nil { _ = m.packetConn.Close() }
 	if m.listenerDone != nil { <-m.listenerDone }
@@ -227,6 +242,9 @@ func (m *serverManager) apply(next preparedServer) error {
 	if m.listen != "" && m.listen != next.listen {
 		return fmt.Errorf("shared listen address change %q -> %q requires daemon restart", m.listen, next.listen)
 	}
+	if m.listen!="" && (m.tcpEnabled!=next.tcpEnabled || m.tcpListen!=next.tcpListen) {
+		return errors.New("TCP fallback enabled/listen changes require daemon restart")
+	}
 	ports, err := xdp.ListenersToPorts([]string{next.listen})
 	if err != nil { return err }
 	if err := m.xdp.Reconcile(next.xdp, ports); err != nil {
@@ -236,6 +254,8 @@ func (m *serverManager) apply(next preparedServer) error {
 	// if an OS-level resource failure stops an individual reload.
 	defer m.mux.Publish(m.instances)
 	m.listen = next.listen
+	m.tcpEnabled=next.tcpEnabled
+	m.tcpListen=next.tcpListen
 	names := make([]string, 0, len(m.instances))
 	for n := range m.instances { names = append(names, n) }
 	sort.Strings(names)
@@ -283,6 +303,9 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 	defer manager.close()
 	if err := manager.apply(initial); err != nil { return err }
 	if err := manager.startListener(); err != nil { return err }
+	if manager.tcpEnabled {
+		if err:=manager.startTCPListener();err!=nil{return err}
+	}
 	applied := initial.fingerprint
 
 	signals := make(chan os.Signal, 1)
@@ -315,6 +338,9 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 		case <-manager.listenerDone:
 			if ctx.Err() != nil { return nil }
 			return fmt.Errorf("shared QUIC listener terminated unexpectedly: %w", manager.listenerErr)
+		case <-manager.tcpDone:
+			if ctx.Err()!=nil{return nil}
+			return fmt.Errorf("TCP fallback listener terminated unexpectedly: %w",manager.tcpErr)
 		case live := <-manager.exits:
 			if active := manager.instances[live.prepared.spec.Name]; active == live {
 				return fmt.Errorf("VPN instance %s terminated: %w", live.prepared.spec.Name, live.err)
