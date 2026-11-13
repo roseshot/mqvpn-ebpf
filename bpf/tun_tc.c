@@ -143,7 +143,8 @@ static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
     }
     __u32 pos = tcp_off + 20;
     __u32 remaining = header_len - 20;
-#pragma unroll
+// A verifier-bounded loop; full unrolling of 40 iterations exceeds
+    // Clang's optimizer budget. TCX requires modern bounded-loop kernels.
     for (int i = 0; i < MAX_TCP_OPT_BYTES; i++) {
         if (!remaining)
             break;

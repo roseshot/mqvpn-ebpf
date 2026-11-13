@@ -22,6 +22,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 	"github.com/qoke/mp-quic-go/http3"
 	"gopkg.in/yaml.v3"
@@ -122,6 +123,13 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		specBytes, err := yaml.Marshal(spec)
 		if err != nil { return preparedServer{}, err }
 		hashRecord(hash, specBytes)
+		// Include the verified TC ELF bytes in the static digest, so
+		// replacing only this instance's BPF policy restarts only this TUN.
+		if spec.TC!=nil && spec.TC.Enabled(){
+			object,err:=os.ReadFile(spec.TC.Object)
+			if err!=nil{return preparedServer{},fmt.Errorf("instance %s TC ELF: %w",spec.Name,err)}
+			hashRecord(hash,object)
+		}
 		for _, path := range []string{spec.Cert, spec.Key, spec.ClientCA} {
 			b, err := os.ReadFile(path)
 			if err != nil { return preparedServer{}, fmt.Errorf("instance %s TLS file %q: %w", spec.Name, path, err) }
@@ -163,6 +171,7 @@ type liveInstance struct {
 	peerHash [32]byte
 	peerConfig *p2mp.Config
 	hub *p2mp.Hub
+	tc *tcebpf.Attachment
 	logger *slog.Logger
 	cancel context.CancelFunc
 	done chan struct{}
@@ -204,10 +213,14 @@ func (m *serverManager) start(p preparedInstance) error {
 	logger := m.logger.With("instance", p.spec.Name, "tun", p.spec.TUN)
 	hub, err := p2mp.New(device, p.peers, p.spec.MaxFrame, logger)
 	if err != nil { _ = device.Close(); return err }
+	var policy tcebpf.Config
+	if p.spec.TC!=nil{policy=*p.spec.TC}
+	tc,err:=tcebpf.Attach(p.spec.TUN,policy,p.spec.MTU)
+	if err!=nil {_ = device.Close();return fmt.Errorf("instance %s TUN TC eBPF: %w",p.spec.Name,err)}
 	ctx, cancel := context.WithCancel(m.ctx)
 	live := &liveInstance{
 		prepared: p, peerHash: p.peerHash, peerConfig: p.peers, hub: hub, logger: logger,
-		cancel: cancel, done: make(chan struct{}),
+		cancel: cancel, done: make(chan struct{}), tc: tc,
 	}
 	m.instances[p.spec.Name] = live
 	go func() {
@@ -230,6 +243,12 @@ func (m *serverManager) stop(name string) {
 	live.hub.CloseSessions()
 	live.cancel()
 	<-live.done
+	if live.tc!=nil {
+		if counters,err:=live.tc.Snapshot();err==nil {
+			live.logger.Info("TUN TC eBPF counters","ingress",counters.Ingress,"egress",counters.Egress)
+		}else{live.logger.Warn("read TUN TC eBPF counters","error",err)}
+		if err:=live.tc.Close();err!=nil{live.logger.Warn("detach TUN TC eBPF","error",err)}
+	}
 	live.logger.Info("VPN instance detached")
 }
 
