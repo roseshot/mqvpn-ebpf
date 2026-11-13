@@ -5,7 +5,6 @@ package routepush
 import (
 	"errors"
 	"net"
-	"net/netip"
 	"strings"
 	"testing"
 
