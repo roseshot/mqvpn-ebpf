@@ -29,7 +29,7 @@ type clientTCPOptions struct {
 
 // tcpTarget supports an independent TCP port without weakening tenant TLS
 // SNI validation or the HTTP Host authority.
-func tcpTarget(o clientTCPOptions)(dialAddress,requestURL string,error){
+func tcpTarget(o clientTCPOptions)(string,string,error){
 	host,_,err:=net.SplitHostPort(o.endpoint.dialAddress)
 	if err!=nil{return "","",err}
 	port:=strconv.Itoa(o.tcpPort)
