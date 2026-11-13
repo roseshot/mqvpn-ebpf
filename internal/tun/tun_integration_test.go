@@ -84,7 +84,11 @@ func TestIntegrationRoutedPoolUnicast(t *testing.T) {
 		if err!=nil{t.Fatalf("route lookup to %s: %v",ip,err)}
 		found:=false
 		for _,route:=range routes {
-			if route.LinkIndex==link.Attrs().Index && route.Type==1 {found=true}
+			// RouteGet does not populate the kernel RTN_UNICAST type in
+			// all netlink responses. A route in the main table via this
+			// TUN proves the destination was not captured by the kernel's
+			// local broadcast table (255).
+			if route.LinkIndex==link.Attrs().Index && route.Table==254 {found=true}
 		}
 		if !found{t.Fatalf("routed pool host %s was not unicast over TUN: %+v",ip,routes)}
 	}
