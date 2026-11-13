@@ -15,6 +15,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/capsule"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
+	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
@@ -92,10 +93,20 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 		return fmt.Errorf("TCP CONNECT-ETHERNET rejected: %s",response.Status)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	stream,err:=capsule.New(conn,br,o.maxFrame)
+	var underlays []mtu.Underlay
+	if o.tunMTU==0 {
+		link,err:=wan.SourceUnderlay(ip,o.wanInterface)
+		if err!=nil{return fmt.Errorf("TCP fallback WAN MTU: %w",err)}
+		underlays=append(underlays,link)
+	}
+	budget,err:=mtu.Plan(o.tunName,o.tunAddress,o.tunMTU,o.maxFrame,underlays)
 	if err!=nil{return err}
-	device,err:=tun.Open(o.tunName,o.tunAddress,o.tunMTU)
+	logger.Info("effective TCP fallback TUN MTU","mtu",budget.TUNMTU,
+		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
+	stream,err:=capsule.New(conn,br,budget.MaxFrame)
+	if err!=nil{return err}
+	device,err:=tun.Open(o.tunName,o.tunAddress,budget.TUNMTU)
 	if err!=nil{return err}
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)
-	return p2mp.ClientPump(ctx,device,stream,o.maxFrame,logger)
+	return p2mp.ClientPump(ctx,device,stream,budget.MaxFrame,logger)
 }

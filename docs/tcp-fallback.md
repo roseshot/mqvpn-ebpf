@@ -132,3 +132,12 @@ mqvpn-client --transport auto --udp-dial-timeout 5s \
 Here QUIC attempts UDP/54433; TCP fallback connects to TCP/8443,
 with HTTP Host `customer-a.vpn.example.com:8443` and unchanged TLS SNI.
 Configure matching Server `listen` and `tcp_fallback.listen` addresses.
+
+
+## Default TUN MTU on TCP
+
+When Client `--tun-mtu` and `--max-frame` are omitted, forced TCP
+fallback calculates its initial TUN MTU from the actual local primary
+WAN interface MTU, capped at 1400, and sets `max_frame=MTU+14`.
+This uses the same automatic sizing planner as UDP/MPQUIC, even though
+TCP can segment Capsules into stream bytes. TCP mode does not use WAN2.

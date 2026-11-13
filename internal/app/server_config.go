@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
-	"github.com/roseshot/mqvpn-ebpf/internal/tun"
+	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
@@ -42,6 +42,7 @@ type TCPFallbackConfig struct {
 type ServerConfig struct {
 	TCPFallback TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen    string           `yaml:"listen,omitempty"`
+	WANInterfaces []string `yaml:"wan_interfaces,omitempty"`
 	XDP       *xdp.Config      `yaml:"xdp,omitempty"`
 	Instances []ServerInstance `yaml:"instances"`
 }
@@ -78,23 +79,28 @@ func (c *ServerConfig) Validate() error {
 	}
 	if len(c.Instances) == 0 { return errors.New("at least one VPN instance is required") }
 	if len(c.Instances) > 128 { return errors.New("maximum 128 VPN instances") }
+	seenWAN:=map[string]bool{}
+	for _,name:=range c.WANInterfaces {
+		if strings.TrimSpace(name)!=name || name=="" || seenWAN[name] {
+			return fmt.Errorf("invalid or duplicate wan_interfaces entry %q",name)
+		}
+		seenWAN[name]=true
+	}
 	names, tuns, sni := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i := range c.Instances {
 		inst := &c.Instances[i]
 		if inst.Path == "" { inst.Path = defaultPath }
-		if inst.MaxFrame == 0 { inst.MaxFrame = 1160 }
-		if inst.MTU == 0 { inst.MTU = tun.DefaultMTU }
 		if inst.Name == "" || inst.ServerName == "" || inst.TUN == "" ||
 			inst.Peers == "" || inst.Cert == "" || inst.Key == "" || inst.ClientCA == "" {
 			return fmt.Errorf("instance %d requires name, server_name, tun, address, peers, cert, key and client_ca", i)
 		}
-		if err:=tun.Validate(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
+		if err:=mtu.ValidateRequest(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
 			return fmt.Errorf("instance %s: %w",inst.Name,err)
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
 		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
 		if !strings.HasPrefix(inst.Path, "/") { return fmt.Errorf("instance %s path must start with /", inst.Name) }
-		if inst.MaxFrame < 64 || inst.MaxFrame > 65535 { return fmt.Errorf("instance %s invalid max_frame", inst.Name) }
+		if inst.MaxFrame != 0 && (inst.MaxFrame < 64 || inst.MaxFrame > 65535) { return fmt.Errorf("instance %s invalid max_frame", inst.Name) }
 		if names[inst.Name] || tuns[inst.TUN] || sni[inst.ServerName] {
 			return fmt.Errorf("duplicate instance name, TUN or TLS server_name in %s", inst.Name)
 		}

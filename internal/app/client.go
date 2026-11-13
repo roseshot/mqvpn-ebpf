@@ -14,6 +14,7 @@ import (
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
+	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
@@ -29,17 +30,17 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
 	tunName := fs.String("tun", "mq0", "Linux L3 TUN name (created and configured by daemon)")
 	tunAddress := fs.String("tun-address", "", "required local TUN host IPv4/IPv6 CIDR")
-	tunMTU := fs.Int("tun-mtu", tun.DefaultMTU, "TUN MTU (default 1100)")
+	tunMTU := fs.Int("tun-mtu", 0, "TUN MTU (default auto, capped at 1400 based on WAN MTU)")
 	caFile := fs.String("ca", "", "CA verifying the remote server")
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
-	maxFrame := fs.Int("max-frame", 1160, "maximum Ethernet frame bytes, excluding FCS")
+	maxFrame := fs.Int("max-frame", 0, "maximum Ethernet frame bytes, 0 = computed TUN MTU + 14")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	if err := fs.Parse(args); err != nil { return err }
-	if *maxFrame < 64 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
-	if err:=tun.Validate(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
+	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
+	if err:=mtu.ValidateRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
 	if *transportMode!="auto"&&*transportMode!="quic"&&*transportMode!="tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)",*transportMode)
 	}
@@ -101,6 +102,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		return fmt.Errorf("QUIC dial: %w", err)
 	}
 	var second *quic.Transport
+	var secondIPForMTU net.IP
 	defer func() {
 		_ = conn.CloseWithError(0, "shutdown")
 		if second != nil { _ = second.Close() }
@@ -144,6 +146,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		otherUDP, secondIP, err := wan.Listen(ctx, *wan2, *wan2Iface, serverAddr)
 		if err != nil { return err }
 		logger.Info("secondary WAN bound", "source_ip", secondIP, "interface", *wan2Iface, "local", otherUDP.LocalAddr())
+		secondIPForMTU=secondIP
 		second = &quic.Transport{Conn: otherUDP}
 		path, err := conn.AddPath(second)
 		if err != nil { return fmt.Errorf("add second path: %w", err) }
@@ -154,12 +157,30 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		pathID, _ := path.ID()
 		logger.Info("second QUIC path validated", "path_id", pathID, "source", otherUDP.LocalAddr())
 	}
-	dev, err := tun.Open(*tunName,*tunAddress,*tunMTU)
+	// Compute the final TUN/frame budget only after both MPQUIC WAN paths
+	// have been selected. A slower WAN must not silently receive overlarge
+	// inner DATAGRAMs from the shared TUN.
+	var underlays []mtu.Underlay
+	if *tunMTU==0 {
+		primary,err:=wan.SourceUnderlay(selectedIP,*wan1Iface)
+		if err!=nil{return fmt.Errorf("primary WAN MTU: %w",err)}
+		underlays=append(underlays,primary)
+		if second!=nil {
+			secondary,err:=wan.SourceUnderlay(secondIPForMTU,*wan2Iface)
+			if err!=nil{return fmt.Errorf("secondary WAN MTU: %w",err)}
+			underlays=append(underlays,secondary)
+		}
+	}
+	budget,err:=mtu.Plan(*tunName,*tunAddress,*tunMTU,*maxFrame,underlays)
+	if err!=nil{return err}
+	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
+		"auto",budget.Auto,"wan_links",underlays)
+	dev, err := tun.Open(*tunName,*tunAddress,budget.TUNMTU)
 	if err != nil { return err }
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
-	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",*tunAddress,"mtu",*tunMTU)
-	err = p2mp.ClientPump(ctx, dev, stream, *maxFrame, logger)
+	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",*tunAddress,"mtu",budget.TUNMTU)
+	err = p2mp.ClientPump(ctx, dev, stream, budget.MaxFrame, logger)
 	close(done)
 	return err
 }

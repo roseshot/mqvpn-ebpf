@@ -3,6 +3,63 @@
 The mqvpn data plane carries a complete IP packet from the L3 TUN in a
 synthetic Ethernet frame for MASQUE CONNECT-ETHERNET.
 
+## WAN-based automatic TUN sizing
+
+When \`mtu\` and \`max_frame\` are omitted, both daemons use the actual
+**local WAN interface MTU** to calculate an initial conservative
+TUN packet budget; maximum auto TUN MTU is **1400**.
+
+~~~text
+TUN MTU = min(1400, minimum of each WAN's link MTU minus reserve)
+reserve = 100 B if outer WAN is IPv4
+reserve = 120 B if outer WAN is IPv6
+max_frame = TUN MTU + 14 B (synthetic Ethernet header)
+~~~
+
+This includes budget for outer IP, UDP, QUIC, HTTP/3, MASQUE and an
+additional margin for variable-length headers. It is a conservative
+startup heuristic, **not a measured end-to-end Internet PMTU**, QUIC
+DATAGRAM maximum, or negotiated peer MTU.
+
+| Local WAN interface | WAN MTU | Auto TUN MTU | Auto max_frame |
+| --- | ---: | ---: | ---: |
+| IPv4 Ethernet | 1500 | **1400** | **1414** |
+| IPv4 PPPoE | 1492 | 1392 | 1406 |
+| IPv4 4G/5G interface | 1420 | 1320 | 1334 |
+| IPv6 Ethernet | 1500 | 1380 | 1394 |
+
+All selected MPQUIC WANs contribute; the smallest budget wins.
+On the Client the actual source IP and its owning Linux interface
+determine which WAN MTUs are used. Forced TCP fallback uses only the
+primary WAN. On the Server a specific bind IP identifies the local
+interface; otherwise the main-table default route is consulted.
+For servers with two or more WAN uplinks, explicitly provide:
+
+~~~yaml
+wan_interfaces: [enp1s0, enp2s0]
+instances:
+  - name: a
+    server_name: a.example.com
+    tun: mq0
+    address: 10.77.0.1/24
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a.crt
+    key: /etc/mqvpn/tls/a.key
+    client_ca: /etc/mqvpn/tls/a-ca.crt
+~~~
+
+If no WAN is identifiable, automatic sizing fails with an actionable
+error instead of guessing or writing routes. TUN/IP/UP and the kernel
+connected-prefix route remain unchanged. Omitted YAML MTU values stay
+omitted so a Server reload can recalculate when WAN MTU changes; a
+changed effective MTU restarts only the affected instance, not the
+shared listener. Clients calculate at connection start and do not
+resize an established QUIC connection.
+
+An explicitly set \`mtu: 1360\` / \`--tun-mtu 1360\` bypasses WAN
+link-based sizing; the related \`max_frame\` / \`--max-frame\` defaults to
+\`MTU + 14\`. Explicit settings are **not proof of path support**.
+
 ## Two different targets
 
 | Desired result | Inner IPv4 TUN MTU | Inner IPv6 TUN MTU | Minimum `max_frame` |
@@ -50,10 +107,11 @@ and other extra encapsulation can reduce available PMTU.
 
 QUIC RFC 9221 DATAGRAMs **cannot be fragmented into multiple frames**.
 Path MTU discovery (DPLPMTUD) must have established a sufficiently
-large packet size on the used MPQUIC path. The daemon doesn't currently
-negotiate an inner TUN MTU from measured path PMTU or implement its own
-DATAGRAM fragmentation / inner PMTU adaptation. An overlarge send can
-be rejected/dropped, so don't force 1360 as a universal default.
+large packet size on the used MPQUIC path. The daemon only derives an initial TUN MTU from **local WAN link MTU**;
+it does not negotiate an inner TUN MTU from measured path PMTU or
+implement DATAGRAM fragmentation / inner PMTU adaptation. A large
+DATAGRAM may still be rejected/dropped even with a 1400 link-based
+default. Do not confuse this value with a proven path PMTU.
 
 ## Example: 1360 TUN MTU
 

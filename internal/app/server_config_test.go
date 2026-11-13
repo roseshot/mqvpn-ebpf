@@ -23,8 +23,8 @@ func TestSharedUDPConfigAndDefaults(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil { t.Fatal(err) }
 	if cfg.Listen != defaultServerListen { t.Fatalf("expected UDP/443, got %q", cfg.Listen) }
-	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 1160 {
-		t.Fatal("default path/frame missing")
+	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 0 || cfg.Instances[0].MTU != 0 {
+		t.Fatal("auto MTU/frame must stay omitted until runtime WAN discovery")
 	}
 }
 

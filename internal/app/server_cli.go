@@ -27,7 +27,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	serverName:=fs.String("server-name","","TLS SNI hostname unique to this VPN instance")
 	tunName:=fs.String("tun","","Linux TUN interface name (created or attached by daemon)")
 	address:=fs.String("address","","TUN local host IPv4/IPv6 CIDR (required)")
-	mtu:=fs.Int("mtu",0,"TUN MTU in bytes (default 1100)")
+	mtu:=fs.Int("mtu",0,"TUN MTU (0 or omitted = automatic based on WAN, capped at 1400)")
 	peers:=fs.String("peers","","peer destination mapping YAML path")
 	cert:=fs.String("cert","","TLS server certificate path")
 	key:=fs.String("key","","TLS private key path")

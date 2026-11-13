@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
+	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
@@ -59,6 +61,18 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		tcpListen: config.TCPFallback.Listen,
 		instances: make(map[string]preparedInstance, len(config.Instances)),
 	}
+	// Resolve the default TUN budget once for the whole shared listener.
+	// The smallest selected WAN budget applies to all tenants and both
+	// directions. Explicit per-instance MTU values bypass discovery.
+	var underlays []mtu.Underlay
+	for _,spec:=range config.Instances {
+		if spec.MTU==0 {
+			var err error
+			underlays,err=wan.ServerUnderlays(config.Listen,config.WANInterfaces)
+			if err!=nil {return preparedServer{},fmt.Errorf("discover server WAN MTU: %w",err)}
+			break
+		}
+	}
 	digest := sha256.New()
 	hashRecord(digest, []byte(config.Listen))
 	hashRecord(digest, []byte(fmt.Sprintf("tcp:%t:%s",config.TCPFallback.Enabled,config.TCPFallback.Listen)))
@@ -74,7 +88,11 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		if err != nil { return preparedServer{}, err }
 		hashRecord(digest, fields)
 	}
-	for _, spec := range config.Instances {
+	for _, rawSpec := range config.Instances {
+		spec:=rawSpec
+		if err:=resolveServerInstanceMTU(&spec,underlays);err!=nil {
+			return preparedServer{},fmt.Errorf("instance %s MTU: %w",spec.Name,err)
+		}
 		raw, err := os.ReadFile(spec.Peers)
 		if err != nil { return preparedServer{}, fmt.Errorf("instance %s peer YAML: %w", spec.Name, err) }
 		var file p2mp.FileConfig
@@ -353,4 +371,18 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 			reload()
 		}
 	}
+}
+
+
+// resolveServerInstanceMTU is the single point at which omitted YAML MTU
+// and max_frame values become runtime effective TUN settings. The YAML
+// source remains zero/omitted, so reloads can see changed WAN link MTUs.
+// A changed effective MTU restarts only that VPN instance, never the
+// shared UDP/TCP listener. No Linux route is written by discovery.
+func resolveServerInstanceMTU(spec *ServerInstance, links []mtu.Underlay) error {
+	result,err:=mtu.Plan(spec.TUN,spec.Address,spec.MTU,spec.MaxFrame,links)
+	if err!=nil{return err}
+	spec.MTU=result.TUNMTU
+	spec.MaxFrame=result.MaxFrame
+	return nil
 }

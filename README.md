@@ -34,7 +34,6 @@ instances:
     server_name: customer-a.vpn.example.com
     tun: mq0
     address: 10.77.0.1/24
-    mtu: 1100
     peers: /etc/mqvpn/peers-a.yaml
     cert: /etc/mqvpn/tls/a.crt
     key: /etc/mqvpn/tls/a.key
@@ -44,7 +43,6 @@ instances:
     server_name: customer-b.vpn.example.com
     tun: mq1
     address: 10.77.0.1/24  # same subnet; configure separate VRF externally
-    mtu: 1100
     peers: /etc/mqvpn/peers-b.yaml
     cert: /etc/mqvpn/tls/b.crt
     key: /etc/mqvpn/tls/b.key
@@ -59,7 +57,7 @@ Clients target different hostnames but the **same UDP port**:
 ~~~bash
 mqvpn-client \
   --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
-  --tun mq0 --tun-address 10.77.0.2/24 --tun-mtu 1100 --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --tun mq0 --tun-address 10.77.0.2/24 --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 
@@ -163,9 +161,9 @@ the daemon imposes no inner traffic ACLs, mDNS filters or PPS limits.
 Both Server and Client now create the named Linux L3 TUN on startup (or
 attach to an existing TUN) and configure its **explicit host IP/CIDR**.
 The Server YAML instance requires `address`, e.g.
-`address: 10.77.0.1/24`; `mtu` defaults to 1100. The Client
+`address: 10.77.0.1/24`; `mtu` defaults to WAN-aware automatic sizing capped at 1400. The Client
 requires `--tun-address 10.77.0.2/24` and accepts
-`--tun-mtu 1100`. No TUN IP is inferred from a Peer route map.
+`--tun-mtu` (optional override). No TUN IP is inferred from a Peer route map.
 
 The setup order is: **TUNSETIFF → set MTU → assign IP/CIDR with
 normal Linux address flags → set UP → verify address, MTU and UP**.
@@ -194,6 +192,64 @@ IPv6 addresses require an MTU >= 1280 and `max_frame >= mtu+14`
 for the synthetic Ethernet header. A QUIC path also needs adequate
 path MTU to carry the encapsulated datagram; this is not automatic
 fragmentation or PMTU discovery by the daemon.
+
+## Automatic WAN-aware MTU (1400 maximum by default)
+
+The Server and Client determine their **local WAN link MTUs** before
+starting each TUN. With the normal single-WAN IPv4 Internet link at
+MTU 1500 the automatic TUN MTU is **1400**, and `max_frame` is **1414**.
+The kernel-reported WAN MTU is a link property, not an observed
+Internet end-to-end Path MTU. The auto planner reserves 100 bytes for
+IPv4 WAN or 120 bytes for IPv6 WAN, including QUIC/MASQUE framing plus
+a safety margin. It caps the resulting TUN MTU at 1400.
+
+| WAN | WAN MTU | Auto TUN MTU | Auto `max_frame` |
+| --- | ---: | ---: | ---: |
+| IPv4 Ethernet | 1500 | 1400 | 1414 |
+| IPv4 PPPoE | 1492 | 1392 | 1406 |
+| IPv4 cellular | 1420 | 1320 | 1334 |
+| IPv6 Ethernet | 1500 | 1380 | 1394 |
+
+If MPQUIC has two WAN paths, use the **smaller** budget. With Server
+`listen: "0.0.0.0:443"`, the daemon uses main-table IPv4 default
+route NIC(s) unless you explicitly configure the top-level
+`wan_interfaces` list. When the listener is bound to an exact IP,
+the owning interface can be identified directly. Servers with multiple
+WANs or unusual routing should explicitly list every physical WAN
+interface that may receive VPN traffic:
+
+~~~yaml
+# Top-level YAML; optional but recommended on multi-WAN servers
+wan_interfaces: [enp1s0, wwan0]
+instances:
+  - name: customer-a
+    server_name: customer-a.vpn.example.com
+    tun: mq0
+    address: 10.77.0.1/24
+    # mtu and max_frame omitted: calculate at runtime
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a.crt
+    key: /etc/mqvpn/tls/a.key
+    client_ca: /etc/mqvpn/tls/a-ca.crt
+~~~
+
+Client uses the NIC actually owning the selected `--source-ip` or
+`--source-interface` address; both WAN sources are inspected before
+opening the TUN. TCP fallback uses the primary TCP WAN source. If a
+required WAN interface cannot be identified, automatic sizing fails
+rather than choosing an arbitrary MTU. Server polling/reload detects
+link-MTU changes and restarts affected TUN sessions, but the Client
+does **not** dynamically resize an established tunnel.
+
+`max_frame` is derived as `TUN MTU + 14` (synthetic Ethernet), not
+a fixed 1160-byte allowance. Manual `mtu` and `max_frame` remain
+available and must be mutually compatible.
+
+**This is not active PMTU discovery.** A downstream Internet hop can
+have a smaller MTU than the local NIC; QUIC DATAGRAM size is also
+bounded by negotiation and per-path DPLPMTUD. No guarantee is made
+that a 1400-byte inner packet will fit immediately after handshake.
+See [WAN MTU budgets and path constraints](docs/mtu-mss.md).
 
 ## MTU 1360 / TCP MSS 1360
 
@@ -238,7 +294,7 @@ mqvpn-server instance list --config /etc/mqvpn/server.yaml
 
 mqvpn-server instance upsert --config /etc/mqvpn/server.yaml \
   --name customer-c --server-name customer-c.vpn.example.com \
-  --tun mq2 --address 10.77.2.1/24 --mtu 1100 \
+  --tun mq2 --address 10.77.2.1/24 \
   --peers /etc/mqvpn/peers-c.yaml \
   --cert /etc/mqvpn/tls/c.crt --key /etc/mqvpn/tls/c.key \
   --client-ca /etc/mqvpn/tls/c-clients.crt
@@ -362,9 +418,9 @@ The unconditional Dependabot auto-merge policy remains unchanged.
 - SNI-based tenant demux requires DNS, per-instance server SAN, and
   unique `server_name`. Distinct TLS identities can share one UDP port.
 - Peer session selection is static; hot reload does not implement NHRP.
-- TUN default MTU remains 1100. MTU 1360 and larger frame budgets are
-  configurable, but require a sufficiently large underlay PMTU on every
-  active QUIC WAN path; standard IPv6 TUNs need MTU >=1280.
+- TUN MTU defaults to WAN-aware sizing capped at 1400 and auto
+  `max_frame=MTU+14`. Link MTU is not end-to-end PMTU: large DATAGRAMs
+  still require per-path PMTU and peer support; IPv6 TUN needs MTU >=1280.
 - No HTTP/2 TCP fallback or automatic mid-session failback; no LAN L2 bridge or mDNS reflector, no full AF_XDP Zero-Copy backend,
   no measured N200/I226 throughput, no real multi-tenant E2E test yet.
 
