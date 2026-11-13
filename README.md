@@ -13,7 +13,7 @@ independent `mqvpn-server` and `mqvpn-client` commands.
 
 Each instance has:
 - a unique `server_name` (DNS name used as **TLS SNI**, not an IP literal);
-- one externally configured IP-addressed TUN;
+- one daemon-created (or attached) Linux TUN with configured local IP/CIDR, MTU and UP state;
 - its own TLS certificate, verified client CA and Peer destination map;
 - its own P2MP sessions, so overlaps between instances are allowed.
 
@@ -33,6 +33,8 @@ instances:
   - name: customer-a
     server_name: customer-a.vpn.example.com
     tun: mq0
+    address: 10.77.0.1/24
+    mtu: 1100
     peers: /etc/mqvpn/peers-a.yaml
     cert: /etc/mqvpn/tls/a.crt
     key: /etc/mqvpn/tls/a.key
@@ -41,6 +43,8 @@ instances:
   - name: customer-b
     server_name: customer-b.vpn.example.com
     tun: mq1
+    address: 10.77.0.1/24  # same subnet; configure separate VRF externally
+    mtu: 1100
     peers: /etc/mqvpn/peers-b.yaml
     cert: /etc/mqvpn/tls/b.crt
     key: /etc/mqvpn/tls/b.key
@@ -55,7 +59,7 @@ Clients target different hostnames but the **same UDP port**:
 ~~~bash
 mqvpn-client \
   --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
-  --tun mq0 --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --tun mq0 --tun-address 10.77.0.2/24 --tun-mtu 1100 --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 
@@ -79,7 +83,7 @@ IP. TLS certificate chain and DNS SAN verification remain enabled.
 mqvpn-client \
   --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --tun mq0 --ca /etc/mqvpn/a-ca.crt \
+  --tun mq0 --tun-address 10.77.0.2/24 --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~
 
@@ -90,7 +94,7 @@ mqvpn-client \
   --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
   --connect-ip 198.51.100.10 \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --tun mq0 --ca /etc/mqvpn/a-ca.crt \
+  --tun mq0 --tun-address 10.77.0.2/24 --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~
 
@@ -101,7 +105,7 @@ mqvpn-client \
   --url https://198.51.100.10:443/.well-known/masque/ethernet/ \
   --server-name customer-a.vpn.example.com \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --tun mq0 --ca /etc/mqvpn/a-ca.crt \
+  --tun mq0 --tun-address 10.77.0.2/24 --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~
 
@@ -143,14 +147,53 @@ claim ambiguous overlapping destination prefixes.
 
 Linux overlapping subnets must be separated by VRF or network namespace,
 configured **outside mqvpn**. See
-[VRF route-based setup](docs/overlapping-subnets-vrf.md). The daemon never
-creates TUN devices, changes IP addresses, routes, multicast memberships,
-`ip rule`, firewall or routing tables.
+[VRF route-based setup](docs/overlapping-subnets-vrf.md). The daemon **creates or attaches TUN**, assigns its configured local
+IP/CIDR and MTU, and brings it UP. It sets Linux
+`IFA_F_NOPREFIXROUTE` to suppress automatic connected-prefix route
+installation. It does **not** install routes, `ip rule`, VRFs, namespace
+assignments, forwarding, multicast routes or firewall rules. The kernel
+may still create mandatory local-address routing entries.
 
 This remains a Layer-3 IP VPN LAN, not an Ethernet bridge. IP broadcast /
 multicast traffic entering one instance's TUN is replicated only within
 that instance. Physical LAN Ethernet broadcasts are not bridged, and
 the daemon imposes no inner traffic ACLs, mDNS filters or PPS limits.
+
+## Daemon-managed TUN setup — IP, MTU and UP only
+
+Both Server and Client now create the named Linux L3 TUN on startup (or
+attach to an existing TUN) and configure its **explicit host IP/CIDR**.
+The Server YAML instance requires `address`, e.g.
+`address: 10.77.0.1/24`; `mtu` defaults to 1100. The Client
+requires `--tun-address 10.77.0.2/24` and accepts
+`--tun-mtu 1100`. No TUN IP is inferred from a Peer route map.
+
+The setup order is: **TUNSETIFF → set MTU → assign IP/CIDR using
+IFA_F_NOPREFIXROUTE → set UP → verify address, MTU and UP**. This is
+implemented by Go with Linux rtnetlink, no shell commands and no CGO.
+The daemon does not invoke route, policy-rule, VRF, network-namespace,
+firewall, multicast-route or forwarding operations.
+
+The kernel still manages its local-address FIB entries. In particular,
+`IFA_F_NOPREFIXROUTE` prevents **automatic connected-prefix routes**
+from being installed when the address is assigned. To reach routed
+sites, the Linux administrator **must install appropriate routes** or
+manage network routing via their own service. The daemon does not
+do it on their behalf. Existing TUNs are not purged of other addresses;
+the configured IP is added/replaced. Newly created nonpersistent
+TUNs exist while the daemon holds their file descriptor.
+
+Linux needs `/dev/net/tun` and `CAP_NET_ADMIN` to create/configure
+interfaces, even though UDP/TCP port 443 may additionally require
+`CAP_NET_BIND_SERVICE`. A manually precreated persistent TUN is still
+supported for administrators who must attach it to a VRF *before*
+the daemon starts. The daemon then configures the IP/MTU/UP state.
+See [overlapping-subnet VRFs](docs/overlapping-subnets-vrf.md).
+
+IPv6 addresses require an MTU >= 1280 and `max_frame >= mtu+14`
+for the synthetic Ethernet header. A QUIC path also needs adequate
+path MTU to carry the encapsulated datagram; this is not automatic
+fragmentation or PMTU discovery by the daemon.
 
 ## Server CLI, YAML hot reload
 
@@ -167,7 +210,8 @@ mqvpn-server instance list --config /etc/mqvpn/server.yaml
 
 mqvpn-server instance upsert --config /etc/mqvpn/server.yaml \
   --name customer-c --server-name customer-c.vpn.example.com \
-  --tun mq2 --peers /etc/mqvpn/peers-c.yaml \
+  --tun mq2 --address 10.77.2.1/24 --mtu 1100 \
+  --peers /etc/mqvpn/peers-c.yaml \
   --cert /etc/mqvpn/tls/c.crt --key /etc/mqvpn/tls/c.key \
   --client-ca /etc/mqvpn/tls/c-clients.crt
 
@@ -248,8 +292,9 @@ The TCP transport is reliable and ordered and can suffer head-of-line
 blocking (especially for tunneled TCP). It does not use MPQUIC multi-path
 or the optional XDP acceleration. The data carried remains the same
 Context-ID-0 synthetic Ethernet frame from the existing L3 TUN shim.
-No inner packet ACL, multicast filter, or kernel network configuration is
-added by fallback.
+No inner packet ACL, multicast filter, or kernel route
+configuration is added by fallback. The common TUN setup creates or
+attaches the device and assigns only its configured address/MTU/UP state.
 
 See [docs/tcp-fallback.md](docs/tcp-fallback.md).
 
@@ -289,7 +334,7 @@ The unconditional Dependabot auto-merge policy remains unchanged.
 - SNI-based tenant demux requires DNS, per-instance server SAN, and
   unique `server_name`. Distinct TLS identities can share one UDP port.
 - Peer session selection is static; hot reload does not implement NHRP.
-- IPv4 TUN example MTU: 1100; CONNECT-ETHERNET over QUIC DATAGRAM cannot
+- IPv4 TUN default MTU: 1100; CONNECT-ETHERNET over QUIC DATAGRAM cannot
   fragment oversized Ethernet frames. Standard IPv6 needs >=1280 and
   sufficient underlay PMTU.
 - No HTTP/2 TCP fallback or automatic mid-session failback; no LAN L2 bridge or mDNS reflector, no full AF_XDP Zero-Copy backend,

@@ -22,6 +22,8 @@ import (
 type clientTCPOptions struct {
 	endpoint clientEndpoint
 	wanIP,wanInterface,tunName string
+	tunAddress string
+	tunMTU int
 	caFile,certFile,keyFile string
 	maxFrame int
 	tcpPort int
@@ -92,7 +94,7 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	_ = conn.SetReadDeadline(time.Time{})
 	stream,err:=capsule.New(conn,br,o.maxFrame)
 	if err!=nil{return err}
-	device,err:=tun.Open(o.tunName)
+	device,err:=tun.Open(o.tunName,o.tunAddress,o.tunMTU)
 	if err!=nil{return err}
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)
 	return p2mp.ClientPump(ctx,device,stream,o.maxFrame,logger)

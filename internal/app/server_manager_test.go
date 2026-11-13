@@ -55,6 +55,7 @@ func testServerFiles(t *testing.T) (ServerConfig, string) {
 		Listen: "0.0.0.0:4433",
 		Instances: []ServerInstance{{
 			Name: "edge-a", ServerName: "edge-a.example.test", TUN: "mq0",
+			Address:"10.77.0.1/24",
 			Peers: peerPath, Cert: certPath, Key: keyPath, ClientCA: certPath,
 		}},
 	}, peerPath

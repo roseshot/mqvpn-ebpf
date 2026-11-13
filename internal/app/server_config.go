@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
@@ -21,6 +22,8 @@ type ServerInstance struct {
 	Name       string `yaml:"name"`
 	ServerName string `yaml:"server_name"`
 	TUN        string `yaml:"tun"`
+	Address    string `yaml:"address"`
+	MTU        int    `yaml:"mtu,omitempty"`
 	Peers      string `yaml:"peers"`
 	Path       string `yaml:"path,omitempty"`
 	Cert       string `yaml:"cert"`
@@ -80,9 +83,13 @@ func (c *ServerConfig) Validate() error {
 		inst := &c.Instances[i]
 		if inst.Path == "" { inst.Path = defaultPath }
 		if inst.MaxFrame == 0 { inst.MaxFrame = 1160 }
+		if inst.MTU == 0 { inst.MTU = tun.DefaultMTU }
 		if inst.Name == "" || inst.ServerName == "" || inst.TUN == "" ||
 			inst.Peers == "" || inst.Cert == "" || inst.Key == "" || inst.ClientCA == "" {
-			return fmt.Errorf("instance %d requires name, server_name, tun, peers, cert, key and client_ca", i)
+			return fmt.Errorf("instance %d requires name, server_name, tun, address, peers, cert, key and client_ca", i)
+		}
+		if err:=tun.Validate(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
+			return fmt.Errorf("instance %s: %w",inst.Name,err)
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
 		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }

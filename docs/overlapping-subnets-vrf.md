@@ -21,10 +21,9 @@ sudo ip tuntap add dev mq1 mode tun
 sudo ip link set dev mq0 master vrf-a
 sudo ip link set dev mq1 master vrf-b
 
-sudo ip addr add 10.77.0.1/24 dev mq0
-sudo ip addr add 10.77.0.1/24 dev mq1
-sudo ip link set mq0 mtu 1100 up
-sudo ip link set mq1 mtu 1100 up
+# No ip addr/MTU/up commands here: the daemon will set those.
+# TUNs are precreated ONLY to let the administrator bind VRF masters first.
+# For deployments without VRFs, the daemon can create the TUNs itself.
 
 sudo ip route replace table 1001 192.168.20.0/24 dev mq0
 sudo ip route replace table 1002 192.168.20.0/24 dev mq1
@@ -45,6 +44,8 @@ instances:
   - name: customer-a
     server_name: customer-a.vpn.example.com
     tun: mq0
+    address: 10.77.0.1/24
+    mtu: 1100
     peers: /etc/mqvpn/peers-a.yaml
     cert: /etc/mqvpn/tls/a.crt
     key: /etc/mqvpn/tls/a.key
@@ -52,6 +53,8 @@ instances:
   - name: customer-b
     server_name: customer-b.vpn.example.com
     tun: mq1
+    address: 10.77.0.1/24
+    mtu: 1100
     peers: /etc/mqvpn/peers-b.yaml
     cert: /etc/mqvpn/tls/b.crt
     key: /etc/mqvpn/tls/b.key
@@ -61,6 +64,11 @@ instances:
 Both DNS names must resolve to the same host and each certificate must have
 its corresponding SNI in the DNS Subject Alternative Name.
 
-The daemon owns **no** TUN creation, VRF, `ip route` or `ip rule`
-configuration. Existing Linux routing tables determine which packet enters
-which TUN. After that, each instance uses its own Peer destination map.
+The daemon creates or attaches TUNs and sets their IP/CIDR, MTU and UP
+state. It does not create VRFs, change interface masters, install
+`ip route` or `ip rule` entries, or configure forwarding and multicast
+routing. `IFA_F_NOPREFIXROUTE` suppresses automatic connected-prefix
+routes (the kernel keeps its mandatory local-address routes).
+If you need VRF isolation, precreate persistent TUN devices and attach
+them to their VRFs before starting the daemon. For ordinary single-domain
+installations no manual TUN creation is necessary.

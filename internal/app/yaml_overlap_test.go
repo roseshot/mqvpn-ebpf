@@ -19,10 +19,12 @@ func TestMultipleInstancesSamePortAndOverlappingSubnets(t *testing.T) {
 	first.Name = "customer-a"
 	first.ServerName = "customer-a.example.test"
 	first.TUN = "mq0"
+	first.Address="10.77.0.1/24"
 	second := first
 	second.Name = "customer-b"
 	second.ServerName = "customer-b.example.test"
 	second.TUN = "mq1"
+	second.Address="10.77.0.1/24"
 	for _, spec := range []*ServerInstance{&first, &second} {
 		sum := sha256.Sum256([]byte(spec.Name))
 		peerCfg := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
