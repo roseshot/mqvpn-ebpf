@@ -35,6 +35,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	ca:=fs.String("client-ca","","client CA certificate path")
 	path:=fs.String("path","","CONNECT-ETHERNET URI path")
 	maxFrame:=fs.Int("max-frame",0,"maximum Ethernet frame bytes")
+	tcMode:=fs.String("tc-mode","","TUN TCX mode: off, auto or required")
 	tcObject:=fs.String("tc-object","","per-instance compiled TUN TCX eBPF ELF")
 	mssClamp:=fs.String("mss-clamp","","TUN TCP MSS clamp: off, auto or numeric")
 	tcStats:=fs.Bool("tc-stats",false,"enable TUN TCX packet counters")
@@ -83,8 +84,9 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 		if updates["client-ca"]{inst.ClientCA=*ca}
 		if updates["path"]{inst.Path=*path}
 		if updates["max-frame"]{inst.MaxFrame=*maxFrame}
-		if updates["tc-object"]||updates["mss-clamp"]||updates["tc-stats"]{
+		if updates["tc-mode"]||updates["tc-object"]||updates["mss-clamp"]||updates["tc-stats"]{
 			if inst.TC==nil{inst.TC=&tcebpf.Config{}}
+			if updates["tc-mode"]{inst.TC.Mode=*tcMode}
 			if updates["tc-object"]{inst.TC.Object=*tcObject}
 			if updates["mss-clamp"]{inst.TC.MSSClamp=*mssClamp}
 			if updates["tc-stats"]{inst.TC.Stats=*tcStats}
