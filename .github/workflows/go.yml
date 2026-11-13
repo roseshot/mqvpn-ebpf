@@ -3,6 +3,7 @@ on:
   push:
     branches: ["main", "feat/**"]
   pull_request:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,8 +13,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: go mod download
-      - name: Build independent binaries and compatibility wrapper
+      - name: Install eBPF build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang llvm libbpf-dev linux-libc-dev
+      - name: Compile multi-instance XDP ELF
+        run: make bpf
+      - name: Download Go modules
+        run: go mod download
+      - name: Build pure Go without CGO
+        env:
+          CGO_ENABLED: "0"
         run: go build -mod=mod ./cmd/...
-      - run: go test -mod=mod -race ./...
-      - run: go vet -mod=mod ./...
+      - name: Test without CGO
+        env:
+          CGO_ENABLED: "0"
+        run: go test -mod=mod ./...
+      - name: Race detector
+        run: go test -mod=mod -race ./...
+      - name: Vet
+        run: go vet -mod=mod ./...

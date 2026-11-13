@@ -9,6 +9,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+ "github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
 // ServerInstance is an independent QUIC listener, TUN and peer namespace.
@@ -28,6 +30,7 @@ type ServerInstance struct {
 
 type ServerConfig struct {
 	Instances []ServerInstance `json:"instances"`
+	XDP *xdp.Config `json:"xdp,omitempty"`
 }
 
 func loadServerConfig(path string) (ServerConfig,error) {
@@ -49,6 +52,11 @@ func loadServerConfig(path string) (ServerConfig,error) {
 }
 
 func (c *ServerConfig)Validate()error {
+	if c.XDP != nil {
+		normalized,err:=c.XDP.Normalize()
+		if err!=nil{return fmt.Errorf("XDP configuration: %w",err)}
+		c.XDP=&normalized
+	}
 	if len(c.Instances)==0{return errors.New("server requires at least one instance")}
 	if len(c.Instances)>128{return errors.New("server instance count exceeds 128")}
 	names:=map[string]bool{}
