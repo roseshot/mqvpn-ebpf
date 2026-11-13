@@ -1,167 +1,140 @@
 # mqvpn-ebpf
 
-Experimental Linux **MASQUE CONNECT-ETHERNET (-18)** VPN over HTTP/3 DATAGRAM,
-using **IETF Multipath QUIC** for dual WAN and mutual TLS for authentication.
-The target is Intel N200 and Intel I226-V/LM (igc), with 1–2.5 Gbit/s as a
-**benchmark target**, not a measured performance claim.
+Experimental Go MASQUE CONNECT-ETHERNET (draft -18) VPN over HTTP/3
+DATAGRAM + encrypted Multipath QUIC. Dedicated client/server CLIs.
+Target: Linux Intel N200 + I226-V/LM, 1–2.5 Gbps is a benchmark target,
+not an achieved measurement.
 
-> **Current state: UDP Socket + TAP prototype; NOT production ready.**
-> The encrypted MPQUIC path is implemented. AF_XDP is NOT wired into Go yet:
-> bpf/xdp_mqvpn.c is an experimental standalone XDP/XSKMAP filter only.
-> There is no plaintext mode, custom Ethernet wire format or fragmentation.
+**Transport is Linux UDP socket + TAP. AF_XDP is NOT connected to Go.**
+The existing bpf/xdp_mqvpn.c is an experimental standalone XDP filter.
 
-## What is implemented
+## GRE-like IP-addressed tunnel
 
-- HTTP/3 Extended CONNECT with :protocol=connect-ethernet and
-  Capsule-Protocol: ?1 (client + single-session server).
-- HTTP DATAGRAM payloads use Context ID 0 followed by the entire Ethernet
-  frame, without FCS. The HTTP/3 implementation handles Quarter Stream ID.
-- TAP bidirectional forwarding, including VLAN-tagged frames.
-- Mandatory mTLS with certificate-chain and hostname verification.
-- Client path 0 bound to WAN1, optional second validated MPQUIC path on WAN2
-  (same QUIC connection, same HTTP/3 CONNECT stream).
-- Oversize-frame drops, per-session counters, 10-second path logs, tests.
-- No automatic bridge/routing modifications.
+CONNECT-ETHERNET transports Ethernet frames, so the kernel tunnel interface
+is TAP, not GRE/TUN. It can still have an IP and its own connected route:
 
-Uses github.com/qoke/mp-quic-go **v0.3.1** (Go 1.26), targeting
-draft-ietf-quic-multipath-21. RFC 10069 interoperability is not claimed
-without independent cross-implementation testing.
+    Site A mq0 10.77.0.1/30 <-- CONNECT-ETHERNET/MPQUIC --> Site B mq0 10.77.0.2/30
 
-## Build and test
+The CLIs create or attach a **persistent** TAP, configure its tunnel CIDR,
+MTU and bring it UP. It remains after exit until explicitly removed using
+ip link delete dev mq0. **Do not enslave this TAP to a Linux bridge** in
+addressed-tunnel mode; bridges should hold IP addresses on the bridge itself.
 
-Requires Linux amd64, Go 1.26+, root or CAP_NET_ADMIN for TAP.
+## Build
+
+Requirements: Linux amd64, Go 1.26+, iproute2, /dev/net/tun and root or
+CAP_NET_ADMIN. SO_BINDTODEVICE may require privileges.
 
 ~~~bash
 go mod tidy
-go build -o mqvpn ./cmd/mqvpn
+go build -o mqvpn-client ./cmd/mqvpn-client
+go build -o mqvpn-server ./cmd/mqvpn-server
 go test ./...
 ~~~
 
-Development-only mTLS certificates:
+Legacy combined binary stays supported:
+
+~~~bash
+go build -o mqvpn ./cmd/mqvpn
+./mqvpn client --help
+./mqvpn server --help
+~~~
+
+## Development certificates (test only)
 
 ~~~bash
 bash scripts/gen-dev-certs.sh certs vpn.local
 ~~~
 
-This creates a seven-day CA, server certificate with DNS SAN vpn.local and
-IP SAN 127.0.0.1, and a client certificate. Do not use these certificates
-in production. Keys inside certs/ are ignored by Git.
+Replace this seven-day development CA with independently managed production
+credentials; never commit keys under certs/.
 
-## Interface preparation (both ends)
-
-Pre-create a *persistent* TAP so it survives connection restarts:
+## Server: Site A
 
 ~~~bash
-sudo ip tuntap add dev mq0 mode tap
-sudo ip link set dev mq0 up
-sudo ip link add name br-mq type bridge
-sudo ip link set dev br-mq type bridge stp_state 1
-sudo ip link set dev mq0 master br-mq
-sudo ip link set dev br-mq up
-# Only after validating an isolated network, STP, MTU and LAN topology:
-# sudo ip link set dev <LAN_INTERFACE> master br-mq
-~~~
-
-The VPN does **not** configure the bridge, IP addressing or routes. Bridging
-existing LAN interfaces without loop prevention can create a broadcast storm.
-Run early tests with isolated virtual hosts or network namespaces.
-
-### Server
-
-~~~bash
-sudo ./mqvpn server \
-  --listen 0.0.0.0:4433 --tap mq0 \
+sudo ./mqvpn-server \
+  --listen :4433 \
+  --tap mq0 --tunnel-ip 10.77.0.1/30 --tunnel-mtu 1100 \
+  --max-frame 1160 \
   --cert certs/server.crt --key certs/server.key \
-  --client-ca certs/ca.crt \
-  --max-frame 1160
+  --client-ca certs/ca.crt
 ~~~
 
-The server accepts only one active tunnel to the TAP and requires clients
-with a valid certificate from --client-ca. The server listens on all WANs;
-additional client paths arrive at the same UDP port 4433.
+mTLS is required. The server accepts one active CONNECT-ETHERNET tunnel and
+listens on all its UDP-facing interfaces, allowing client-initiated paths.
 
-### Client
+## Client: Site B
 
 ~~~bash
-sudo ./mqvpn client \
+sudo ./mqvpn-client \
   --url https://vpn.local:4433/.well-known/masque/ethernet/ \
-  --wan1 192.0.2.10 --wan2 198.51.100.10 --tap mq0 \
-  --ca certs/ca.crt \
-  --cert certs/client.crt --key certs/client.key \
-  --max-frame 1160
+  --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --wan2-ip 198.51.100.10 --wan2-interface enp2s0 \
+  --tap mq0 --tunnel-ip 10.77.0.2/30 --tunnel-mtu 1100 \
+  --max-frame 1160 \
+  --ca certs/ca.crt --cert certs/client.crt --key certs/client.key
 ~~~
 
-Use actual local WAN source addresses and a resolvable, certificate-matching
-gateway name. --wan2 is optional for single-WAN testing.
+Change the example WAN addresses to real IPs assigned to your I226 NICs.
+The server hostname must resolve and match its certificate.
 
-**Binding source IPs is not sufficient to get two WANs.** Configure Linux
-policy routing (source-based rules / routing tables) so packets from each
-IP reach the gateway over the intended physical interface. Verify first:
+The primary path supports --source-ip and/or --source-interface.
+The second path supports --wan2-ip and/or --wan2-interface.
+If only an interface is provided, the program selects its source address
+**only when exactly one IP of the remote host's address family is usable**;
+with multiple addresses, you must specify an IP. Explicit IP + interface
+are checked against netlink-visible interface addresses.
+
+The program uses SO_BINDTODEVICE before binding each UDP socket and creates
+separate sockets for WAN1/WAN2. Binding to a device **does not invent routes**:
+ensure both underlay interfaces can reach the remote UDP address and configure
+policy routes if needed. Verify from your host:
 
 ~~~bash
-ip route get <gateway-ip> from <wan1-ip>
-ip route get <gateway-ip> from <wan2-ip>
+ip route get <gateway-ip> from <wan1-ip> oif enp1s0
+ip route get <gateway-ip> from <wan2-ip> oif enp2s0
 ~~~
 
-Path 1 uses a second UDP socket, is added using Conn.AddPath and validated
-by PATH_CHALLENGE. If the second path is requested but not validated, client
-startup fails rather than silently reporting a dual-WAN connection.
+Backwards-compatible flags: --wan1, --wan2, --wan1-ip, --wan1-interface.
+For single WAN, omit --wan2-ip and --wan2-interface.
 
-## MTU / protocol limitations
+## Test the tunnel IP and routing
 
-The -18 CONNECT-ETHERNET QUIC DATAGRAM mode **cannot fragment frames**.
-An Ethernet frame must fit entirely within a single negotiated QUIC DATAGRAM
-after all QUIC, UDP, IP and HTTP datagram headers. The --max-frame limit is
-a local upper bound, not a guarantee the negotiated DATAGRAM capacity can
-carry a frame of that size. Too-large frames are dropped, never re-encoded
-with a proprietary fragmentation protocol.
+~~~bash
+# Site A
+ip -br addr show dev mq0
+ip route show dev mq0
+ping -I mq0 10.77.0.2
 
-The prototype default of 1160 frame bytes is conservative but DOES NOT
-make this a transparent 1500-MTU LAN tunnel. Reducing TAP MTU alone does
-not shrink frames generated by downstream bridged hosts. Inner MTU, TCP
-MSS, UDP and IPv6 must all be addressed at the network level. Standard
-Capsule mode for supporting larger Ethernet frames is not implemented.
-Normal 1280-byte IPv6 link MTU needs special consideration under a
-1500-byte QUIC underlay.
+# Site B
+ip -br addr show dev mq0
+ip route show dev mq0
+ping -I mq0 10.77.0.1
 
-## Intel I226 / igc and AF_XDP
+# Optional: route a remote IPv4 LAN via the tunnel peer
+sudo ip route replace 192.168.20.0/24 via 10.77.0.1 dev mq0
+~~~
 
-The optional experimental bpf/xdp_mqvpn.c contains a Native XDP parser
-(plain/VLAN Ethernet + IPv4/IPv6 UDP without IPv6 extension headers),
-selects traffic with UDP port 4433, and uses XSKMAP keyed by RX queue.
-Unmatched traffic and missing XSK entries follow XDP_PASS.
+Ensure the outer QUIC server address never gets routed over mq0, and
+configure forwarding/firewall rules separately for LAN-to-LAN routing.
 
-**The program is NOT automatically loaded and should NOT be attached to
-production I226 ports until a full XSK/UMEM socket backend is ready.**
-Native XDP support does not imply hardware eBPF offload. Zero-copy AF_XDP
-must be explicitly requested and verified on the precise igc driver/kernel.
+## MTU and limitations
 
-Remaining AF_XDP implementation tasks: queue/XSK/UMEM lifecycle, actual
-zero-copy confirmation, UDP/IP/Ethernet encapsulation, checksums, PMTU,
-ARP/ND/route notifications, handling multi-WAN destination/source metadata,
-and replacing the QUIC PacketConn transport. Measure socket/GSO overhead
-first: this mp-quic-go fork disables GSO when multipath is active.
+HTTP/3 QUIC DATAGRAM **does not fragment Ethernet frames**. The default
+IP tunnel MTU is 1100 and max Ethernet frame 1160, intentionally conservative
+for initial IPv4 testing over a typical WAN. An inner IP packet must fit
+inside the full Ethernet frame plus CONNECT-ETHERNET, QUIC, UDP and outer IP
+overhead. --max-frame is a local limit, not an advertised QUIC PMTU.
 
-Suggested benchmark phases on N200/I226:
+When too large, frames are dropped (no custom protocol fragmentation).
+The CLI rejects --tunnel-mtu + 14 greater than --max-frame.
+IPv6 requires link MTU >= 1280, which may be impossible to carry over
+a 1500-byte QUIC DATAGRAM underlay without additional PMTU capacity.
+No standard Capsule fallback is implemented.
 
-1. Single WAN with ordinary UDP Socket + TAP, large and small frames.
-2. Dual WAN, RTT asymmetry, path failure/recovery and path stats.
-3. CPU profiles (pprof, per-core usage, sustained clock, power/temp).
-4. AF_XDP COPY vs ZEROCOPY backend, once implemented.
-5. p99 latency, packets/sec, drops, effective inner L2 throughput.
+AF_XDP/zero-copy, automatic reconnect, dynamic policy routing, link QoS,
+full field hardening and N200 performance tests are not implemented yet.
+The experimental XDP source is NOT attached by the running daemon.
 
-## Not yet implemented
-
-- AF_XDP production I/O, BPF loader/attach and per-NIC XSK setup.
-- Auto reconnect, dynamic per-WAN policy routes or robust daemon/service.
-- Reliable HTTP DATAGRAM Capsule fallback.
-- L2 multicast/broadcast rate-limiting and per-flow reordering policy.
-- Field validation, production hardening or published N200 throughput results.
-
-## References
-
-- https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
-- https://www.rfc-editor.org/rfc/rfc10069.html
-- https://www.rfc-editor.org/rfc/rfc9297.html
-- https://github.com/qoke/mp-quic-go
-- https://docs.kernel.org/networking/af_xdp.html
+References: https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
+and https://github.com/qoke/mp-quic-go
