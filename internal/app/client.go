@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"time"
 
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
+	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
@@ -46,6 +48,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
+	acceptRoutes:=fs.Bool("accept-routes",true,"apply authenticated Server-pushed routes (default true)")
 	if err := fs.Parse(args); err != nil { return err }
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
@@ -89,6 +92,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			if !explicit["tc-stats"] && file.TC.Stats!=nil {*tcStats=*file.TC.Stats}
 		}
 		if !explicit["url"] && file.URL!="" {*urlFlag=file.URL}
+		if !explicit["accept-routes"] && file.AcceptRoutes!=nil {*acceptRoutes=*file.AcceptRoutes}
 		// Legacy explicit TC fields (in YAML or CLI) retain fail-closed
 		// semantics unless mode is explicitly specified.
 		if file.TC!=nil && file.TC.Mode!="" {explicit["tc-mode"]=true}
@@ -132,7 +136,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcpOptions:=clientTCPOptions{
 		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,tcpPort:*tcpPort,
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
-		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,
+		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,acceptRoutes:*acceptRoutes,
 	}
 	if *transportMode=="tcp" {
 		if *wan2!=""||*wan2Iface!="" {return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")}
@@ -217,6 +221,11 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	effectiveAddress,err:=resolveClientTunnelAddress(*tunAddress,response.Header.Get(tunnelAddressHeader))
 	if err!=nil{return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w",err)}
+	var pushedRoutes []netip.Prefix
+	if *acceptRoutes {
+		pushedRoutes,err=routepush.Decode(response.Header.Get(routepush.Header))
+		if err!=nil{return fmt.Errorf("CONNECT-ETHERNET pushed routes: %w",err)}
+	}
 	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName,"tunnel_address",effectiveAddress)
 
 	if *wan2 != "" || *wan2Iface != "" {

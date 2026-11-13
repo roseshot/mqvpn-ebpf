@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/capsule"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
+	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
@@ -30,6 +32,7 @@ type clientTCPOptions struct {
 	caFile,certFile,keyFile string
 	maxFrame int
 	tcpPort int
+	acceptRoutes bool
 }
 
 // tcpTarget supports an independent TCP port without weakening tenant TLS
@@ -98,6 +101,11 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	_ = conn.SetReadDeadline(time.Time{})
 	effectiveAddress,err:=resolveClientTunnelAddress(o.tunAddress,response.Header.Get(tunnelAddressHeader))
 	if err!=nil{return fmt.Errorf("TCP tunnel IP negotiation: %w",err)}
+	var pushedRoutes []netip.Prefix
+	if o.acceptRoutes {
+		pushedRoutes,err=routepush.Decode(response.Header.Get(routepush.Header))
+		if err!=nil{return fmt.Errorf("TCP pushed routes: %w",err)}
+	}
 	var underlays []mtu.Underlay
 	if o.tunMTU==0 {
 		link,err:=wan.SourceUnderlay(ip,o.wanInterface)
