@@ -1,35 +1,68 @@
 name: Go
+
+# PRs run once. Feature-branch pushes previously duplicated pull_request jobs.
 on:
-  push:
-    branches: ["main", "feat/**"]
   pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded PR revisions; do not cancel other PRs.
+concurrency:
+  group: go-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  native:
+    name: Native Go (CGO=0)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: false
-      - name: Install eBPF build prerequisites
+          cache: true
+          # The repository does not check in go.sum yet.
+          cache-dependency-path: go.mod
+      - name: Build, test and vet without CGO
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -mod=mod ./cmd/...
+          go test -mod=mod ./...
+          go vet -mod=mod ./...
+
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+      # Go's race detector requires CGO on Linux.
+      - name: Race test
+        env:
+          CGO_ENABLED: "1"
+        run: go test -mod=mod -race ./...
+
+  bpf:
+    name: eBPF ELF
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install BPF compile headers
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y clang llvm libbpf-dev linux-libc-dev
-      - name: Compile multi-instance XDP ELF
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
+      - name: Compile XDP dispatcher
         run: make bpf
-      - name: Download Go modules
-        run: go mod download
-      - name: Build pure Go without CGO
-        env:
-          CGO_ENABLED: "0"
-        run: go build -mod=mod ./cmd/...
-      - name: Test without CGO
-        env:
-          CGO_ENABLED: "0"
-        run: go test -mod=mod ./...
-      - name: Race detector
-        run: go test -mod=mod -race ./...
-      - name: Vet
-        run: go vet -mod=mod ./...

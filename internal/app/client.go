@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"time"
 
 	quic "github.com/qoke/mp-quic-go"
@@ -21,7 +20,9 @@ import (
 
 func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
-	urlFlag := fs.String("url", "", "https URL of remote CONNECT-ETHERNET proxy")
+	urlFlag := fs.String("url", "", "https domain or IP URL of CONNECT-ETHERNET endpoint")
+	connectIP := fs.String("connect-ip", "", "connect to server IP without DNS resolution")
+	serverName := fs.String("server-name", "", "authenticated tenant DNS name used for TLS SNI and HTTP/3 authority")
 	wan1 := fs.String("source-ip", "", "primary WAN local source IPv4/IPv6 address")
 	wan2 := fs.String("wan2-ip", "", "secondary WAN local source IPv4/IPv6 address (optional)")
 	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
@@ -36,15 +37,14 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if *wan1 == "" && *wan1Iface == "" { return errors.New("primary WAN requires --source-ip and/or --source-interface") }
 	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
 	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
-	u, err := url.Parse(*urlFlag)
-	if err != nil || u == nil || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.User != nil || u.Fragment != "" {
-		return errors.New("--url must be an absolute https://host:port/path URL")
-	}
+	endpoint, err := planClientEndpoint(*urlFlag, *connectIP, *serverName)
+	if err != nil { return err }
+	logger.Info("QUIC endpoint configured", "udp_destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName)
 	pool, err := certPool(*caFile)
 	if err != nil { return err }
 	cert, err := keyPair(*certFile, *keyFile)
 	if err != nil { return err }
-	serverAddr, err := net.ResolveUDPAddr("udp", u.Host)
+	serverAddr, err := net.ResolveUDPAddr("udp", endpoint.dialAddress)
 	if err != nil { return fmt.Errorf("resolve QUIC peer: %w", err) }
 	base, selectedIP, err := wan.Listen(ctx, *wan1, *wan1Iface, serverAddr)
 	if err != nil { return err }
@@ -59,7 +59,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	tlsConf := &tls.Config{
 		MinVersion: tls.VersionTLS13,
-		ServerName: u.Hostname(),
+		ServerName: endpoint.serverName,
 		NextProtos: []string{http3.NextProtoH3},
 		RootCAs: pool,
 		Certificates: []tls.Certificate{cert},
@@ -83,7 +83,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		return errors.New("peer does not support HTTP/3 Extended CONNECT and DATAGRAM")
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodConnect, u.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodConnect, endpoint.requestURL, nil)
 	if err != nil { return err }
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
@@ -101,7 +101,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if response.Header.Get("Capsule-Protocol") != "?1" {
 		return errors.New("missing successful Capsule-Protocol response")
 	}
-	logger.Info("CONNECT-ETHERNET accepted", "remote", u.Host)
+	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName)
 
 	if *wan2 != "" || *wan2Iface != "" {
 		if !conn.ConnectionState().SupportsMultipath {
