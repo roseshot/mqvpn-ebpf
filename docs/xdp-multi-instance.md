@@ -1,11 +1,11 @@
 # Shared-port XDP dispatcher
 
-All Server VPN instances now share **one UDP/QUIC listener**, e.g. :4433.
+All Server VPN instances now share **one UDP/QUIC listener**, e.g. :443.
 The BPF instance_ports map registers the **single shared outer UDP port**.
 XDP has no visibility into TLS SNI or encrypted inner VPN traffic.
 
     Intel I226 WAN NIC
-      -> XDP: UDP dest 4433 registered?
+      -> XDP: UDP dest 443 registered?
            -> no XSK bound: XDP_PASS -> shared kernel UDP socket
            -> future XSK: XDP_REDIRECT to socket bound to RX queue
       -> one QUIC server
@@ -20,7 +20,7 @@ instance on the same shared UDP port does not change the XDP port map.
 Enable through the top-level Server YAML:
 
 ~~~yaml
-listen: "0.0.0.0:4433"
+# listen is optional; default UDP/443
 xdp:
   interfaces: [enp1s0, enp2s0]
   object: /usr/lib/mqvpn/xdp_mqvpn.o
