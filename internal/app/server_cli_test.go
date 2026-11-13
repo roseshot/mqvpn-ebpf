@@ -61,3 +61,19 @@ func TestInstanceEditBadConfigPreservesFile(t *testing.T){
 	if err!=nil{t.Fatal(err)}
 	if string(after)!=string(bytes){t.Fatal("invalid edit modified original config")}
 }
+
+
+func TestInstanceCLIEditPreservesPermissions(t *testing.T){
+	cfg,_:=testServerFiles(t)
+	configPath:=filepath.Join(t.TempDir(),"server.json")
+	bytes,err:=json.Marshal(cfg)
+	if err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(configPath,bytes,0640);err!=nil{t.Fatal(err)}
+	if err:=os.Chmod(configPath,0640);err!=nil{t.Fatal(err)}
+	if err:=runInstanceCLI([]string{
+		"upsert","--config",configPath,"--name","edge-a","--listen",":4437",
+	},nil);err!=nil{t.Fatal(err)}
+	stat,err:=os.Stat(configPath)
+	if err!=nil{t.Fatal(err)}
+	if stat.Mode().Perm()!=0640{t.Fatalf("config access mode changed to %v",stat.Mode().Perm())}
+}

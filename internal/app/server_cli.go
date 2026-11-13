@@ -14,6 +14,7 @@ import (
 
 // runInstanceCLI edits the on-disk source-of-truth JSON configuration.
 // Atomic rename prevents the watcher from observing partial JSON writes.
+// Existing file owner and permissions are preserved.
 // The watcher reloads changed files automatically; --pid requests immediate
 // reload via SIGHUP when using --reload-interval=0 or for faster application.
 func runInstanceCLI(args []string,logger *slog.Logger)error{
@@ -98,10 +99,24 @@ func writeServerConfigAtomic(path string,cfg ServerConfig)error{
 	if err!=nil{return err}
 	data=append(data,'\n')
 	dir:=filepath.Dir(path)
+	current,err:=os.Stat(path)
+	if err!=nil{return fmt.Errorf("stat existing config %s: %w",path,err)}
 	temp,err:=os.CreateTemp(dir,".mqvpn-server-*.tmp")
 	if err!=nil{return fmt.Errorf("create temp config in %s: %w",dir,err)}
 	defer os.Remove(temp.Name())
-	if err:=temp.Chmod(0600);err!=nil{temp.Close();return err}
+	// Preserve existing mode and ownership so an unprivileged daemon can
+	// still read the file after an admin-driven atomic rename.
+	if err:=temp.Chmod(current.Mode().Perm());err!=nil{temp.Close();return err}
+	owner,ownerOK:=current.Sys().(*syscall.Stat_t)
+	tempInfo,statErr:=temp.Stat()
+	if statErr!=nil{temp.Close();return statErr}
+	tempOwner,tempOK:=tempInfo.Sys().(*syscall.Stat_t)
+	if ownerOK && tempOK && (owner.Uid!=tempOwner.Uid || owner.Gid!=tempOwner.Gid){
+		if err:=temp.Chown(int(owner.Uid),int(owner.Gid));err!=nil{
+			temp.Close()
+			return fmt.Errorf("preserve config owner: %w",err)
+		}
+	}
 	if _,err:=temp.Write(data);err!=nil{temp.Close();return err}
 	if err:=temp.Sync();err!=nil{temp.Close();return err}
 	if err:=temp.Close();err!=nil{return err}

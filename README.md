@@ -202,7 +202,8 @@ mqvpn-server instance delete --config /etc/mqvpn/server.json \
 ~~~
 
 Instance edits validate all referenced peer and TLS files, and write a
-complete new JSON by atomic rename with 0600 permissions. When the watcher
+complete new JSON by atomic rename, preserving the existing file owner
+and permissions (create the initial config with appropriate access rights). When the watcher
 is disabled, add --pid <daemon-pid> to upsert/delete to request SIGHUP.
 The CLI edits persistent configuration; it does not change Linux routes.
 
