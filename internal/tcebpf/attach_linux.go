@@ -63,8 +63,8 @@ func Attach(ifname string,cfg Config,mtu int) (*Attachment,error) {
 	if norm.Stats {limits.Stats=1}
 	iface,err:=net.InterfaceByName(ifname)
 	if err!=nil{return nil,fmt.Errorf("TUN TC interface %q: %w",ifname,err)}
-	spec,err:=ebpf.LoadCollectionSpec(norm.Object)
-	if err!=nil{return nil,fmt.Errorf("load TUN TC eBPF ELF %q: %w",norm.Object,err)}
+	spec,err:=LoadSpec(norm.Object)
+	if err!=nil{return nil,fmt.Errorf("load TUN TC eBPF ELF: %w",err)}
 	col,err:=ebpf.NewCollection(spec)
 	if err!=nil{return nil,fmt.Errorf("create TUN TC BPF collection: %w",err)}
 	d:=&Attachment{col:col,stats:col.Maps["tun_stats"]}

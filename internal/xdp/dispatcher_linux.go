@@ -34,8 +34,8 @@ type bpfDevice struct{
 func attachDevice(ifname string,cfg Config)(portDevice,error){
 	nic,err:=net.InterfaceByName(ifname)
 	if err!=nil{return nil,fmt.Errorf("find XDP interface %s: %w",ifname,err)}
-	spec,err:=ebpf.LoadCollectionSpec(cfg.Object)
-	if err!=nil{return nil,fmt.Errorf("read BPF ELF %q: %w",cfg.Object,err)}
+	spec,err:=LoadSpec(cfg.Object)
+	if err!=nil{return nil,fmt.Errorf("read BPF ELF: %w",err)}
 	if err:=validateXDPObject(spec);err!=nil{return nil,fmt.Errorf("invalid XDP ELF %q: %w",cfg.Object,err)}
 	col,err:=ebpf.NewCollection(spec)
 	if err!=nil{return nil,fmt.Errorf("load BPF program: %w",err)}

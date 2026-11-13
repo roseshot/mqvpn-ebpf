@@ -388,12 +388,13 @@ TCX eBPF on the L3 TUN can cap TCP MSS in SYN and SYN-ACK
 without calling `tc`, `iptables`, `nftables`, or `os/exec`.
 The Linux kernel must support **TCX (6.6+)**. Both ingress and egress
 are attached to handle VPN traffic moving in either direction.
-Default `auto` attempts the precompiled `/usr/lib/mqvpn/tun_tc.o`, logging
-a warning and falling back to ordinary TUN forwarding when unsupported or
-missing. Install the ELF with `sudo make install-bpf`. `required` fails
-instead, while `off` disables the attempt.
+The TCX ELF is **embedded in both Go executables** and loaded directly
+from memory. There is no runtime `.o` file, Clang or libbpf installation
+requirement. Default `auto` attempts the bundled program, warning and
+falling back to ordinary TUN forwarding only if the kernel or BPF
+permissions do not support it. `required` fails instead; `off` disables it.
 
-Build the TC ELF with `make bpf` and install it. Per-instance overrides:
+The default policy requires no TC YAML stanza. Per-instance overrides:
 
 ~~~yaml
 instances:
@@ -411,11 +412,12 @@ instances:
     client_ca: /etc/mqvpn/tls/a-clients.crt
 ~~~
 
-Client defaults to `--tc-mode auto --tc-object /usr/lib/mqvpn/tun_tc.o`
-`--mss-clamp auto --tc-stats=true`. QUIC and TCP fallback use the same
-policy. Auto needs the deployed ELF to provide MSS clamping; old-style TC
-settings without an explicit mode stay strict (`required`) for backward
-compatibility. `tc: {mode: off}` disables TCX.
+Client defaults to `--tc-mode auto --mss-clamp auto --tc-stats=true`.
+QUIC and TCP fallback use the same bundled TCX program. An explicit
+`tc.object: /path/to/tun_tc.o` or `--tc-object /path/to/tun_tc.o`
+overrides the bundle; legacy explicit object settings without a mode
+stay strict (`required`) for backward compatibility.
+`tc: {mode: off}` disables TCX.
 
 Auto MSS clamp uses the effective TUN MTU (not the raw WAN MTU):
 for MTU 1400, IPv4 MSS is at most **1360** and IPv6 MSS is at
@@ -449,12 +451,15 @@ Packets always take `XDP_PASS` into the Linux UDP socket.
 ~~~yaml
 xdp:
   interfaces: [enp1s0, enp2s0]
-  object: /usr/lib/mqvpn/xdp_mqvpn.o
-  mode: driver
+  mode: driver  # XDP is opt-in; uses embedded ELF by default
 ~~~
 
-Install `clang`, `llvm`, `libbpf-dev` and `linux-libc-dev` to run
-`make bpf`; production Go binaries remain CGO-free.
+The XDP ELF is also embedded in the **server** executable; XDP still
+requires an explicit interface list, and never replaces the UDP socket.
+Build normally with `CGO_ENABLED=0 go build` or use `make release` to
+produce `bin/mqvpn-server` and `bin/mqvpn-client` including both BPF objects.
+Clang/LLVM and development headers are needed only to regenerate the bundled
+ELFs from C (`make bpf`), not to build Go binaries or deploy them.
 See [XDP control plane](docs/xdp-multi-instance.md).
 
 ## Pure Go runtime and development tools

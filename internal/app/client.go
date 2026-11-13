@@ -37,7 +37,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	keyFile := fs.String("key", "", "client TLS key PEM")
 	maxFrame := fs.Int("max-frame", 0, "maximum Ethernet frame bytes, 0 = computed TUN MTU + 14")
 	tcMode := fs.String("tc-mode", "auto", "TUN TCX mode: off|auto|required")
-	tcObject := fs.String("tc-object", tcebpf.DefaultObject, "compiled TUN TCX eBPF ELF")
+	tcObject := fs.String("tc-object", tcebpf.DefaultObject, "optional external TUN TCX ELF (default: built into binary)")
 	mssClamp := fs.String("mss-clamp", "auto", "TUN TCP SYN MSS clamp: off|auto|numeric")
 	tcStats := fs.Bool("tc-stats", true, "collect TUN ingress/egress BPF counters")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")

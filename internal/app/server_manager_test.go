@@ -114,6 +114,16 @@ func TestReloadCommandRejectsInvalidPID(t *testing.T) {
 }
 
 
+func TestBundledTCDoesNotDependOnFilesystem(t *testing.T) {
+	cfg,_:=testServerFiles(t)
+	first,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	if first.instances["edge-a"].spec.TC==nil || first.instances["edge-a"].spec.TC.Object!="" {t.Fatal("server default is not embedded TCX")}
+	second,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	if first.instances["edge-a"].staticHash != second.instances["edge-a"].staticHash {t.Fatal("embedded TC object changed across reload")}
+}
+
 func TestAutoTCMissingELFAndELFInstallationOnReload(t *testing.T) {
 	cfg,_:=testServerFiles(t)
 	object:=filepath.Join(t.TempDir(),"tun_tc.o")

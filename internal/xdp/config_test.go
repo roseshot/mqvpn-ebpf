@@ -13,9 +13,12 @@ func TestConfigNormalize(t *testing.T){
 	if cfg.Mode!="driver"||!reflect.DeepEqual(cfg.Interfaces,[]string{"enp1s0","enp2s0"}){
 		t.Fatalf("normalize returned %+v",cfg)
 	}
+	embedded,err:=(Config{Interfaces:[]string{"enp1s0"}}).Normalize()
+	if err!=nil||embedded.Object!=""||embedded.Mode!="driver" {
+		t.Fatalf("embedded XDP ELF should be default when interfaces are set: %+v %v",embedded,err)
+	}
 	for _,bad:=range []Config{
 		{Object:"xdp.o"},
-		{Interfaces:[]string{"enp1s0"}},
 		{Interfaces:[]string{"eth0","eth0"},Object:"xdp.o"},
 		{Interfaces:[]string{"eth0"},Object:"xdp.o",Mode:"offload"},
 	}{

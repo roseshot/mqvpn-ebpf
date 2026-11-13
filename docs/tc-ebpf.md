@@ -2,7 +2,7 @@
 
 The Linux L3 TUN is configured with IP/CIDR, MTU and UP using Go +
 Netlink; Linux owns its connected-prefix route. TCX eBPF is an
-**default-auto** addition on the TUN itself and requires kernel >=6.6.
+enabled by default in **auto** mode on the TUN itself and requires kernel >=6.6.
 All BPF program loading/attaching is pure Go via cilium/ebpf, not
 a shell command.
 
@@ -14,13 +14,19 @@ Run **make bpf** (development-only Clang/LLVM). It produces:
   counters, including UDP listener matching and pass-through traffic.
 - **bpf/tun_tc.o**: TUN TCX ingress and egress classifiers.
 
-Deploy the precompiled `tun_tc.o` to `/usr/lib/mqvpn/tun_tc.o` with
-`sudo make install-bpf` (or configure a custom object path). No compilation
-occurs at runtime. Default `auto` attempts TCX, warns and continues ordinary
-TUN forwarding when the kernel, privileges or ELF are unavailable. It cannot
-clamp MSS unless the ELF is deployed. `required` stays fail-closed, and
-`off` disables TCX. Legacy YAML with an explicit object and no mode
-remains strict for backward compatibility.
+The precompiled `tun_tc.o` is committed in
+`internal/tcebpf/objects/tun_tc.o` and embedded into the Go executable
+with `go:embed`. At runtime it loads directly from memory through
+`ebpf.LoadCollectionSpecFromReader`. A normal `go build` includes the
+bundled ELF with `CGO_ENABLED=0`: no separate `.o`, C compiler or
+libbpf shared library is needed on the VPN host.
+
+Default `auto` falls back to ordinary TUN forwarding if TCX/kernel
+permissions are unavailable; `required` stays fail-closed. `off`
+disables TCX. An explicit `tc.object` or `--tc-object` selects an
+external ELF override, and existing object-only configurations continue
+to use strict mode. To refresh the embedded bytecode after changing the C
+source, run `make bpf` and commit the regenerated objects.
 
 ## Server (per Instance)
 
@@ -65,8 +71,9 @@ Both QUIC/MPQUIC and HTTP/1.1 TCP fallback use the same TCX policy.
 An `auto` attach error logs a warning and continues normal TUN forwarding;
 `required` fails the opted-in instance or client. Existing explicit
 client TC flags stay strict unless `--tc-mode` is provided. Hot reload
-restarts only the affected instance when the TC policy or ELF changes;
-installing an ELF previously missing in auto mode also changes the digest.
+restarts only the affected instance when the TC policy or an external
+override ELF changes. Updating the embedded ELF requires rebuilding and
+restarting the executable (it is immutable at runtime).
 
 ## Packet rules and limits
 

@@ -29,11 +29,11 @@ jobs:
           cache: true
           # The repository does not check in go.sum yet.
           cache-dependency-path: go.mod
-      - name: Build, test and vet without CGO
+      - name: Build self-contained binaries, test and vet without CGO
         env:
           CGO_ENABLED: "0"
         run: |
-          go build -mod=mod ./cmd/...
+          make release
           go test -mod=mod ./...
           go vet -mod=mod ./...
 
@@ -64,15 +64,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
-      - name: Compile XDP and TUN TCX eBPF programs
+      - name: Compile and refresh embedded XDP/TCX ELF objects
         run: make bpf
-      - name: Export reproducible eBPF bytecode for first bundled release
-        run: |
-          printf 'MQVPN_TCX_ELF_BASE64='
-          base64 -w0 bpf/tun_tc.o
-          printf '\\nMQVPN_XDP_ELF_BASE64='
-          base64 -w0 bpf/xdp_mqvpn.o
-          printf '\\n'
+      - name: Verify embedded objects are up to date with C source
+        run: git diff --exit-code -- internal/tcebpf/objects/tun_tc.o internal/xdp/objects/xdp_mqvpn.o
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod

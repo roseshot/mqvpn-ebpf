@@ -79,7 +79,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	hashRecord(digest, []byte(fmt.Sprintf("tcp:%t:%s",config.TCPFallback.Enabled,config.TCPFallback.Listen)))
 	if config.XDP != nil {
 		next.xdp = *config.XDP
-		if len(next.xdp.Interfaces) > 0 {
+		if len(next.xdp.Interfaces) > 0 && next.xdp.Object != "" {
 			object, err := os.ReadFile(next.xdp.Object)
 			if err != nil { return preparedServer{}, fmt.Errorf("read XDP ELF: %w", err) }
 			next.xdp.ObjectChecksum = sha256.Sum256(object)
@@ -123,9 +123,9 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		specBytes, err := yaml.Marshal(spec)
 		if err != nil { return preparedServer{}, err }
 		hashRecord(hash, specBytes)
-		// Include the verified TC ELF bytes in the static digest, so
-		// replacing only this instance's BPF policy restarts only this TUN.
-		if spec.TC!=nil && spec.TC.Enabled(){
+		// An embedded TC ELF is immutable for this process. Hash only
+		// explicit external overrides to detect changes on hot reload.
+		if spec.TC!=nil && spec.TC.Enabled() && spec.TC.Object!="" {
 			object,err:=os.ReadFile(spec.TC.Object)
 			if err!=nil {
 				if spec.TC.Mode=="required" {return preparedServer{},fmt.Errorf("instance %s TC ELF: %w",spec.Name,err)}

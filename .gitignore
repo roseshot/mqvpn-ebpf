@@ -18,4 +18,8 @@ certs/
 # Editor / experimental BPF output
 .idea/
 .vscode/
+bin/
 *.o
+# Shipped, embedded ELF objects are intentionally versioned.
+!internal/tcebpf/objects/tun_tc.o
+!internal/xdp/objects/xdp_mqvpn.o

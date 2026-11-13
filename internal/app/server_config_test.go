@@ -24,7 +24,7 @@ func TestSharedUDPConfigAndDefaults(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil { t.Fatal(err) }
 	if cfg.Listen != defaultServerListen { t.Fatalf("expected UDP/443, got %q", cfg.Listen) }
-	if cfg.Instances[0].TC==nil || cfg.Instances[0].TC.Mode!="auto" || !cfg.Instances[0].TC.Stats || cfg.Instances[0].TC.MSSClamp!="auto" {t.Fatal("default TCX must use auto MSS clamp and stats")}
+	if cfg.Instances[0].TC==nil || cfg.Instances[0].TC.Mode!="auto" || !cfg.Instances[0].TC.Stats || cfg.Instances[0].TC.MSSClamp!="auto" || cfg.Instances[0].TC.Object!="" {t.Fatal("default TCX must use bundled ELF, auto MSS clamp and stats")}
 	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 0 || cfg.Instances[0].MTU != 0 {
 		t.Fatal("auto MTU/frame must stay omitted until runtime WAN discovery")
 	}
@@ -131,7 +131,7 @@ func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
 }
 
 
-func TestServerTCConfigRequiresExplicitELF(t *testing.T){
+func TestServerTCConfigAndLegacyObjectSemantics(t *testing.T){
 	inst:=sampleInstance("tc","tc.example.test","mq0")
 	inst.TC=&tcebpf.Config{MSSClamp:"auto",Stats:true}
 	cfg:=ServerConfig{Instances:[]ServerInstance{inst}}
@@ -144,4 +144,8 @@ func TestServerTCConfigRequiresExplicitELF(t *testing.T){
 	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
 	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
 	if cfg.Instances[0].TC==nil||cfg.Instances[0].TC.MSSClamp!="auto"{t.Fatal("TC config lost")}
+	inst.TC=&tcebpf.Config{Mode:"required",MSSClamp:"auto",Stats:true}
+	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
+	if err:=cfg.Validate();err!=nil{t.Fatalf("required mode must accept embedded ELF without object: %v",err)}
+	if cfg.Instances[0].TC.Object!="" {t.Fatal("explicit required mode unexpectedly requires external ELF")}
 }

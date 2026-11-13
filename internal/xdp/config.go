@@ -23,13 +23,12 @@ type Config struct {
 }
 
 // Normalize checks syntax without touching kernel eBPF state. XDP is opt-in.
-// A compiled ELF is required for any enabled interface.
+// An empty object uses the embedded XDP ELF.
 func (c Config) Normalize() (Config,error) {
 	if len(c.Interfaces)==0 {
 		if c.Object!="" || c.Mode!="" {return Config{},errors.New("XDP interfaces must be set when object or mode is configured")}
 		return Config{},nil
 	}
-	if c.Object=="" {return Config{},errors.New("xdp.object must point to a compiled BPF ELF")}
 	if c.Mode=="" {c.Mode="driver"}
 	if c.Mode!="driver"&&c.Mode!="generic" {return Config{},fmt.Errorf("invalid XDP mode %q (driver|generic)",c.Mode)}
 	if len(c.Interfaces)>16 {return Config{},errors.New("too many XDP interfaces (max 16)")}

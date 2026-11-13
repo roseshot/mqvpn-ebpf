@@ -6,10 +6,12 @@ import (
 	"strings"
 )
 
-const DefaultObject = "/usr/lib/mqvpn/tun_tc.o"
+// Empty object selects the ELF embedded in the Go executable.
+// A non-empty object overrides the embedded program with a local ELF path.
+const DefaultObject = ""
 
 // Config controls per-TUN TCX processing. Auto falls back to ordinary TUN
-// forwarding when the kernel, permissions, or compiled ELF is unavailable.
+// forwarding when the kernel, permissions, or program load is unavailable.
 type Config struct {
 	Mode     string `yaml:"mode,omitempty"` // off | auto | required
 	Object   string `yaml:"object,omitempty"`
@@ -40,7 +42,6 @@ func (c Config) Normalize() (Config, error) {
 	case "off":
 		return Config{Mode: "off", MSSClamp: "off"}, nil
 	case "auto", "required":
-		if c.Object == "" { c.Object = DefaultObject }
 		if c.MSSClamp == "" { c.MSSClamp = "auto" }
 	default:
 		return Config{}, fmt.Errorf("invalid TC eBPF mode %q (off|auto|required)", c.Mode)

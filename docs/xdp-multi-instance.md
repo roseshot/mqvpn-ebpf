@@ -25,8 +25,7 @@ Configure the optional WAN XDP collector in the Server YAML:
 ~~~yaml
 xdp:
   interfaces: [enp1s0, enp2s0]
-  object: /usr/lib/mqvpn/xdp_mqvpn.o
-  mode: driver
+  mode: driver  # bundled XDP ELF; object path optional
 instances:
   - name: vpn-a
     server_name: vpn-a.example.com
@@ -46,12 +45,12 @@ instances:
     client_ca: /etc/mqvpn/tls/b-ca.crt
 ~~~
 
-Build and deploy the current object:
-
-~~~bash
-make bpf
-sudo install -D -m 0644 bpf/xdp_mqvpn.o /usr/lib/mqvpn/xdp_mqvpn.o
-~~~
+The server executable includes the compiled XDP ELF by default; no
+separate object needs to be deployed. XDP attaches only when `interfaces`
+is configured. The optional `xdp.object: /path/to/xdp_mqvpn.o` overrides
+the embedded ELF; changing an external override on a running dispatcher
+still requires a server restart. After editing the C program, run
+`make bpf` and commit the regenerated embedded object.
 
 Statistics are logged at Server shutdown. XDP does not install
 routes, filter incoming traffic, or replace the Go UDP transport.
