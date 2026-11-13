@@ -19,6 +19,7 @@ type Config struct {
 	Interfaces []string `json:"interfaces,omitempty"`
 	Object string `json:"object,omitempty"`
 	Mode string `json:"mode,omitempty"`
+	ObjectChecksum [32]byte `json:"-"`
 }
 
 // Normalize checks syntax without touching kernel eBPF state. XDP is opt-in.
