@@ -191,6 +191,68 @@ Existing session closures follow the hub's lifecycle. **Changing the
 top-level `listen` address requires restarting the daemon** (a UDP socket
 cannot safely be rebound in place).
 
+## TCP fallback (optional, default TCP/443)
+
+UDP/443 **MPQUIC + HTTP/3 DATAGRAM** remains the primary transport. When
+the QUIC initial handshake cannot complete before the configured UDP
+deadline, the client in `auto` mode falls back to **TLS 1.3 + HTTP/1.1
+Upgrade `connect-ethernet` + RFC 9297 DATAGRAM Capsules** on TCP/443.
+This is the HTTP/1.1 protocol defined by the October 2026
+CONNECT-ETHERNET draft, **not HTTP/2 Extended CONNECT**.
+
+Server-side YAML (opt-in so deploying on a host with an existing TCP/443
+service does not fail unexpectedly):
+
+~~~yaml
+# Top-level, next to instances:
+tcp_fallback:
+  enabled: true
+  # listen: "0.0.0.0:443"  # optional; defaults to TCP/443
+~~~
+
+Both listeners have the **same numeric default port 443**, but use separate
+protocols and sockets: UDP/443 for MPQUIC and TCP/443 for TLS fallback.
+They use the same SNI tenant registry, client CA, fingerprint authorization,
+TUN and peer mapping. Changes to the TCP listener enabled/address settings
+require a daemon restart; instance peer map changes continue to hot-reload.
+The host must permit TCP/443 ingress as well as UDP/443.
+
+Client (automatic by default):
+
+~~~bash
+mqvpn-client \
+  --url https://customer-a.vpn.example.com/.well-known/masque/ethernet/ \
+  --transport auto --udp-dial-timeout 5s \
+  --tun mq0 --source-interface enp1s0 \
+  --ca /etc/mqvpn/a-ca.crt \
+  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+~~~
+
+An independent `--tcp-port` flag defaults to 443 even if the QUIC URL
+specifies a different UDP port. Use it when Server `tcp_fallback.listen`
+is configured to a nonstandard TCP port.
+
+Choose `--transport quic` to disable fallback, or `--transport tcp` to
+force TCP without an initial QUIC attempt. Both the pinned-IP
+(`--connect-ip`) and the literal-IP URL + `--server-name` forms
+are supported. TLS certificate validation and tenant SNI remain mandatory.
+
+**Safe downgrade boundary:** automatic fallback occurs **only on initial
+QUIC dial timeout**, not on TLS certificate errors, mTLS rejection, bad
+CONNECT responses, or other post-handshake application errors. There is no
+simultaneous UDP/TCP peer session, no seamless mid-session failover or
+automatic failback probing yet. Forced TCP uses **primary WAN only**;
+auto fallback also uses primary WAN and logs if WAN2 is configured.
+
+The TCP transport is reliable and ordered and can suffer head-of-line
+blocking (especially for tunneled TCP). It does not use MPQUIC multi-path
+or the optional XDP acceleration. The data carried remains the same
+Context-ID-0 synthetic Ethernet frame from the existing L3 TUN shim.
+No inner packet ACL, multicast filter, or kernel network configuration is
+added by fallback.
+
+See [docs/tcp-fallback.md](docs/tcp-fallback.md).
+
 ## Optional XDP (not AF_XDP Zero-Copy)
 
 If enabled, one XDP dispatcher per physical WAN NIC recognizes the **one
@@ -230,7 +292,7 @@ The unconditional Dependabot auto-merge policy remains unchanged.
 - IPv4 TUN example MTU: 1100; CONNECT-ETHERNET over QUIC DATAGRAM cannot
   fragment oversized Ethernet frames. Standard IPv6 needs >=1280 and
   sufficient underlay PMTU.
-- No LAN L2 bridge or mDNS reflector, no full AF_XDP Zero-Copy backend,
+- No HTTP/2 TCP fallback or automatic mid-session failback; no LAN L2 bridge or mDNS reflector, no full AF_XDP Zero-Copy backend,
   no measured N200/I226 throughput, no real multi-tenant E2E test yet.
 
 Protocol reference: https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/

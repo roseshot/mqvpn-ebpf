@@ -65,3 +65,28 @@ func TestExplicitSharedUDPPortPreserved(t *testing.T) {
 	if err := cfg.Validate(); err != nil { t.Fatal(err) }
 	if cfg.Listen != "127.0.0.1:54433" { t.Fatalf("explicit port changed to %q",cfg.Listen) }
 }
+
+
+func TestTCPFallbackEnabledDefaultPortAndExplicitPort(t *testing.T){
+	cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("vpn","vpn.example.test","mq0")}}
+	cfg.TCPFallback=TCPFallbackConfig{Enabled:true}
+	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
+	if cfg.Listen!="0.0.0.0:443" || cfg.TCPFallback.Listen!="0.0.0.0:443" {
+		t.Fatalf("expected UDP and TCP to default independently to 443: %+v",cfg)
+	}
+	cfg.TCPFallback.Listen="127.0.0.1:8443"
+	if err:=cfg.Validate();err!=nil || cfg.TCPFallback.Listen!="127.0.0.1:8443"{
+		t.Fatalf("explicit TCP listener rejected: %+v %v",cfg,err)
+	}
+}
+
+func TestTCPFallbackDisabledListenerRejected(t *testing.T){
+	cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("vpn","vpn.example.test","mq0")}}
+	cfg.TCPFallback.Listen="127.0.0.1:8443"
+	if err:=cfg.Validate();err==nil{t.Fatal("disabled TCP listener configuration accepted")}
+	cfg.TCPFallback.Enabled=true
+	for _,listen:=range []string{":0","not-a-listen",":70000"}{
+		cfg.TCPFallback.Listen=listen
+		if err:=cfg.Validate();err==nil{t.Fatalf("invalid TCP listen %q accepted",listen)}
+	}
+}
