@@ -7,6 +7,9 @@ table. The data plane is L3 TUN; mqvpn never configures host routes.
 Different VPN instances can simultaneously carry `10.77.0.0/24` and
 `192.168.20.0/24`. Linux must distinguish those overlapping destinations
 using separate VRFs or network namespaces, not by a single main FIB.
+Because the connected-prefix route now appears automatically, attach
+each persistent TUN to its intended VRF **before** starting mqvpn.
+Otherwise two identical kernel-generated routes may compete in main.
 
 Example system administrator setup:
 
@@ -65,10 +68,11 @@ Both DNS names must resolve to the same host and each certificate must have
 its corresponding SNI in the DNS Subject Alternative Name.
 
 The daemon creates or attaches TUNs and sets their IP/CIDR, MTU and UP
-state. It does not create VRFs, change interface masters, install
-`ip route` or `ip rule` entries, or configure forwarding and multicast
-routing. `IFA_F_NOPREFIXROUTE` suppresses automatic connected-prefix
-routes (the kernel keeps its mandatory local-address routes).
+state. The Linux kernel **automatically installs the normal connected-prefix
+route in the TUN's routing domain** as well as local-address routes.
+The daemon does not create VRFs, change interface masters, explicitly
+install custom `ip route` or `ip rule` entries, or configure forwarding
+and multicast routing.
 If you need VRF isolation, precreate persistent TUN devices and attach
 them to their VRFs before starting the daemon. For ordinary single-domain
 installations no manual TUN creation is necessary.

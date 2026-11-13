@@ -109,3 +109,21 @@ func TestInstanceAddressAndMTUValidation(t *testing.T) {
 		if (err==nil)!=tc.valid{t.Fatalf("address %q mtu %d max-frame %d: %v",tc.address,tc.mtu,tc.frame,err)}
 	}
 }
+
+
+func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
+	for _,tc:=range []struct{address string;mtu,frame int}{
+		{"10.77.0.1/24",1360,1374},
+		{"10.77.0.1/24",1400,1414},
+		{"fd77::1/64",1420,1434},
+	}{
+		inst:=sampleInstance("mtu","mtu.example.test","mq0")
+		inst.Address=tc.address
+		inst.MTU=tc.mtu
+		inst.MaxFrame=tc.frame
+		cfg:=ServerConfig{Instances:[]ServerInstance{inst}}
+		if err:=cfg.Validate();err!=nil{
+			t.Fatalf("TUN MTU %d and max_frame %d unexpectedly rejected: %v",tc.mtu,tc.frame,err)
+		}
+	}
+}
