@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
 func sampleInstance(name, serverName, tunName string) ServerInstance {
@@ -126,4 +127,20 @@ func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
 			t.Fatalf("TUN MTU %d and max_frame %d unexpectedly rejected: %v",tc.mtu,tc.frame,err)
 		}
 	}
+}
+
+
+func TestServerTCConfigRequiresExplicitELF(t *testing.T){
+	inst:=sampleInstance("tc","tc.example.test","mq0")
+	inst.TC=&tcebpf.Config{MSSClamp:"auto",Stats:true}
+	cfg:=ServerConfig{Instances:[]ServerInstance{inst}}
+	if err:=cfg.Validate();err==nil{t.Fatal("MSS clamp enabled without ELF accepted")}
+	inst.TC=&tcebpf.Config{MSSClamp:"off"}
+	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
+	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
+	if cfg.Instances[0].TC!=nil{t.Fatal("off-only TC config should normalize to disabled")}
+	inst.TC=&tcebpf.Config{Object:"bpf/tun_tc.o",MSSClamp:"auto",Stats:true}
+	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
+	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
+	if cfg.Instances[0].TC==nil||cfg.Instances[0].TC.MSSClamp!="auto"{t.Fatal("TC config lost")}
 }

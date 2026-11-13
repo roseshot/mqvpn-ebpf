@@ -16,6 +16,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
@@ -35,12 +36,17 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
 	maxFrame := fs.Int("max-frame", 0, "maximum Ethernet frame bytes, 0 = computed TUN MTU + 14")
+	tcObject := fs.String("tc-object", "", "optional compiled TUN TCX eBPF ELF")
+	mssClamp := fs.String("mss-clamp", "off", "TUN TCP SYN MSS clamp: off|auto|numeric")
+	tcStats := fs.Bool("tc-stats", false, "collect TUN ingress/egress BPF counters")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	if err := fs.Parse(args); err != nil { return err }
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
 	if err:=mtu.ValidateRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
+	tcConfig,err:=(tcebpf.Config{Object:*tcObject,MSSClamp:*mssClamp,Stats:*tcStats}).Normalize()
+	if err!=nil{return fmt.Errorf("TUN TC eBPF config: %w",err)}
 	if *transportMode!="auto"&&*transportMode!="quic"&&*transportMode!="tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)",*transportMode)
 	}
@@ -55,7 +61,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcpOptions:=clientTCPOptions{
 		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,tcpPort:*tcpPort,
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
-		tunAddress:*tunAddress,tunMTU:*tunMTU,
+		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,
 	}
 	if *transportMode=="tcp" {
 		if *wan2!=""||*wan2Iface!="" {return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")}
@@ -177,6 +183,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		"auto",budget.Auto,"wan_links",underlays)
 	dev, err := tun.Open(*tunName,*tunAddress,budget.TUNMTU)
 	if err != nil { return err }
+	tcAttachment,err:=tcebpf.Attach(*tunName,tcConfig,budget.TUNMTU)
+	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}
+	defer reportAndCloseTC(tcAttachment,logger)
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
 	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",*tunAddress,"mtu",budget.TUNMTU)

@@ -64,8 +64,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
-      - name: Compile XDP dispatcher
+      - name: Compile XDP and TUN TCX eBPF programs
         run: make bpf
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+      - name: Verify TCX MSS rewrite and checksums in the kernel
+        run: |
+          sudo modprobe tun || true
+          test -c /dev/net/tun
+          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=mod -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
 
   tun-integration:
     name: Linux TUN connected-route integration

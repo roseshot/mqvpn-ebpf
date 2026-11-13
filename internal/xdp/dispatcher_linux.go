@@ -25,6 +25,7 @@ type bpfDevice struct{
 	link link.Link
 	ports *ebpf.Map
 	xsks *ebpf.Map
+	stats *ebpf.Map
 	current map[uint16]bool
 }
 
@@ -40,6 +41,7 @@ func attachDevice(ifname string,cfg Config)(portDevice,error){
 	program:=col.Programs["xdp_mqvpn"]
 	ports:=col.Maps["instance_ports"]
 	xsks:=col.Maps["xsks_map"]
+	stats:=col.Maps["xdp_stats"]
 	if program==nil||ports==nil||xsks==nil{
 		col.Close()
 		return nil,errors.New("BPF object missing xdp_mqvpn / instance_ports / xsks_map")
@@ -50,7 +52,7 @@ func attachDevice(ifname string,cfg Config)(portDevice,error){
 		Program:program,Interface:nic.Index,Flags:flags,
 	})
 	if err!=nil{col.Close();return nil,fmt.Errorf("attach XDP to %s: %w",ifname,err)}
-	return &bpfDevice{collection:col,link:lnk,ports:ports,xsks:xsks,current:map[uint16]bool{}},nil
+	return &bpfDevice{collection:col,link:lnk,ports:ports,xsks:xsks,stats:stats,current:map[uint16]bool{}},nil
 }
 
 func(d *bpfDevice)ReplacePorts(next []uint16)error{
@@ -158,4 +160,46 @@ func(c *Controller)Close()error{
 	c.cfg=Config{}
 	c.ports=nil
 	return nil
+}
+
+
+// Counters is the sum of per-CPU WAN ingress XDP counters.
+// On older XDP objects without xdp_stats the statistics are unavailable
+// but UDP XDP_PASS behavior remains backwards compatible.
+type Counters struct {
+	Packets uint64
+	Bytes uint64
+	MatchedUDP uint64
+	MatchedBytes uint64
+	Redirects uint64
+	VLAN uint64
+}
+func(d *bpfDevice)Counters()(Counters,error){
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stats==nil{return Counters{},errors.New("XDP object has no xdp_stats map")}
+	cpus,err:=ebpf.PossibleCPU()
+	if err!=nil{return Counters{},err}
+	samples:=make([]Counters,cpus)
+	var index uint32
+	if err:=d.stats.Lookup(index,&samples);err!=nil{return Counters{},err}
+	var result Counters
+	for _,s:=range samples{
+		result.Packets+=s.Packets
+		result.Bytes+=s.Bytes
+		result.MatchedUDP+=s.MatchedUDP
+		result.MatchedBytes+=s.MatchedBytes
+		result.Redirects+=s.Redirects
+		result.VLAN+=s.VLAN
+	}
+	return result,nil
+}
+func(c *Controller)Snapshots()map[string]Counters{
+	out:=make(map[string]Counters)
+	for name,d:=range c.devices{
+		if collector,ok:=d.(interface{Counters()(Counters,error)});ok {
+			if stats,err:=collector.Counters();err==nil{out[name]=stats}
+		}
+	}
+	return out
 }

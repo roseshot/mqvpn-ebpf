@@ -17,6 +17,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
@@ -25,6 +26,7 @@ type clientTCPOptions struct {
 	wanIP,wanInterface,tunName string
 	tunAddress string
 	tunMTU int
+	tcConfig tcebpf.Config
 	caFile,certFile,keyFile string
 	maxFrame int
 	tcpPort int
@@ -107,6 +109,9 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if err!=nil{return err}
 	device,err:=tun.Open(o.tunName,o.tunAddress,budget.TUNMTU)
 	if err!=nil{return err}
+	tcAttachment,err:=tcebpf.Attach(o.tunName,o.tcConfig,budget.TUNMTU)
+	if err!=nil{_ = device.Close();return fmt.Errorf("attach TCP TUN TC eBPF: %w",err)}
+	defer reportAndCloseTC(tcAttachment,logger)
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)
 	return p2mp.ClientPump(ctx,device,stream,budget.MaxFrame,logger)
 }
