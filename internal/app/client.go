@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -16,22 +16,33 @@ import (
 	"github.com/qoke/mp-quic-go/http3"
 	"github.com/roseshot/mqvpn-ebpf/internal/forward"
 	"github.com/roseshot/mqvpn-ebpf/internal/tap"
+	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
-func runClient(ctx context.Context, args []string, logger *slog.Logger) error {
+func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
 	urlFlag := fs.String("url", "", "https URL of remote CONNECT-ETHERNET proxy")
 	wan1 := fs.String("wan1", "", "source IPv4/IPv6 address for primary QUIC path (required)")
 	wan2 := fs.String("wan2", "", "source address for secondary QUIC path (optional)")
-	tapName := fs.String("tap", "mq0", "name of preconfigured persistent TAP")
+	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
+	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
+	fs.StringVar(wan1, "source-ip", "", "primary WAN local source IP")
+	fs.StringVar(wan1, "wan1-ip", "", "alias of --source-ip")
+	fs.StringVar(wan1Iface, "wan1-interface", "", "alias of --source-interface")
+	fs.StringVar(wan2, "wan2-ip", "", "alias of --wan2")
+	fs.StringVar(wan2Iface, "wan2-iface", "", "alias of --wan2-interface")
+	tapName := fs.String("tap", "mq0", "name of standalone TAP tunnel interface")
+	tunnelIP := fs.String("tunnel-ip", "", "TAP interface CIDR, e.g. 10.77.0.2/30 (required)")
+	tunnelMTU := fs.Int("tunnel-mtu", 1100, "TAP L3 MTU; default is safe for IPv4 QUIC DATAGRAM test")
 	caFile := fs.String("ca", "", "CA verifying the remote server")
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
 	maxFrame := fs.Int("max-frame", 1160, "maximum Ethernet frame bytes, excluding FCS")
 	if err := fs.Parse(args); err != nil { return err }
 	if *maxFrame < 14 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
-	if *wan1 == "" { return errors.New("--wan1 source IP is required") }
-	if *wan2 != "" && *wan1 == *wan2 { return errors.New("--wan1 and --wan2 must be different source IPs") }
+	if *wan1 == "" && *wan1Iface == "" { return errors.New("primary WAN requires --source-ip and/or --source-interface") }
+	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
+	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
 	u, err := url.Parse(*urlFlag)
 	if err != nil || u == nil || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.User != nil || u.Fragment != "" {
 		return errors.New("--url must be an absolute https://host:port/path URL")
@@ -42,8 +53,10 @@ func runClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	serverAddr, err := net.ResolveUDPAddr("udp", u.Host)
 	if err != nil { return fmt.Errorf("resolve QUIC peer: %w", err) }
-	base, err := listenSource(*wan1, serverAddr)
+	if err := tap.Configure(*tapName, *tunnelIP, *tunnelMTU, *maxFrame); err != nil { return fmt.Errorf("configure tunnel interface: %w", err) }
+	base, selectedIP, err := wan.Listen(ctx, *wan1, *wan1Iface, serverAddr)
 	if err != nil { return err }
+	logger.Info("primary WAN bound", "source_ip", selectedIP, "interface", *wan1Iface, "local", base.LocalAddr())
 	tr := &quic.Transport{Conn: base}
 	qconf := &quic.Config{
 		EnableDatagrams: true,
@@ -98,12 +111,13 @@ func runClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	logger.Info("CONNECT-ETHERNET accepted", "remote", u.Host)
 
-	if *wan2 != "" {
+	if *wan2 != "" || *wan2Iface != "" {
 		if !conn.ConnectionState().SupportsMultipath {
 			return errors.New("peer did not negotiate IETF Multipath QUIC")
 		}
-		otherUDP, err := listenSource(*wan2, serverAddr)
+		otherUDP, secondIP, err := wan.Listen(ctx, *wan2, *wan2Iface, serverAddr)
 		if err != nil { return err }
+		logger.Info("secondary WAN bound", "source_ip", secondIP, "interface", *wan2Iface, "local", otherUDP.LocalAddr())
 		second = &quic.Transport{Conn: otherUDP}
 		path, err := conn.AddPath(second)
 		if err != nil { return fmt.Errorf("add second path: %w", err) }
@@ -125,19 +139,6 @@ func runClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	close(done)
 	logger.Info("TAP bridging stopped", "stats", counters.Snapshot())
 	return err
-}
-
-func listenSource(ipString string, peer *net.UDPAddr) (*net.UDPConn, error) {
-	ip := net.ParseIP(ipString)
-	if ip == nil { return nil, fmt.Errorf("invalid WAN source IP %q", ipString) }
-	if (ip.To4() == nil) != (peer.IP.To4() == nil) {
-		return nil, fmt.Errorf("WAN source %s has different IP family than peer %s", ip, peer.IP)
-	}
-	network := "udp4"
-	if ip.To4() == nil { network = "udp6" }
-	c, err := net.ListenUDP(network, &net.UDPAddr{IP: ip})
-	if err != nil { return nil, fmt.Errorf("bind WAN source %s: %w", ip, err) }
-	return c, nil
 }
 
 func printPaths(done <-chan struct{}, conn *quic.Conn, logger *slog.Logger) {

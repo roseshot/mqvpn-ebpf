@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -17,10 +17,12 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/tap"
 )
 
-func runServer(ctx context.Context, args []string, logger *slog.Logger) error {
+func RunServer(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("server", flag.ContinueOnError)
 	listen := fs.String("listen", ":4433", "UDP listen address")
-	tapName := fs.String("tap", "mq0", "name of the preconfigured persistent TAP")
+	tapName := fs.String("tap", "mq0", "name of standalone TAP tunnel interface")
+	tunnelIP := fs.String("tunnel-ip", "", "TAP interface CIDR, e.g. 10.77.0.1/30 (required)")
+	tunnelMTU := fs.Int("tunnel-mtu", 1100, "TAP L3 MTU (IPv4 test default)")
 	path := fs.String("path", defaultPath, "exact CONNECT-ETHERNET URI path")
 	certFile := fs.String("cert", "", "server TLS certificate PEM")
 	keyFile := fs.String("key", "", "server TLS key PEM")
@@ -33,6 +35,8 @@ func runServer(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	pool, err := certPool(*clientCA)
 	if err != nil { return err }
+	if err := tap.Configure(*tapName, *tunnelIP, *tunnelMTU, *maxFrame); err != nil { return fmt.Errorf("configure tunnel interface: %w", err) }
+	logger.Info("routed TAP tunnel ready", "interface", *tapName, "cidr", *tunnelIP, "mtu", *tunnelMTU)
 
 	var active atomic.Bool
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

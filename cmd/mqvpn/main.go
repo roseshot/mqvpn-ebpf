@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-)
 
-const defaultPath = "/.well-known/masque/ethernet/"
+	"github.com/roseshot/mqvpn-ebpf/internal/app"
+)
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -27,9 +27,9 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "server":
-		err = runServer(ctx, os.Args[2:], logger)
+		err = app.RunServer(ctx, os.Args[2:], logger)
 	case "client":
-		err = runClient(ctx, os.Args[2:], logger)
+		err = app.RunClient(ctx, os.Args[2:], logger)
 	case "help", "-h", "--help":
 		fmt.Println("usage: mqvpn server|client [options]")
 		return
