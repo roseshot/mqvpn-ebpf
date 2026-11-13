@@ -9,6 +9,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
@@ -30,6 +31,7 @@ type ServerInstance struct {
 	Key        string `yaml:"key"`
 	ClientCA   string `yaml:"client_ca"`
 	MaxFrame   int    `yaml:"max_frame,omitempty"`
+	TC         *tcebpf.Config `yaml:"tc,omitempty"`
 }
 
 // TCPFallbackConfig enables a separate TCP/443 TLS listener. It shares the
@@ -96,6 +98,11 @@ func (c *ServerConfig) Validate() error {
 		}
 		if err:=mtu.ValidateRequest(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
 			return fmt.Errorf("instance %s: %w",inst.Name,err)
+		}
+		if inst.TC!=nil{
+			next,err:=inst.TC.Normalize()
+			if err!=nil{return fmt.Errorf("instance %s TC eBPF: %w",inst.Name,err)}
+			if next.Enabled(){inst.TC=&next}else{inst.TC=nil}
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
 		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }

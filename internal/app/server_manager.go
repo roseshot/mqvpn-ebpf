@@ -242,7 +242,12 @@ func (m *serverManager) close() {
 	if m.listenerDone != nil { <-m.listenerDone }
 	m.mux.Publish(map[string]*liveInstance{})
 	for name := range m.instances { m.stop(name) }
-	if m.xdp != nil { _ = m.xdp.Close() }
+	if m.xdp != nil {
+		if counters:=m.xdp.Snapshots();len(counters)>0 {
+			m.logger.Info("WAN XDP ingress counters","interfaces",counters)
+		}
+		_ = m.xdp.Close()
+	}
 }
 
 // The single shared UDP socket is bound exactly once for the daemon lifetime.

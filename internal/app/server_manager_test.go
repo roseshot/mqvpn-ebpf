@@ -15,6 +15,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
 func testServerFiles(t *testing.T) (ServerConfig, string) {
@@ -110,4 +111,21 @@ func TestValidateCLIUsesYAMLWithoutTUN(t *testing.T) {
 }
 func TestReloadCommandRejectsInvalidPID(t *testing.T) {
 	if err := reloadServerCLI([]string{"--pid", "0"}, nil); err == nil { t.Fatal("invalid PID accepted") }
+}
+
+
+func TestTCObjectReloadUpdatesOnlyInstanceHash(t *testing.T) {
+	cfg,_:=testServerFiles(t)
+	object:=filepath.Join(t.TempDir(),"tun_tc.o")
+	if err:=os.WriteFile(object,[]byte("tc-object-v1"),0600);err!=nil{t.Fatal(err)}
+	cfg.Instances[0].TC=&tcebpf.Config{Object:object,MSSClamp:"auto",Stats:true}
+	first,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(object,[]byte("tc-object-v2"),0600);err!=nil{t.Fatal(err)}
+	second,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	if first.instances["edge-a"].staticHash==second.instances["edge-a"].staticHash{
+		t.Fatal("TC ELF replacement failed to trigger instance restart")
+	}
+	if first.listen!=second.listen{t.Fatal("TC ELF change modified shared UDP listener")}
 }

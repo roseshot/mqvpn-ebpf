@@ -27,12 +27,30 @@ struct {
     __type(value, __u32);   // AF_XDP socket FD.
 } xsks_map SEC(".maps");
 
+// Per-CPU counters keep the XDP fast path free of global atomics.
+// This dispatcher never blocks unrelated WAN traffic.
+struct xdp_counters {
+    __u64 packets;
+    __u64 bytes;
+    __u64 matched_udp;
+    __u64 matched_bytes;
+    __u64 redirects;
+    __u64 vlan;
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct xdp_counters);
+} xdp_stats SEC(".maps");
+
 struct vlan_header {
     __be16 tci;
     __be16 proto;
 };
 
-static __always_inline int dispatch_udp(void *l4, void *end, struct xdp_md *ctx) {
+static __always_inline int dispatch_udp(void *l4, void *end, struct xdp_md *ctx,
+                                        struct xdp_counters *stats) {
     struct udphdr *udp = l4;
     if ((void *)(udp + 1) > end)
         return XDP_PASS;
@@ -40,6 +58,10 @@ static __always_inline int dispatch_udp(void *l4, void *end, struct xdp_md *ctx)
     __u8 *enabled = bpf_map_lookup_elem(&instance_ports, &dport);
     if (!enabled || !*enabled)
         return XDP_PASS;
+    if (stats) {
+        stats->matched_udp++;
+        stats->matched_bytes += (__u64)((long)ctx->data_end - (long)ctx->data);
+    }
 
     // Never redirect unless a real AF_XDP socket is already installed
     // in the queue index for this device. An empty XSKMAP must not turn
@@ -49,6 +71,8 @@ static __always_inline int dispatch_udp(void *l4, void *end, struct xdp_md *ctx)
         return XDP_PASS;
     if (!bpf_map_lookup_elem(&xsks_map, &queue))
         return XDP_PASS;
+    if (stats)
+        stats->redirects++;
     return bpf_redirect_map(&xsks_map, queue, XDP_PASS);
 }
 
@@ -56,6 +80,12 @@ SEC("xdp")
 int xdp_mqvpn(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *end = (void *)(long)ctx->data_end;
+    __u32 stats_key = 0;
+    struct xdp_counters *stats = bpf_map_lookup_elem(&xdp_stats, &stats_key);
+    if (stats) {
+        stats->packets++;
+        stats->bytes += (__u64)((long)end - (long)data);
+    }
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > end)
         return XDP_PASS;
@@ -68,6 +98,8 @@ int xdp_mqvpn(struct xdp_md *ctx) {
             proto != bpf_htons(ETH_P_8021AD))
             break;
         struct vlan_header *v = l3;
+        if (stats)
+            stats->vlan++;
         if ((void *)(v + 1) > end)
             return XDP_PASS;
         proto = v->proto;
@@ -94,7 +126,7 @@ int xdp_mqvpn(struct xdp_md *ctx) {
     } else {
         return XDP_PASS;
     }
-    return dispatch_udp(l4, end, ctx);
+    return dispatch_udp(l4, end, ctx, stats);
 }
 
 char LICENSE[] SEC("license") = "GPL";

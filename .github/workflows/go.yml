@@ -64,7 +64,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
-      - name: Compile XDP dispatcher
+      - name: Compile XDP and TUN TCX eBPF programs
         run: make bpf
 
   tun-integration:

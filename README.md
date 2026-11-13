@@ -382,6 +382,57 @@ attaches the device and assigns only its configured address/MTU/UP state.
 
 See [docs/tcp-fallback.md](docs/tcp-fallback.md).
 
+## TC eBPF TCP MSS Clamp and traffic statistics (optional)
+
+TCX eBPF on the L3 TUN can cap TCP MSS in SYN and SYN-ACK
+without calling `tc`, `iptables`, `nftables`, or `os/exec`.
+The Linux kernel must support **TCX (6.6+)**. Both ingress and egress
+are attached to handle VPN traffic moving in either direction.
+
+Build the TC ELF with `make bpf`, then opt in per Server instance:
+
+~~~yaml
+instances:
+  - name: customer-a
+    server_name: customer-a.vpn.example.com
+    tun: mq0
+    address: 10.77.0.1/24
+    tc:
+      object: /usr/lib/mqvpn/tun_tc.o
+      mss_clamp: auto  # off | auto | numeric (e.g. "1280")
+      stats: true
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a-server.crt
+    key: /etc/mqvpn/tls/a-server.key
+    client_ca: /etc/mqvpn/tls/a-clients.crt
+~~~
+
+Client can use `--tc-object /usr/lib/mqvpn/tun_tc.o
+--mss-clamp auto --tc-stats`. The same policy is used by QUIC and TCP
+fallback. Without TC options the daemon does **not** attach TC eBPF,
+so older kernels and existing deployments remain compatible.
+
+Auto MSS clamp uses the effective TUN MTU (not the raw WAN MTU):
+for MTU 1400, IPv4 MSS is at most **1360** and IPv6 MSS is at
+most **1340**. Explicit values only lower these ceilings.
+Existing smaller peer MSS values stay unchanged. Only SYN/SYN-ACK
+MSS options are modified; TCP payloads and other packets are passed.
+Malformed IP/TCP options or fragmented IPv4/IPv6 packets are never
+rewritten. BPF computes updated TCP checksums using a kernel helper;
+if a checksum/write operation fails, the packet is dropped rather
+than forwarded with corruption.
+
+Separate per-CPU TUN counters include ingress/egress packets/bytes,
+IPv4/IPv6, SYN, clamped, oversize observed and parser/checksum errors.
+Counters are logged when a TUN instance closes. TC eBPF doesn't
+install routes or change the kernel-generated connected-prefix route.
+
+WAN XDP now adds per-CPU packet/byte/UDP port-match/redirect counters
+while continuing to pass packets through the normal UDP kernel
+socket when no AF_XDP socket is installed; the XDP counters are
+logged when the server shuts down. See
+[TC eBPF data plane](docs/tc-ebpf.md).
+
 ## Optional XDP (not AF_XDP Zero-Copy)
 
 If enabled, one XDP dispatcher per physical WAN NIC recognizes the **one

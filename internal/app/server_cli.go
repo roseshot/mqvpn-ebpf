@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
 // runInstanceCLI edits the YAML instance configuration. Shared UDP listen is top-level.
@@ -34,6 +35,9 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	ca:=fs.String("client-ca","","client CA certificate path")
 	path:=fs.String("path","","CONNECT-ETHERNET URI path")
 	maxFrame:=fs.Int("max-frame",0,"maximum Ethernet frame bytes")
+	tcObject:=fs.String("tc-object","","per-instance compiled TUN TCX eBPF ELF")
+	mssClamp:=fs.String("mss-clamp","","TUN TCP MSS clamp: off, auto or numeric")
+	tcStats:=fs.Bool("tc-stats",false,"enable TUN TCX packet counters")
 	pid:=fs.Int("pid",0,"optional running daemon PID to notify after a successful edit")
 	if err:=fs.Parse(args[1:]);err!=nil{return err}
 	if *configPath==""||fs.NArg()!=0{return errors.New("--config path is required, with no positional arguments")}
@@ -79,6 +83,12 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 		if updates["client-ca"]{inst.ClientCA=*ca}
 		if updates["path"]{inst.Path=*path}
 		if updates["max-frame"]{inst.MaxFrame=*maxFrame}
+		if updates["tc-object"]||updates["mss-clamp"]||updates["tc-stats"]{
+			if inst.TC==nil{inst.TC=&tcebpf.Config{}}
+			if updates["tc-object"]{inst.TC.Object=*tcObject}
+			if updates["mss-clamp"]{inst.TC.MSSClamp=*mssClamp}
+			if updates["tc-stats"]{inst.TC.Stats=*tcStats}
+		}
 		if found{cfg.Instances[index]=inst}else{cfg.Instances=append(cfg.Instances,inst)}
 	}
 	// Validation includes the referenced cert/keys and peer YAML, not just

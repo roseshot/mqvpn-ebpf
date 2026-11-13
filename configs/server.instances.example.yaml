@@ -28,6 +28,11 @@ instances:
     server_name: customer-a.vpn.example.com
     tun: mq0
     address: 10.77.0.1/24
+    # Optional; Linux kernel >=6.6, compiled via make bpf:
+    # tc:
+    #   object: /usr/lib/mqvpn/tun_tc.o
+    #   mss_clamp: auto
+    #   stats: true
     peers: /etc/mqvpn/peers-a.yaml
     path: /.well-known/masque/ethernet/
     cert: /etc/mqvpn/tls/a-server.crt

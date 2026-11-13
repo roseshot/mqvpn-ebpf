@@ -22,3 +22,15 @@ func TestClientRequiresExplicitTUNAddressBeforeNetworking(t *testing.T){
 		}
 	}
 }
+
+
+func TestClientRejectsTCConfigWithoutObjectBeforeDial(t *testing.T) {
+	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
+	err:=RunClient(context.Background(),[]string{
+		"--tun","mq0","--tun-address","10.77.0.2/24",
+		"--mss-clamp","auto","--source-ip","192.0.2.2",
+	},logger)
+	if err==nil||!strings.Contains(err.Error(),"TC eBPF"){
+		t.Fatalf("expected TC eBPF configuration error: %v",err)
+	}
+}
