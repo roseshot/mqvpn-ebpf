@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,5 +92,41 @@ func TestIntegrationRoutedPoolUnicast(t *testing.T) {
 			if route.LinkIndex==link.Attrs().Index && route.Table==254 {found=true}
 		}
 		if !found{t.Fatalf("routed pool host %s was not unicast over TUN: %+v",ip,routes)}
+	}
+}
+
+func TestIntegrationRoutedFirstLastAsLocalAddresses(t *testing.T) {
+	if os.Geteuid()!=0 {t.Fatal("this test requires root/CAP_NET_ADMIN")}
+	pid:=os.Getpid()
+	for _,host:=range []int{0,3} {
+		name:=fmt.Sprintf("mqhost%d%x",host,pid)
+		if len(name)>=ifNameSize{t.Fatalf("TUN name too long: %s",name)}
+		octet:=byte(pid>>8)^byte(host)
+		base:=fmt.Sprintf("198.19.%d.%d",octet,byte(pid&0xfc))
+		local:=fmt.Sprintf("198.19.%d.%d/30",octet,int(byte(pid&0xfc))+host)
+		f,err:=OpenRouted(name,local,1360)
+		if err!=nil{t.Fatalf("lease %s must be configurable as a host IP: %v",local,err)}
+		link,err:=netlink.LinkByName(name)
+		if err!=nil{f.Close();t.Fatal(err)}
+		addrs,err:=netlink.AddrList(link,netlink.FAMILY_V4)
+		if err!=nil{f.Close();t.Fatal(err)}
+		found:=false
+		for _,addr:=range addrs {
+			if addr.IPNet==nil || !addr.IP.Equal(net.ParseIP(strings.Split(local,"/")[0])){continue}
+			ones,_:=addr.IPNet.Mask.Size()
+			if ones!=32 || addr.Peer==nil || addr.Peer.Mask.String()=="" || addr.Broadcast!=nil{
+				f.Close()
+				t.Fatalf("host %s was not configured as /32 peer-unicast without broadcast: %+v",local,addr)
+			}
+			found=true
+		}
+		if !found{f.Close();t.Fatalf("local host IP %s was not configured",local)}
+		dest:=fmt.Sprintf("198.19.%d.%d",octet,int(byte(pid&0xfc))+1)
+		routes,err:=netlink.RouteGet(net.ParseIP(dest))
+		if err!=nil{f.Close();t.Fatalf("lookup %s from %s: %v",dest,base,err)}
+		ok:=false
+		for _,route:=range routes {if route.LinkIndex==link.Attrs().Index && route.Table==254{ok=true}}
+		if !ok {f.Close();t.Fatalf("peer route to %s missing from TUN %s: %+v",dest,name,routes)}
+		_ = f.Close()
 	}
 }
