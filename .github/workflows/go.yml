@@ -66,6 +66,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
       - name: Compile XDP and TUN TCX eBPF programs
         run: make bpf
+      - name: Export reproducible eBPF bytecode for first bundled release
+        run: |
+          printf 'MQVPN_TCX_ELF_BASE64='
+          base64 -w0 bpf/tun_tc.o
+          printf '\\nMQVPN_XDP_ELF_BASE64='
+          base64 -w0 bpf/xdp_mqvpn.o
+          printf '\\n'
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
