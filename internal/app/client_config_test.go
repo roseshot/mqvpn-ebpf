@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-func writeClientTestYAML(t *testing.T, body string) string {
+func writeClientTestYAML(t *testing.T,body string)string{
 	t.Helper()
-	path:=filepath.Join(t.TempDir(),"client.yaml")
-	if err:=os.WriteFile(path,[]byte(body),0600);err!=nil{t.Fatal(err)}
-	return path
+	p:=filepath.Join(t.TempDir(),"client.yaml")
+	if err:=os.WriteFile(p,[]byte(body),0600);err!=nil{t.Fatal(err)}
+	return p
 }
 
 func TestClientCompactConfigAndDefaultEndpoint(t *testing.T){
@@ -22,31 +22,10 @@ func TestClientCompactConfigAndDefaultEndpoint(t *testing.T){
 	cfg,err:=loadClientFile(path)
 	if err!=nil{t.Fatal(err)}
 	if cfg.Server!="tenant.vpn.example.com"||cfg.Address!="10.77.0.2/24"||cfg.TUN!=""||cfg.SourceInterface!="" {t.Fatalf("unexpected client defaults %+v",cfg)}
-	url,err:=expandClientServer(cfg.Server)
-	if err!=nil{t.Fatal(err)}
-	endpoint,err:=planClientEndpoint(url,"","")
+	endpoint,err:=planClientEndpoint(cfg.Server,cfg.Path,cfg.ConnectIP)
 	if err!=nil||endpoint.dialAddress!="tenant.vpn.example.com:443"||endpoint.serverName!="tenant.vpn.example.com"||!strings.HasSuffix(endpoint.requestURL,defaultPath) {
 		t.Fatalf("invalid compact endpoint %+v: %v",endpoint,err)
 	}
-}
-
-func TestClientServerShortcutAndIdentity(t *testing.T){
-	for _,tc:=range []struct{input,addr string}{
-		{"tenant.vpn.example.com","tenant.vpn.example.com:443"},
-		{"tenant.vpn.example.com:8443","tenant.vpn.example.com:8443"},
-		{"https://tenant.vpn.example.com:4433/custom","tenant.vpn.example.com:4433"},
-	}{
-		url,err:=expandClientServer(tc.input)
-		if err!=nil{t.Fatal(err)}
-		got,err:=planClientEndpoint(url,"","")
-		if err!=nil||got.dialAddress!=tc.addr||got.serverName!="tenant.vpn.example.com"{t.Fatalf("%q -> %+v, %v",tc.input,got,err)}
-	}
-	for _,bad:=range []string{"","http://tenant.vpn.example.com","https://"}{
-		if _,err:=expandClientServer(bad);err==nil{t.Fatalf("unsafe server %q accepted",bad)}
-	}
-	url,err:=expandClientServer("198.51.100.10")
-	if err!=nil{t.Fatal(err)}
-	if _,err:=planClientEndpoint(url,"","");err==nil {t.Fatal("IP URL must require tenant DNS name")}
 }
 
 func TestClientYAMLStrictValidation(t *testing.T){
@@ -54,8 +33,9 @@ func TestClientYAMLStrictValidation(t *testing.T){
 		"server: tenant.example.com\nserver: other.example.com\n",
 		"server: tenant.example.com\nunknown_option: true\n",
 		"server: tenant.example.com\nurl: https://tenant.example.com/test\n",
+		"server: tenant.example.com\nserver_name: tenant.example.com\n",
 	}{
-		if _,err:=loadClientFile(writeClientTestYAML(t,raw));err==nil{t.Fatalf("bad YAML accepted: %q",raw)}
+		if _,err:=loadClientFile(writeClientTestYAML(t,raw));err==nil{t.Fatalf("removed/invalid YAML accepted: %q",raw)}
 	}
 }
 
@@ -63,43 +43,32 @@ func TestClientYAMLAndCLIOverrideBeforeNetworking(t *testing.T){
 	path:=writeClientTestYAML(t,"server: 198.51.100.10\naddress: 10.77.0.2/24\nca: /missing/ca.crt\ncert: /missing/client.crt\nkey: /missing/client.key\n")
 	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
 	err:=RunClient(context.Background(),[]string{"--config",path},logger)
-	if err==nil||!strings.Contains(err.Error(),"server-name"){t.Fatalf("IP-only server should fail SNI validation, got %v",err)}
-	// Explicit CLI --server must override the YAML IP target while retaining
-	// its TUN and mTLS settings. The expected next failure is missing CA.
+	if err==nil||!strings.Contains(err.Error(),"DNS identity"){t.Fatalf("IP-only server must be rejected, got %v",err)}
 	err=RunClient(context.Background(),[]string{"--config",path,"--server","tenant.vpn.example.com"},logger)
-	if err==nil||strings.Contains(err.Error(),"server-name"){t.Fatalf("CLI server override ignored: %v",err)}
+	if err==nil||strings.Contains(err.Error(),"DNS identity"){t.Fatalf("CLI server override ignored: %v",err)}
 }
 
 func TestClientYAMLTCPAndTCPolicy(t *testing.T){
-	path:=writeClientTestYAML(t,"server: tenant.example.com\naddress: 10.77.0.2/24\ntc:\n  mode: off\n  stats: false\n")
+	path:=writeClientTestYAML(t,"server: tenant.example.com\naddress: 10.77.0.2/24\ntc:\n  mss_clamp: auto\n  stats: false\n")
 	cfg,err:=loadClientFile(path)
-	if err!=nil||cfg.TC==nil||cfg.TC.Mode!="off"||cfg.TC.Stats==nil||*cfg.TC.Stats {t.Fatalf("TC YAML options lost: %+v %v",cfg,err)}
+	if err!=nil||cfg.TC==nil||cfg.TC.MSSClamp!="auto"||cfg.TC.Stats==nil||*cfg.TC.Stats{t.Fatalf("TC YAML options lost: %+v %v",cfg,err)}
 }
-
 func TestClientConfigCanRequestDynamicAddress(t *testing.T){
-	path:=writeClientTestYAML(t,"server: tenant.vpn.example.com\nca: /etc/ca.crt\ncert: /etc/client.crt\nkey: /etc/client.key\n")
-	cfg,err:=loadClientFile(path)
-	if err!=nil{t.Fatal(err)}
-	if !dynamicAddressRequested(cfg.Address) {t.Fatal("omitted client address must negotiate with the server")}
+	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: tenant.vpn.example.com\nca: /etc/ca.crt\ncert: /etc/client.crt\nkey: /etc/client.key\n"))
+	if err!=nil||!dynamicAddressRequested(cfg.Address){t.Fatalf("dynamic Tunnel IP defaults: %+v %v",cfg,err)}
 }
-
 func TestClientRoutePushConsentConfiguration(t *testing.T){
-	path:=writeClientTestYAML(t,"server: vpn.example.com\naccept_routes: false\n")
-	cfg,err:=loadClientFile(path)
+	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\naccept_routes: false\n"))
 	if err!=nil||cfg.AcceptRoutes==nil||*cfg.AcceptRoutes{t.Fatalf("Client opt-out not parsed: %+v %v",cfg,err)}
 }
-
-func TestClientYAMLMasquePathAndCLIOverride(t *testing.T) {
-	path:=writeClientTestYAML(t,"server: vpn.example.com\npath: /corp/connect/\n")
-	cfg,err:=loadClientFile(path)
-	if err!=nil || cfg.Path!="/corp/connect/"{t.Fatalf("client YAML path not parsed: %+v %v",cfg,err)}
-	target,err:=expandClientServer(cfg.Server)
-	if err!=nil{t.Fatal(err)}
-	target,err=applyClientMasquePath(target,cfg.Path)
-	if err!=nil || !strings.HasSuffix(target,"/corp/connect/"){t.Fatalf("YAML path override missing: %s %v",target,err)}
-	target,err=applyClientMasquePath(target,"/cli/override/")
-	if err!=nil || !strings.HasSuffix(target,"/cli/override/"){t.Fatalf("CLI path override missing: %s %v",target,err)}
+func TestClientYAMLMasquePathAndCLIOverride(t *testing.T){
+	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\npath: /corp/connect/\n"))
+	if err!=nil||cfg.Path!="/corp/connect/"{t.Fatalf("client path YAML: %+v %v",cfg,err)}
+	got,err:=planClientEndpoint(cfg.Server,cfg.Path,"")
+	if err!=nil||!strings.HasSuffix(got.requestURL,"/corp/connect/"){t.Fatalf("YAML path: %+v %v",got,err)}
+	got,err=planClientEndpoint(cfg.Server,"/cli/override/","")
+	if err!=nil||!strings.HasSuffix(got.requestURL,"/cli/override/"){t.Fatalf("CLI path: %+v %v",got,err)}
 	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
-	err=RunClient(context.Background(),[]string{"--config",path,"--path","/invalid/../path"},logger)
-	if err==nil || !strings.Contains(err.Error(),"MASQUE"){t.Fatalf("invalid --path must fail before network: %v",err)}
+	err=RunClient(context.Background(),[]string{"--server","vpn.example.com","--path","/invalid/../path"},logger)
+	if err==nil||!strings.Contains(err.Error(),"MASQUE"){t.Fatalf("invalid --path not rejected: %v",err)}
 }

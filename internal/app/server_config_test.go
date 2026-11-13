@@ -131,23 +131,22 @@ func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
 }
 
 
-func TestServerTCConfigAndLegacyObjectSemantics(t *testing.T){
+func TestServerTCConfigWithoutLegacyObjectRequirements(t *testing.T){
 	inst:=sampleInstance("tc","tc.example.test","mq0")
 	inst.TC=&tcebpf.Config{MSSClamp:"auto",Stats:true}
 	cfg:=ServerConfig{Instances:[]ServerInstance{inst}}
-	if err:=cfg.Validate();err==nil{t.Fatal("MSS clamp enabled without ELF accepted")}
-	inst.TC=&tcebpf.Config{MSSClamp:"off"}
-	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
 	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
-	if cfg.Instances[0].TC==nil||cfg.Instances[0].TC.Mode!="off"{t.Fatal("off-only policy must remain explicitly disabled")}
+	if cfg.Instances[0].TC.Mode!="auto"{t.Fatal("no TC mode must mean auto")}
+	inst.TC=&tcebpf.Config{Mode:"off"}
+	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
+	if err:=cfg.Validate();err!=nil||cfg.Instances[0].TC.Mode!="off"{t.Fatalf("off TC mode not respected: %v",err)}
 	inst.TC=&tcebpf.Config{Object:"bpf/tun_tc.o",MSSClamp:"auto",Stats:true}
 	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
-	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
-	if cfg.Instances[0].TC==nil||cfg.Instances[0].TC.MSSClamp!="auto"{t.Fatal("TC config lost")}
+	if err:=cfg.Validate();err!=nil||cfg.Instances[0].TC.Mode!="auto"{t.Fatalf("object override unexpectedly required fail-closed TC: %v",err)}
 	inst.TC=&tcebpf.Config{Mode:"required",MSSClamp:"auto",Stats:true}
 	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
-	if err:=cfg.Validate();err!=nil{t.Fatalf("required mode must accept embedded ELF without object: %v",err)}
-	if cfg.Instances[0].TC.Object!="" {t.Fatal("explicit required mode unexpectedly requires external ELF")}
+	if err:=cfg.Validate();err!=nil{t.Fatalf("explicit required mode: %v",err)}
+	if cfg.Instances[0].TC.Object!=""{t.Fatal("bundled ELF should not require object")}
 }
 
 func TestInstancePushRoutesValidatedAndCanonical(t *testing.T){

@@ -35,7 +35,7 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T){
 	defer cancel()
 	as:=&fakeStream{out:make(chan []byte,8)}
 	bs:=&fakeStream{out:make(chan []byte,8)}
-	if _,err:=h.Attach(ctx,cfg.Peers[0],as);err==nil{t.Fatal("dynamic peer attached without negotiation")}
+	if _,err:=h.AttachWithTunnelIP(ctx,cfg.Peers[0],as,false);err==nil{t.Fatal("dynamic peer attached without negotiation")}
 	a,err:=h.AttachWithTunnelIP(ctx,cfg.Peers[0],as,true)
 	if err!=nil{t.Fatal(err)}
 	b,err:=h.AttachWithTunnelIP(ctx,cfg.Peers[1],bs,true)

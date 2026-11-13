@@ -4,10 +4,10 @@ Go, `CGO_ENABLED=0`, Linux: **MASQUE CONNECT-ETHERNET** over encrypted
 HTTP/3 DATAGRAM + MPQUIC. One Server daemon exposes **ONE UDP listener**
 to many independent, isolated route-based P2MP VPN LANs.
 
-**Configuration format: YAML only.** Server, Client (optional daemon file),
-and Peer configuration use `.yaml` or `.yml`. The server has no JSON loader
-or single-instance CLI fallback. Build the independent `mqvpn-server` and
-`mqvpn-client` commands. Client CLI flags remain available for overrides.
+**Configuration format: YAML only.** Server, optional Client daemon config,
+and Peer configuration use `.yaml` or `.yml`. Build the separate
+`mqvpn-server` and `mqvpn-client` binaries. Client CLI flags can override
+the same current configuration model.
 
 ## Shared UDP listener and per-instance TLS SNI
 
@@ -56,13 +56,13 @@ Clients target different hostnames but the **same UDP port**:
 
 ~~~bash
 mqvpn-client \
-  --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
+  --server customer-a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 
 mqvpn-client \
-  --url https://customer-b.vpn.example.com:443/.well-known/masque/ethernet/ \
+  --server customer-b.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/b-ca.crt \
@@ -71,7 +71,9 @@ mqvpn-client \
 
 ## Simple Client daemon configuration
 
-A Client needs just five YAML values. The standard MASQUE path, UDP/TCP
+A Client uses the authenticated tenant DNS name and mTLS file paths.
+A static Tunnel IP is optional; the Server can assign one dynamically.
+The standard MASQUE path, UDP/TCP
 ports, TUN name (`mq0`), WAN source selection, MTU/frame budget, transport
 fallback and bundled TCX eBPF policy are all automatic.
 
@@ -103,13 +105,13 @@ set `source_interface` and optionally `source_ip` in YAML, or use
 `--source-interface` / `--source-ip` explicitly. Secondary WAN paths
 still require `wan2_interface` or `wan2_ip`.
 
-`server` accepts `domain.example.com`, `domain.example.com:8443`, or
-an HTTPS URL with a custom path. `path: /corp/masque/connect/` or
-`--path /corp/masque/connect/` can override the endpoint path independently.
-Server instances use their own optional `path` field. Both sides default
-to `/.well-known/masque/ethernet/` when not configured. DNS identity remains mandatory for mTLS
-and tenant SNI. To connect to a pinned endpoint, use `connect_ip` while
-keeping `server` as the authenticated tenant domain:
+`server` accepts only an authenticated DNS hostname, optionally with a
+UDP port (for example, `vpn.example.com:8443`). Set
+`path: /corp/masque/connect/` or `--path /corp/masque/connect/`
+for a custom CONNECT path; Server instances have the same optional
+`path`. Both sides default to `/.well-known/masque/ethernet/`.
+To dial a pinned public IP, set `connect_ip` while keeping `server`
+as the certificate-verified TLS SNI domain:
 
 ~~~yaml
 server: customer-a.vpn.example.com
@@ -120,10 +122,10 @@ cert: /etc/mqvpn/a-client.crt
 key: /etc/mqvpn/a-client.key
 ~~~
 
-Legacy `--url`, `--server-name`, `--connect-ip` and all advanced
-flags remain supported. An IP-literal URL still requires an explicit
-tenant `server_name`; certificate/hostname validation is unchanged.
-CLI flags override values from `--config`. See
+The Client accepts only `server` plus the optional `path` and
+`connect_ip` fields. The removed `url` and `server_name` aliases,
+and their CLI flags, are not recognized. CLI flags override values
+from `--config`. See
 [Client configuration reference](docs/client-config.md).
 
 On separate client hosts, local `mq0` names may be the same. Multiple
@@ -467,14 +469,13 @@ Client (automatic by default):
 mqvpn-client --config /etc/mqvpn/client.yaml
 ~~~
 
-An independent `--tcp-port` flag defaults to 443 even if the QUIC URL
-specifies a different UDP port. Use it when Server `tcp_fallback.listen`
-is configured to a nonstandard TCP port.
+An independent `--tcp-port` flag defaults to 443 even if the `server`
+hostname includes a different QUIC UDP port. Use it when Server
+`tcp_fallback.listen` is configured to a nonstandard TCP port.
 
 Choose `--transport quic` to disable fallback, or `--transport tcp` to
-force TCP without an initial QUIC attempt. Both the pinned-IP
-(`--connect-ip`) and the literal-IP URL + `--server-name` forms
-are supported. TLS certificate validation and tenant SNI remain mandatory.
+force TCP without an initial QUIC attempt. `--connect-ip` can pin the
+underlay destination without changing authenticated TLS SNI.
 
 **Safe downgrade boundary:** automatic fallback occurs **only on initial
 QUIC dial timeout**, not on TLS certificate errors, mTLS rejection, bad
@@ -526,9 +527,8 @@ instances:
 Client defaults to `--tc-mode auto --mss-clamp auto --tc-stats=true`.
 QUIC and TCP fallback use the same bundled TCX program. An explicit
 `tc.object: /path/to/tun_tc.o` or `--tc-object /path/to/tun_tc.o`
-overrides the bundle; legacy explicit object settings without a mode
-stay strict (`required`) for backward compatibility.
-`tc: {mode: off}` disables TCX.
+overrides the bundle but does not change `mode`. Use `mode: required`
+or `--tc-mode required` for fail-closed loading; `mode: off` disables TCX.
 
 Auto MSS clamp uses the effective TUN MTU (not the raw WAN MTU):
 for MTU 1400, IPv4 MSS is at most **1360** and IPv6 MSS is at

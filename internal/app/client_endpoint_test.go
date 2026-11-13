@@ -6,89 +6,44 @@ import (
 	"testing"
 )
 
-const clientPath = "/.well-known/masque/ethernet/"
-
-func TestClientEndpointDomainDirect(t *testing.T) {
-	got, err := planClientEndpoint("https://customer-a.vpn.example.com:4433"+clientPath, "", "")
-	if err != nil { t.Fatal(err) }
-	if got.dialAddress != "customer-a.vpn.example.com:4433" ||
-		got.serverName != "customer-a.vpn.example.com" ||
-		got.requestURL != "https://customer-a.vpn.example.com:4433"+clientPath {
-		t.Fatalf("unexpected domain plan %+v", got)
-	}
-}
-
-func TestClientEndpointIPWithTenantDomain(t *testing.T) {
-	for _, tc := range []struct{
-		rawURL, name, dial string
+func TestClientEndpointCanonicalServer(t *testing.T){
+	for _,tc:=range []struct{server,path,expectedDial,expectedURL string}{
+		{"customer-a.vpn.example.com:4433","/.well-known/masque/ethernet/","customer-a.vpn.example.com:4433","https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/"},
+		{"tenant.example.com","", "tenant.example.com:443", "https://tenant.example.com:443"+defaultPath},
+		{"TENANT.EXAMPLE.COM:8443","/custom/masque","tenant.example.com:8443","https://tenant.example.com:8443/custom/masque"},
 	}{
-		{"https://198.51.100.10:4433"+clientPath, "customer-a.vpn.example.com", "198.51.100.10:4433"},
-		{"https://[2001:db8::10]:4433"+clientPath, "customer-b.vpn.example.com", "[2001:db8::10]:4433"},
-	} {
-		got, err := planClientEndpoint(tc.rawURL, "", tc.name)
-		if err != nil { t.Fatal(err) }
-		if got.dialAddress != tc.dial || got.serverName != tc.name {
-			t.Fatalf("unexpected IP plan %+v", got)
-		}
-		parsed, err := url.Parse(got.requestURL)
-		if err != nil || parsed.Hostname() != tc.name || parsed.Port() != "4433" {
-			t.Fatalf("CONNECT authority must be tenant DNS name: %+v %v", got, err)
+		got,err:=planClientEndpoint(tc.server,tc.path,"")
+		if err!=nil{t.Fatal(err)}
+		if got.dialAddress!=tc.expectedDial || got.requestURL!=tc.expectedURL || got.serverName!=strings.ToLower(strings.Split(tc.server,":")[0]){
+			t.Fatalf("endpoint %q %+v: expected dial %q URL %q",tc.server,got,tc.expectedDial,tc.expectedURL)
 		}
 	}
 }
 
-func TestClientEndpointDomainWithPinnedIP(t *testing.T) {
-	for _, ip := range []string{"198.51.100.20", "2001:db8::20"} {
-		got, err := planClientEndpoint("https://vpn.example.com:4433"+clientPath, ip, "tenant.example.com")
-		if err != nil { t.Fatal(err) }
-		parsed, err := url.Parse(got.requestURL)
-		if err != nil || parsed.Hostname() != "tenant.example.com" || got.serverName != "tenant.example.com" {
-			t.Fatalf("tenant request mismatched SNI: %+v %v", got, err)
+func TestClientEndpointPinnedUnderlayDoesNotChangeTenantIdentity(t *testing.T){
+	for _,ip:=range []string{"198.51.100.20","2001:db8::20"}{
+		got,err:=planClientEndpoint("tenant.example.com:4433","/vpn/tun/",ip)
+		if err!=nil{t.Fatal(err)}
+		u,err:=url.Parse(got.requestURL)
+		if err!=nil || u.Hostname()!="tenant.example.com" || got.serverName!="tenant.example.com" || u.Port()!="4433"{
+			t.Fatalf("tenant SNI/authority mismatch %+v: %v",got,err)
 		}
-		if !strings.Contains(got.dialAddress, ip) {
-			t.Fatalf("explicit IP override not used: %+v", got)
-		}
+		if !strings.Contains(got.dialAddress,ip) {t.Fatalf("pinned underlay IP missing %+v",got)}
 	}
 }
 
-func TestClientEndpointRejectUnsafeOrAmbiguousTarget(t *testing.T) {
-	for _, tc := range []struct{rawURL, ip, name string}{
-		{"https://198.51.100.10:4433"+clientPath, "", ""}, // no SNI
-		{"https://198.51.100.10:4433"+clientPath, "198.51.100.20", "tenant.example.com"},
-		{"https://vpn.example.com:4433"+clientPath, "not-an-ip", ""},
-		{"https://vpn.example.com:4433"+clientPath, "0.0.0.0", ""},
-		{"https://vpn.example.com:4433"+clientPath, "224.0.0.1", ""},
-		{"https://vpn.example.com:4433"+clientPath, "", "198.51.100.1"},
-		{"https://vpn.example.com:4433"+clientPath, "", "*.vpn.example.com"},
-		{"http://vpn.example.com:4433"+clientPath, "", ""},
-		{"https://vpn.example.com:bad"+clientPath, "", ""},
-		{"https://vpn.example.com:4433"+clientPath+"?unknown=yes", "", ""},
-		{"https://vpn.example.com:4433", "", ""},
-	} {
-		if _, err := planClientEndpoint(tc.rawURL, tc.ip, tc.name); err == nil {
-			t.Fatalf("unsafe endpoint accepted %+v", tc)
-		}
-	}
-}
-
-func TestClientEndpointDefaultsToHTTPSPort443(t *testing.T) {
-	cases := []struct {
-		rawURL, connectIP, serverName, dial string
+func TestClientRejectsRemovedURLAndSNICompatibility(t *testing.T){
+	for _,server:=range []string{
+		"https://tenant.example.com/vpn", "http://tenant.example.com",
+		"198.51.100.10", "[2001:db8::10]", "tenant.example.com/vpn",
+		"tenant.example.com?x=1", "tenant.example.com#tag",
+		"tenant.example.com:bad", "tenant.example.com:0", "tenant.example.com:65536",
+		"tenant.example.com:", "tenant.example.com@evil.example.com",
+		"*.example.com", "tenant..example.com","", "tenant.example.com%eth0",
 	}{
-		{"https://tenant.example.com"+clientPath, "", "", "tenant.example.com:443"},
-		{"https://tenant.example.com"+clientPath, "198.51.100.15", "", "198.51.100.15:443"},
-		{"https://198.51.100.15"+clientPath, "", "tenant.example.com", "198.51.100.15:443"},
-		{"https://[2001:db8::15]"+clientPath, "", "tenant.example.com", "[2001:db8::15]:443"},
+		if _,err:=planClientEndpoint(server,"","");err==nil{t.Fatalf("unsafe/removed server form %q accepted",server)}
 	}
-	for _, tc := range cases {
-		got, err := planClientEndpoint(tc.rawURL, tc.connectIP, tc.serverName)
-		if err != nil { t.Fatalf("%s: %v", tc.rawURL, err) }
-		if got.dialAddress != tc.dial || got.serverName != "tenant.example.com" {
-			t.Fatalf("%s: unexpected endpoint %+v", tc.rawURL, got)
-		}
-		authority, err := url.Parse(got.requestURL)
-		if err != nil || authority.Port() != "443" || authority.Hostname() != "tenant.example.com" {
-			t.Fatalf("%s: incorrect CONNECT authority %+v: %v", tc.rawURL, got, err)
-		}
+	for _,ip:=range []string{"not-an-ip","0.0.0.0","224.0.0.1","fe80::1%eth0"}{
+		if _,err:=planClientEndpoint("tenant.example.com","",ip);err==nil{t.Fatalf("unsafe pinned IP %q accepted",ip)}
 	}
 }

@@ -1,82 +1,75 @@
 # Client daemon configuration
 
-The standalone `mqvpn-client` accepts `--config /etc/mqvpn/client.yaml`.
-The file is strictly parsed as YAML (unknown fields and duplicate keys are
-rejected), with a single document. CLI options override the corresponding
-YAML values; old CLI deployments continue to work.
+The standalone `mqvpn-client` accepts
+`--config /etc/mqvpn/client.yaml`. YAML is parsed strictly:
+unknown keys, duplicate keys, and non-YAML formats are rejected.
+CLI flags override matching YAML fields.
 
-## Minimal configuration
+## Required configuration
 
 ~~~yaml
 server: tenant.vpn.example.com
-# address: auto   # omitted = request a dynamic Tunnel IP from Server
 ca: /etc/mqvpn/ca.pem
 cert: /etc/mqvpn/client.pem
 key: /etc/mqvpn/client.key
 ~~~
 
-Run `mqvpn-client --config /etc/mqvpn/client.yaml`.
-`server` accepts a hostname, hostname:port or HTTPS URL; a missing path
-defaults to `/.well-known/masque/ethernet/` and port to 443.
-Use `path: /corp/masque/connect/` (or `--path /corp/masque/connect/`)
-when the Server instance uses a custom `path`. This overrides a URL's
-embedded path; paths must be canonical absolute paths without query,
-fragment, percent escapes or dot segments.
+`server` is always the authenticated tenant DNS hostname, optionally
+with a QUIC UDP port (`tenant.vpn.example.com:8443`). An URL scheme,
+path, query, IP literal, and separate SNI field are not accepted.
+`connect_ip` is the optional physical destination override without
+changing the certificate-verified DNS identity.
 
-The optional `address` is the **inner TUN host address with prefix**,
-not the WAN source address. When omitted or set to `auto`, Client requests
-a Server-assigned Tunnel IP only after successful mTLS CONNECT. The Server
-must configure `tunnel_pool` and authorize this Peer with
-`dynamic_tunnel_ip: true`. Older Servers cannot supply the response,
-so the Client fails clearly before opening the TUN. For a dynamic lease
-the client assigns its actual local TUN address as /32 (IPv4) or /128
-(IPv6) and uses the advertised subnet as a peer unicast route. This
-makes the subnet's first and last IPv4 addresses usable as ordinary
-host destinations. An explicit static CIDR continues to work without
-address negotiation. The `ca`, `cert` and `key` are required
-mTLS files and are never silently created or skipped.
+The optional `path` is a canonical absolute MASQUE CONNECT path;
+default `/.well-known/masque/ethernet/`. Server and Client must
+agree on the exact path. The `url` / `server_name` alias fields
+and `--url` / `--server-name` CLI flags are not part of the current
+configuration and will fail validation.
 
-## Default behavior
+## Tunnel IP and automatic behavior
 
-- TUN device: `mq0`. Tunnel IP: authenticated Server lease by default;
-  or a static CIDR from `address`.
-- Primary WAN: chosen from the kernel route to the server's resolved IP
-  (connected UDP probe; no packets sent and no Linux routes changed).
-- MTU: automatic from selected WAN link; `max_frame = MTU + 14`.
-- Transport: QUIC/MPQUIC, then authenticated TCP fallback on initial
-  UDP handshake timeout only; UDP deadline 5s, fallback TCP port 443.
-- TCX eBPF: embedded object, `mode: auto`, MSS clamp auto, stats enabled.
-  A TCX load error in auto mode logs a warning and uses normal TUN.
+When `address` is omitted or set to `auto`, Client requests an
+authenticated server-assigned Tunnel IP at CONNECT. Server must
+configure `tunnel_pool` and authorize the certificate fingerprint
+with `dynamic_tunnel_ip: true`. An explicit `address: 10.77.0.2/24`
+is a static Tunnel IP and disables address negotiation.
 
-## Optional keys
+The TUN defaults to `mq0`; primary WAN source and MTU are selected
+automatically, with `max_frame = MTU + 14`. QUIC/MPQUIC is preferred.
+TCP fallback on initial handshake timeout requires the Server to enable
+it; forced TCP uses primary WAN only. The TCX eBPF program is embedded
+in the binaries and normally loads in `auto` mode with automatic
+MSS clamp and counters.
+
+## Optional YAML fields
 
 | Key | Purpose |
 | --- | --- |
-| `address` | Optional static TUN CIDR; omit or `auto` to request Server lease |
-| `path` | Optional MASQUE CONNECT path; default `/.well-known/masque/ethernet/` |
-| `accept_routes` | Apply authenticated Server-pushed routes (default true; false disables) |
-| `tun`, `mtu`, `max_frame` | TUN name and MTU override |
-| `connect_ip` | Pin remote IP while retaining `server` TLS DNS identity |
-| `server_name` | Explicit tenant DNS identity (IP URL compatibility) |
-| `source_ip`, `source_interface` | Bind primary WAN address/interface |
-| `wan2_ip`, `wan2_interface` | Explicit secondary MPQUIC WAN path |
-| `transport`, `udp_dial_timeout`, `tcp_port` | Advanced fallback settings |
-| `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | eBPF policy/ELF override |
-| `url` | Full legacy HTTPS endpoint, mutually exclusive with `server` |
+| `path` | Server-specific MASQUE CONNECT path |
+| `address` | Static TUN CIDR or `auto` for Server lease |
+| `accept_routes` | Apply authenticated `push_routes` (default true) |
+| `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
+| `connect_ip` | Pin physical Server IP without changing TLS SNI |
+| `source_ip`, `source_interface` | Primary WAN binding |
+| `wan2_ip`, `wan2_interface` | MPQUIC secondary WAN |
+| `transport`, `udp_dial_timeout`, `tcp_port` | Transport and fallback policy |
+| `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
 
-The corresponding CLI options use hyphens instead of underscores.
-`--server` provides a short CLI alternative to the old full `--url`.
-The existing `--url` path still works unchanged. If an IP literal is
-used as the server host, an explicit authenticated DNS `server_name`
-is mandatory; the daemon never disables TLS certificate verification.
+The CLI forms use hyphens, for example `--server`, `--path`,
+`--connect-ip`, and `--accept-routes=false`.
 
-The daemon does not install firewall rules, policy routes, VRFs or
-forwarding rules except for route entries explicitly accepted from
-`push_routes` (and a protective host route for the actual Server
-public IP). Those managed routes are removed on session termination,
-while the original default route is left intact. Full-tunnel /0 pushes
-become two /1 entries to avoid overriding the host default.
-For dual-WAN MPQUIC, a push covering the Server public IP fails closed
-unless external source-specific policy routing provides isolation. On hosts with multiple default routes or unusual
-routing, explicitly set `source_interface` and if needed `source_ip`.
-TCP fallback uses the primary WAN only.
+## Server-pushed routes
+
+When enabled, authenticated routes are installed on the Client's TUN
+through Linux netlink. Client protects the actual Server public IP
+with a WAN host route before inserting overlapping TUN routes. A
+full-tunnel IPv4 `0.0.0.0/0` advertisement is installed as two
+`/1` routes; IPv6 `::/0` similarly uses two `/1` routes.
+Only daemon-owned routes are removed at session termination; existing
+administrator routes are never replaced. If dual-WAN MPQUIC receives
+a push that covers the Server public IP, Client rejects it instead
+of redirecting an underlay path through the tunnel.
+
+The program does not install firewall rules, VRFs, policy routing
+rules, custom DNS or inner traffic filters. For unusual multi-WAN
+routing, specify `source_interface` and optionally `source_ip`.

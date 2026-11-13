@@ -17,7 +17,7 @@ func TestPushRouteRoundTripAndCanonicalization(t *testing.T){
 	if err!=nil{t.Fatal(err)}
 	if len(decoded)!=len(routes){t.Fatal("wire routes lost")}
 	for i,p:=range decoded{if p!=routes[i]{t.Fatalf("route[%d]: %s vs %s",i,p,routes[i])}}
-	if got,err:=Decode("");err!=nil||len(got)!=0{t.Fatalf("old Server compatibility: %v %v",got,err)}
+	if got,err:=Decode("");err!=nil||len(got)!=0{t.Fatalf("no optional routes advertised: %v %v",got,err)}
 	if !routes[2].Contains(netip.MustParseAddr("198.51.100.10")){t.Fatal("default route must cover underlay")}
 }
 

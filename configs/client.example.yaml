@@ -2,7 +2,7 @@
 # Server-assigned TUN IP (requires tunnel_pool and peer dynamic_tunnel_ip).
 # Default path, TUN mq0, WAN source, MTU, transport and bundled eBPF are auto.
 server: customer-a.vpn.example.com
-# address: 10.77.0.2/24  # optional legacy static TUN CIDR
+# address: 10.77.0.2/24  # optional static TUN CIDR
 ca: /etc/mqvpn/a-ca.crt
 cert: /etc/mqvpn/a-client.crt
 key: /etc/mqvpn/a-client.key

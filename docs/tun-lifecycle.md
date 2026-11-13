@@ -21,7 +21,7 @@ instances:
 ### Client
 
 ~~~bash
-mqvpn-client --url https://customer-a.vpn.example.com/.well-known/masque/ethernet/ \
+mqvpn-client --server customer-a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 --tun-mtu 1400 \
   --source-interface enp1s0 \
   --ca /etc/mqvpn/ca.crt --cert /etc/mqvpn/client.crt \

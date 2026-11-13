@@ -119,8 +119,8 @@ func TestSetupRoutedTUNAvoidsSubnetBroadcast(t *testing.T) {
 			t.Fatalf("%s: broadcast not explicitly disabled: %s",tc.cidr,f.addr.Broadcast)
 		}
 	}
-	// The static path must still use the original Linux CIDR semantics.
+	// Static TUN addresses use connected-prefix semantics.
 	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
 	if err:=setupInterface("mq0","10.77.0.1/24",1400,f);err!=nil{t.Fatal(err)}
-	if f.addr.Peer!=nil {t.Fatal("legacy static TUN gained peer route")}
+	if f.addr.Peer!=nil {t.Fatal("static TUN unexpectedly has a peer route")}
 }

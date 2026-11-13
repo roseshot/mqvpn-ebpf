@@ -1,32 +1,22 @@
 package app
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestMasquePathDefaultAndOverride(t *testing.T){
-	for _,tc:=range []struct{server,path,want string}{
-		{"https://tenant.example.com","",defaultPath},
-		{"https://tenant.example.com","/connect/custom", "/connect/custom"},
-		{"https://tenant.example.com/custom/server","", "/custom/server"},
-		{"https://tenant.example.com/custom/server","/tenant/vpn/","/tenant/vpn/"},
+	for _,tc:=range []struct{path,want string}{
+		{"",defaultPath},
+		{"/connect/custom","/connect/custom"},
+		{"/tenant/vpn/","/tenant/vpn/"},
 	}{
-		raw,err:=applyClientMasquePath(tc.server,tc.path)
+		e,err:=planClientEndpoint("tenant.example.com",tc.path,"")
 		if err!=nil{t.Fatal(err)}
-		endpoint,err:=planClientEndpoint(raw,"","")
-		if err!=nil||!strings.HasSuffix(endpoint.requestURL,tc.want) {
-			t.Fatalf("server=%q override=%q endpoint=%+v err=%v",tc.server,tc.path,endpoint,err)
-		}
+		if e.requestURL!="https://tenant.example.com:443"+tc.want{t.Fatalf("path %q: %+v",tc.path,e)}
 	}
 	if err:=validateMasquePath(defaultPath);err!=nil{t.Fatal(err)}
 }
-
 func TestMasquePathRejectsAmbiguity(t *testing.T){
-	for _,path:=range []string{"","vpn","//vpn","/vpn//endpoint","/vpn/../admin","/vpn/./admin","/vpn?x=1","/vpn#frag","/vpn%2Fadmin","/vpn\\admin","/vpn\r\nX: injected", "/vpn path"}{
-		if err:=validateMasquePath(path);err==nil{t.Fatalf("accepted unsafe MASQUE path %q",path)}
-	}
-	for _,bad:=range []string{"/vpn?x=1","/vpn#fragment"}{
-		if _,err:=applyClientMasquePath("https://tenant.example.com",bad);err==nil{t.Fatal("bad override accepted")}
+	for _,path:=range []string{"vpn","//vpn","/vpn//endpoint","/vpn/../admin","/vpn/./admin","/vpn?x=1","/vpn#frag","/vpn%2Fadmin","/vpn\\admin","/vpn\r\nX: injected", "/vpn path"}{
+		if err:=validateMasquePath(path);err==nil{t.Fatalf("accepted unsafe path %q",path)}
+		if _,err:=planClientEndpoint("tenant.example.com",path,"");err==nil{t.Fatalf("client accepted unsafe path %q",path)}
 	}
 }

@@ -24,9 +24,10 @@ libbpf shared library is needed on the VPN host.
 Default `auto` falls back to ordinary TUN forwarding if TCX/kernel
 permissions are unavailable; `required` stays fail-closed. `off`
 disables TCX. An explicit `tc.object` or `--tc-object` selects an
-external ELF override, and existing object-only configurations continue
-to use strict mode. To refresh the embedded bytecode after changing the C
-source, run `make bpf` and commit the regenerated objects.
+external ELF override without changing the selected mode. Only an
+explicit `mode: required` or `--tc-mode required` fails closed.
+To refresh the embedded bytecode after changing C source, run
+`make bpf` and commit the regenerated objects.
 
 ## Server (per Instance)
 
@@ -59,7 +60,7 @@ Counters are logged at shutdown / reload; no inner traffic ACLs are introduced.
 ## Client
 
 ~~~bash
-mqvpn-client --url https://a.vpn.example.com/.well-known/masque/ethernet/ \
+mqvpn-client --server a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 \
   --source-interface enp1s0 \
   --tc-mode auto --mss-clamp auto --tc-stats \
@@ -69,11 +70,11 @@ mqvpn-client --url https://a.vpn.example.com/.well-known/masque/ethernet/ \
 
 Both QUIC/MPQUIC and HTTP/1.1 TCP fallback use the same TCX policy.
 An `auto` attach error logs a warning and continues normal TUN forwarding;
-`required` fails the opted-in instance or client. Existing explicit
-client TC flags stay strict unless `--tc-mode` is provided. Hot reload
-restarts only the affected instance when the TC policy or an external
-override ELF changes. Updating the embedded ELF requires rebuilding and
-restarting the executable (it is immutable at runtime).
+`required` fails the configured instance or client. Specifying an ELF
+override or changing the MSS clamp never implicitly changes the mode.
+Hot reload restarts only the affected instance when the TC policy or
+an external override ELF changes. Updating the embedded ELF requires
+rebuilding and restarting the executable.
 
 ## Packet rules and limits
 

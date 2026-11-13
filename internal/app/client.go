@@ -25,11 +25,9 @@ import (
 func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
 	configPath := fs.String("config", "", "optional concise client YAML configuration")
-	server := fs.String("server", "", "tenant DNS name or HTTPS endpoint (defaults to MASQUE path)")
+	server := fs.String("server", "", "authenticated tenant DNS hostname[:port]")
 	pathFlag := fs.String("path", "", "optional MASQUE CONNECT path (default /.well-known/masque/ethernet/)")
-	urlFlag := fs.String("url", "", "https domain or IP URL of CONNECT-ETHERNET endpoint")
 	connectIP := fs.String("connect-ip", "", "connect to server IP without DNS resolution")
-	serverName := fs.String("server-name", "", "authenticated tenant DNS name used for TLS SNI and HTTP/3 authority")
 	wan1 := fs.String("source-ip", "", "primary WAN local source IPv4/IPv6 address")
 	wan2 := fs.String("wan2-ip", "", "secondary WAN local source IPv4/IPv6 address (optional)")
 	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
@@ -66,7 +64,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		setString("server",server,file.Server)
 		setString("path",pathFlag,file.Path)
 		setString("connect-ip",connectIP,file.ConnectIP)
-		setString("server-name",serverName,file.ServerName)
 		setString("source-ip",wan1,file.SourceIP)
 		setString("source-interface",wan1Iface,file.SourceInterface)
 		setString("wan2-ip",wan2,file.WAN2IP)
@@ -91,27 +88,12 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			setString("mss-clamp",mssClamp,file.TC.MSSClamp)
 			if !explicit["tc-stats"] && file.TC.Stats!=nil {*tcStats=*file.TC.Stats}
 		}
-		if !explicit["url"] && file.URL!="" {*urlFlag=file.URL}
 		if !explicit["accept-routes"] && file.AcceptRoutes!=nil {*acceptRoutes=*file.AcceptRoutes}
-		// Legacy explicit TC fields (in YAML or CLI) retain fail-closed
-		// semantics unless mode is explicitly specified.
-		if file.TC!=nil && file.TC.Mode!="" {explicit["tc-mode"]=true}
-		if file.TC!=nil && (file.TC.Object!="" || file.TC.MSSClamp!="" || file.TC.Stats!=nil) {
-			explicit["mss-clamp"]=true
-		}
 	}
 	if fs.NArg()!=0{return errors.New("unexpected positional client arguments")}
-	if explicit["url"]&&explicit["server"] {return errors.New("--server and --url are mutually exclusive")}
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
 	if err:=validateClientAddressRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
-	// Legacy explicit TC flags remain strict unless --tc-mode is supplied.
-	legacyTC,explicitMode:=false,explicit["tc-mode"]
-	for _,name:=range []string{"tc-object","mss-clamp","tc-stats"}{
-		if explicit[name] {legacyTC=true}
-	}
-	mode:=*tcMode
-	if !explicitMode&&legacyTC {mode="required"}
-	tcConfig,err:=(tcebpf.Config{Mode:mode,Object:*tcObject,MSSClamp:*mssClamp,Stats:*tcStats}).Normalize()
+	tcConfig,err:=(tcebpf.Config{Mode:*tcMode,Object:*tcObject,MSSClamp:*mssClamp,Stats:*tcStats}).Normalize()
 	if err!=nil{return fmt.Errorf("TUN TC eBPF config: %w",err)}
 	if *transportMode!="auto"&&*transportMode!="quic"&&*transportMode!="tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)",*transportMode)
@@ -122,15 +104,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	// Secondary WAN paths still require explicit selection.
 	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
 	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
-	target:=*urlFlag
-	if target=="" || explicit["server"] {
-		var err error
-		target,err=expandClientServer(*server)
-		if err!=nil{return err}
-	}
-	target,err=applyClientMasquePath(target,*pathFlag)
-	if err!=nil{return fmt.Errorf("Client MASQUE path: %w",err)}
-	endpoint, err := planClientEndpoint(target, *connectIP, *serverName)
+	endpoint, err := planClientEndpoint(*server,*pathFlag,*connectIP)
 	if err != nil { return err }
 	logger.Info("VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName,"transport",*transportMode)
 	tcpOptions:=clientTCPOptions{

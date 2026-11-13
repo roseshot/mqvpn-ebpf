@@ -17,7 +17,7 @@ func TestHubShutdownRevokesActiveSessions(t *testing.T) {
 		case <-time.After(time.Second): t.Fatalf("session %s did not terminate",s.ID())
 		}
 	}
-	if _, err := h.Attach(context.Background(), a.rule, &fakeStream{out:make(chan []byte,1)}); err == nil {
+	if _, err := h.AttachWithTunnelIP(context.Background(), a.rule, &fakeStream{out:make(chan []byte,1)},false); err == nil {
 		t.Fatal("a retired VPN instance accepted a new session")
 	}
 	h.Detach(a)

@@ -1,28 +1,19 @@
 package app
 
-import (
-	"fmt"
-	"net/url"
-	"strings"
+import "github.com/roseshot/mqvpn-ebpf/internal/configfile"
 
-	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
-)
-
-// clientFileConfig is the concise daemon configuration. The server and mTLS
-// identity files are required. Omitting address (or choosing "auto") requests
-// an authenticated server-managed Tunnel IP lease; static IPs still work.
+// clientFileConfig is the current daemon configuration. Server is always
+// the authenticated DNS identity. connect_ip optionally pins the underlay
+// destination without changing TLS SNI. No old URL/SNI aliases are accepted.
 type clientFileConfig struct {
 	Server string `yaml:"server,omitempty"`
 	Path string `yaml:"path,omitempty"`
-	URL string `yaml:"url,omitempty"` // legacy full endpoint, if needed
 	Address string `yaml:"address,omitempty"`
 	CA string `yaml:"ca,omitempty"`
 	Cert string `yaml:"cert,omitempty"`
 	Key string `yaml:"key,omitempty"`
-
 	TUN string `yaml:"tun,omitempty"`
 	ConnectIP string `yaml:"connect_ip,omitempty"`
-	ServerName string `yaml:"server_name,omitempty"`
 	SourceIP string `yaml:"source_ip,omitempty"`
 	SourceInterface string `yaml:"source_interface,omitempty"`
 	WAN2IP string `yaml:"wan2_ip,omitempty"`
@@ -46,40 +37,5 @@ type clientFileTC struct {
 func loadClientFile(path string) (clientFileConfig,error) {
 	var cfg clientFileConfig
 	if err:=configfile.Read(path,&cfg);err!=nil{return clientFileConfig{},err}
-	if cfg.Server!="" && cfg.URL!="" {
-		return clientFileConfig{},fmt.Errorf("client YAML cannot specify both server and url")
-	}
 	return cfg,nil
-}
-
-// expandClientServer accepts a DNS hostname, host:port or an HTTPS URL.
-// A missing path is the standard MASQUE CONNECT-ETHERNET endpoint.
-func expandClientServer(server string)(string,error){
-	if server==""{return "",fmt.Errorf("client requires server (or legacy --url)")}
-	raw:=server
-	if !strings.Contains(raw,"://"){raw="https://"+raw}
-	u,err:=url.Parse(raw)
-	if err!=nil{return "",fmt.Errorf("invalid server %q: %w",server,err)}
-	if u.Scheme!="https"||u.Host==""||u.Opaque!="" {
-		return "",fmt.Errorf("invalid server %q: expected DNS host[:port] or https URL",server)
-	}
-	if u.Path=="" {u.Path=defaultPath}
-	return u.String(),nil
-}
-
-// applyClientMasquePath allows a separate YAML/CLI path to override the
-// default or a path embedded in an HTTPS server URL. Both QUIC and TCP use
-// the resulting endpoint.requestURL, so they can never disagree.
-func applyClientMasquePath(target,override string)(string,error){
-	u,err:=url.Parse(target)
-	if err!=nil {return "",fmt.Errorf("invalid Client endpoint: %w",err)}
-	if override!="" {
-		if err:=validateMasquePath(override);err!=nil{return "",err}
-		u.Path=override
-		u.RawPath=""
-	} else if u.Path=="" {
-		u.Path=defaultPath
-	}
-	if err:=validateMasquePath(u.Path);err!=nil{return "",err}
-	return u.String(),nil
 }

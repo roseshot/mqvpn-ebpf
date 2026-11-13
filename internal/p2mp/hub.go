@@ -74,13 +74,9 @@ func(h *Hub)SetTunnelPool(pool *TunnelPool) error {
 	return nil
 }
 
-func(h *Hub)Attach(ctx context.Context,rule *Rule,stream Stream)(*Session,error){
-	return h.AttachWithTunnelIP(ctx,rule,stream,false)
-}
-
 // AttachWithTunnelIP allocates only after certificate authorization. The
-// requested mode must match the authorized peer policy; old clients cannot
-// accidentally enter dynamic mode or receive a different static address.
+// requested mode must match the authorized peer policy; a static client
+// cannot enter dynamic mode or receive a different static address.
 func(h *Hub)AttachWithTunnelIP(ctx context.Context,rule *Rule,stream Stream,requestDynamic bool)(*Session,error){
 	if rule==nil||stream==nil{return nil,errors.New("peer and stream required")}
 	h.mu.Lock()

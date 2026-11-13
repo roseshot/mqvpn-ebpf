@@ -15,3 +15,10 @@ func TestRejectUnknownClientWANFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectRemovedCompatibilityClientFlags(t *testing.T){
+	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
+	for _,flag:=range []string{"--url","--server-name"}{
+		if err:=RunClient(context.Background(),[]string{flag,"unused"},logger);err==nil{t.Fatalf("removed option %s accepted",flag)}
+	}
+}

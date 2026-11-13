@@ -10,74 +10,47 @@ import (
 	"strings"
 )
 
-// clientEndpoint separates the QUIC UDP destination from its authenticated
-// TLS identity. With multiple VPN tenants sharing one port, TLS SNI and the
-// HTTP/3 :authority MUST identify the same tenant (and may differ from the
-// literal IP used to dial the server).
+// clientEndpoint separates the physical UDP/TCP destination from its
+// authenticated tenant identity. A pinned connect_ip never changes SNI.
 type clientEndpoint struct {
 	dialAddress string
 	serverName string
 	requestURL string
 }
 
-func planClientEndpoint(rawURL, connectIP, serverName string) (clientEndpoint, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || u == nil || u.Scheme != "https" || u.Opaque != "" ||
-		u.Host == "" || u.Path == "" || u.User != nil || u.Fragment != "" ||
-		u.RawQuery != "" {
-		return clientEndpoint{}, errors.New("--url must be an https://host[:port]/path URL without query or fragment")
+// planClientEndpoint accepts exactly one configuration model:
+// server = tenant DNS name[:port], path = optional canonical CONNECT path,
+// connect_ip = optional literal underlay destination. No URL/SNI aliases.
+func planClientEndpoint(server,path,connectIP string)(clientEndpoint,error){
+	if server=="" || strings.ContainsAny(server,"/?#@\\%") || strings.Contains(server,"://") {
+		return clientEndpoint{},errors.New("server must be an authenticated DNS hostname[:port] (use path separately)")
 	}
-	host := u.Hostname()
-	if host == "" || strings.Contains(host, "%") {
-		return clientEndpoint{}, errors.New("--url must have an unambiguous DNS name or IP address")
+	u,err:=url.Parse("https://"+server)
+	if err!=nil || u.Host=="" || u.Opaque!="" || u.Path!="" || u.RawQuery!="" || u.Fragment!="" || u.User!=nil {
+		return clientEndpoint{},errors.New("server must be a DNS hostname[:port]")
 	}
-	if strings.HasSuffix(u.Host, ":") {
-		return clientEndpoint{}, errors.New("empty --url UDP port")
-	}
-	if u.Port() != "" {
-		n, err := strconv.Atoi(u.Port())
-		if err != nil || n <= 0 || n > 65535 {
-			return clientEndpoint{}, fmt.Errorf("invalid --url UDP port %q", u.Port())
+	host:=strings.ToLower(u.Hostname())
+	if err:=validateSNI(host);err!=nil{return clientEndpoint{},fmt.Errorf("server DNS identity: %w",err)}
+	if strings.HasSuffix(u.Host,":"){return clientEndpoint{},errors.New("server port cannot be empty")}
+	port:=u.Port()
+	if port!="" {
+		p,err:=strconv.Atoi(port)
+		if err!=nil||p<1||p>65535{return clientEndpoint{},fmt.Errorf("invalid server port %q",port)}
+	} else {port="443"}
+	if path==""{path=defaultPath}
+	if err:=validateMasquePath(path);err!=nil{return clientEndpoint{},err}
+	dialHost:=host
+	if connectIP!=""{
+		ip,err:=netip.ParseAddr(connectIP)
+		if err!=nil || !ip.IsValid() || ip.Zone()!="" || ip.IsUnspecified() || ip.IsMulticast(){
+			return clientEndpoint{},fmt.Errorf("invalid connect_ip %q: expected unicast IP literal",connectIP)
 		}
+		dialHost=ip.String()
 	}
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-
-	// net.ParseIP handles IPv4 and bracketed IPv6 URL literals. Other URL
-	// hostnames must be valid server-side DNS SNI identities.
-	urlIP := net.ParseIP(host)
-	if serverName == "" {
-		if urlIP != nil {
-			return clientEndpoint{}, errors.New("IP URL requires --server-name DNS identity for TLS SNI and tenant routing")
-		}
-		serverName = host
-	}
-	serverName = strings.ToLower(serverName)
-	if err := validateSNI(serverName); err != nil {
-		return clientEndpoint{}, fmt.Errorf("--server-name: %w", err)
-	}
-
-	dialHost := host
-	if connectIP != "" {
-		override, err := netip.ParseAddr(connectIP)
-		if err != nil || override.Zone() != "" || !override.IsValid() ||
-			override.IsUnspecified() || override.IsMulticast() {
-			return clientEndpoint{}, fmt.Errorf("invalid --connect-ip %q: expected unicast IP literal", connectIP)
-		}
-		if urlIP != nil {
-			return clientEndpoint{}, errors.New("--connect-ip is redundant with an IP literal in --url")
-		}
-		dialHost = override.String()
-	}
-	// QUIC transport dials a literal IP when requested. The CONNECT
-	// :authority always uses the authenticated domain, never the IP.
-	authorityURL := *u
-	authorityURL.Host = net.JoinHostPort(serverName, port)
+	authority:=net.JoinHostPort(host,port)
 	return clientEndpoint{
-		dialAddress: net.JoinHostPort(dialHost, port),
-		serverName: serverName,
-		requestURL: authorityURL.String(),
-	}, nil
+		dialAddress:net.JoinHostPort(dialHost,port),
+		serverName:host,
+		requestURL:(&url.URL{Scheme:"https",Host:authority,Path:path}).String(),
+	},nil
 }

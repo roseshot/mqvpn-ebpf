@@ -24,21 +24,16 @@ func DefaultConfig() Config {
 }
 func (c Config) Enabled() bool { return c.Mode == "auto" || c.Mode == "required" }
 
-// Legacy object-based opt-in remains fail-closed as "required".
+// Normalize uses one explicit policy model: omitted mode means auto.
+// Supplying an external ELF object never changes the failure policy.
 func (c Config) Normalize() (Config, error) {
 	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
 	c.Object = strings.TrimSpace(c.Object)
 	c.MSSClamp = strings.ToLower(strings.TrimSpace(c.MSSClamp))
 	switch c.Mode {
 	case "":
-		if c.Object == "" {
-			if (c.MSSClamp != "" && c.MSSClamp != "off") || c.Stats {
-				return Config{}, fmt.Errorf("TUN TC eBPF object is required for mss_clamp=%s or stats", c.MSSClamp)
-			}
-			return Config{Mode: "off", MSSClamp: "off"}, nil
-		}
-		c.Mode = "required"
-		if c.MSSClamp == "" { c.MSSClamp = "off" }
+		c.Mode = "auto"
+		if c.MSSClamp == "" { c.MSSClamp = "auto" }
 	case "off":
 		return Config{Mode: "off", MSSClamp: "off"}, nil
 	case "auto", "required":
@@ -66,7 +61,7 @@ type Limits struct {
 // EffectiveLimits never increases the MTU-derived TCP MSS limit.
 func EffectiveLimits(mtu int, raw string) (Limits, error) {
 	if mtu < 576 || mtu > 65535 { return Limits{}, fmt.Errorf("invalid TUN MTU %d", mtu) }
-	c, err := (Config{Object: "enabled", MSSClamp: raw}).Normalize()
+	c, err := (Config{Mode: "auto", MSSClamp: raw}).Normalize()
 	if err != nil { return Limits{}, err }
 	r := Limits{MTU: uint32(mtu)}
 	if c.MSSClamp == "off" { return r, nil }

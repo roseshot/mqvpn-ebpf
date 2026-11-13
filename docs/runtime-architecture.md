@@ -13,6 +13,7 @@ standard-library APIs and Go modules.
 | WAN source IP/interface resolution | `internal/wan/socket_linux.go` | Go `net` |
 | UDP/QUIC and TCP/TLS device pinning | `internal/wan/bind_linux.go` | Shared `SO_BINDTODEVICE` socket control |
 | WAN MTU / route-table *inspection* | `internal/wan/mtu_linux.go` | Go `net` + `github.com/vishvananda/netlink` |
+| Authenticated pushed routes and Server host-route guard | `internal/routepush/netlink_linux.go` | Go netlink add/delete with per-session rollback |
 | TUN frame and path-MTU budget | `internal/mtu/plan.go` | Pure Go calculation |
 | XDP attach and maps | `internal/xdp/dispatcher_linux.go` | `github.com/cilium/ebpf` |
 | QUIC/HTTP3/MPQUIC | Go `github.com/qoke/mp-quic-go` | Pure Go networking |
@@ -21,8 +22,10 @@ standard-library APIs and Go modules.
 The TUN driver creates or attaches the configured interface, sets
 its IP/CIDR and MTU, brings it UP and checks readiness. The Linux kernel
 adds the normal connected-prefix route as part of address configuration.
-The daemon does not explicitly insert/delete custom routes, policy
-rules, VRFs, multicast routes or firewall settings.
+When Client accepts Server-pushed routes, the daemon inserts only
+those routes and a protecting host route to the Server's actual public
+IP; it removes only the routes it created at session teardown. It does
+not install policy rules, VRFs, multicast routes or firewall settings.
 
 The `internal/architecture` test parses all production source files
 under `internal`, `cmd/mqvpn-server` and `cmd/mqvpn-client` and fails

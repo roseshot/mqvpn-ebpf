@@ -134,7 +134,7 @@ instances:
 Client:
 
 ~~~bash
-mqvpn-client --url https://a.vpn.example.com/.well-known/masque/ethernet/ \
+mqvpn-client --server a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 \
   --tun-mtu 1360 --max-frame 1374 \
   --source-interface enp1s0 \
