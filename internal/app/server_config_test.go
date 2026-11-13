@@ -24,6 +24,7 @@ func TestSharedUDPConfigAndDefaults(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil { t.Fatal(err) }
 	if cfg.Listen != defaultServerListen { t.Fatalf("expected UDP/443, got %q", cfg.Listen) }
+	if cfg.Instances[0].TC==nil || cfg.Instances[0].TC.Mode!="auto" || !cfg.Instances[0].TC.Stats || cfg.Instances[0].TC.MSSClamp!="auto" {t.Fatal("default TCX must use auto MSS clamp and stats")}
 	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 0 || cfg.Instances[0].MTU != 0 {
 		t.Fatal("auto MTU/frame must stay omitted until runtime WAN discovery")
 	}
@@ -138,7 +139,7 @@ func TestServerTCConfigRequiresExplicitELF(t *testing.T){
 	inst.TC=&tcebpf.Config{MSSClamp:"off"}
 	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
 	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
-	if cfg.Instances[0].TC!=nil{t.Fatal("off-only TC config should normalize to disabled")}
+	if cfg.Instances[0].TC==nil||cfg.Instances[0].TC.Mode!="off"{t.Fatal("off-only policy must remain explicitly disabled")}
 	inst.TC=&tcebpf.Config{Object:"bpf/tun_tc.o",MSSClamp:"auto",Stats:true}
 	cfg=ServerConfig{Instances:[]ServerInstance{inst}}
 	if err:=cfg.Validate();err!=nil{t.Fatal(err)}

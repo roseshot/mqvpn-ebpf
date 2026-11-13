@@ -127,8 +127,10 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		// replacing only this instance's BPF policy restarts only this TUN.
 		if spec.TC!=nil && spec.TC.Enabled(){
 			object,err:=os.ReadFile(spec.TC.Object)
-			if err!=nil{return preparedServer{},fmt.Errorf("instance %s TC ELF: %w",spec.Name,err)}
-			hashRecord(hash,object)
+			if err!=nil {
+				if spec.TC.Mode=="required" {return preparedServer{},fmt.Errorf("instance %s TC ELF: %w",spec.Name,err)}
+				// Auto tolerates missing ELF; future installation changes digest.
+			} else {hashRecord(hash,object)}
 		}
 		for _, path := range []string{spec.Cert, spec.Key, spec.ClientCA} {
 			b, err := os.ReadFile(path)
@@ -213,9 +215,9 @@ func (m *serverManager) start(p preparedInstance) error {
 	logger := m.logger.With("instance", p.spec.Name, "tun", p.spec.TUN)
 	hub, err := p2mp.New(device, p.peers, p.spec.MaxFrame, logger)
 	if err != nil { _ = device.Close(); return err }
-	var policy tcebpf.Config
+	policy:=tcebpf.DefaultConfig()
 	if p.spec.TC!=nil{policy=*p.spec.TC}
-	tc,err:=tcebpf.Attach(p.spec.TUN,policy,p.spec.MTU)
+	tc,err:=attachConfiguredTC(p.spec.TUN,policy,p.spec.MTU,logger)
 	if err!=nil {_ = device.Close();return fmt.Errorf("instance %s TUN TC eBPF: %w",p.spec.Name,err)}
 	ctx, cancel := context.WithCancel(m.ctx)
 	live := &liveInstance{

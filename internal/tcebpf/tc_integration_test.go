@@ -27,6 +27,7 @@ func TestKernelTCMSSClampAndChecksum(t *testing.T) {
 	var key uint32
 	limits,err:=EffectiveLimits(1400,"auto")
 	if err!=nil{t.Fatal(err)}
+	limits.Stats=1
 	if err:=col.Maps["tun_config"].Put(key,limits);err!=nil{t.Fatal(err)}
 
 	for _,direction:=range []string{"tc_mqvpn_ingress","tc_mqvpn_egress"}{

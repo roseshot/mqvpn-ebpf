@@ -2,6 +2,20 @@ package tcebpf
 
 import "testing"
 
+func TestDefaultAndCompatibilityModes(t *testing.T) {
+	auto,err:=DefaultConfig().Normalize()
+	if err!=nil||!auto.Enabled()||auto.Mode!="auto"||auto.MSSClamp!="auto"||!auto.Stats||auto.Object!=DefaultObject {t.Fatalf("default: %+v %v",auto,err)}
+	legacy,err:=(Config{Object:"legacy.o"}).Normalize()
+	if err!=nil||legacy.Mode!="required"||legacy.MSSClamp!="off" {t.Fatalf("legacy must stay strict: %+v %v",legacy,err)}
+	for _,mode:=range []string{"auto","required"}{
+		cfg,err:=(Config{Mode:mode}).Normalize()
+		if err!=nil||cfg.Mode!=mode||cfg.Object!=DefaultObject||cfg.MSSClamp!="auto"{t.Fatalf("mode %s: %+v %v",mode,cfg,err)}
+	}
+	off,err:=(Config{Mode:"off",Object:"ignored.o",MSSClamp:"auto",Stats:true}).Normalize()
+	if err!=nil||off.Enabled()||off.Object!=""{t.Fatalf("off mode: %+v %v",off,err)}
+	if _,err:=(Config{Mode:"invalid"}).Normalize();err==nil{t.Fatal("invalid mode accepted")}
+}
+
 func TestClampLimits(t *testing.T){
 	for _,tc:=range []struct{mode string;mtu int;v4,v6 uint16;enabled uint32}{
 		{"off",1400,0,0,0},

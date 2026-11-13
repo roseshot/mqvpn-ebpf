@@ -382,14 +382,18 @@ attaches the device and assigns only its configured address/MTU/UP state.
 
 See [docs/tcp-fallback.md](docs/tcp-fallback.md).
 
-## TC eBPF TCP MSS Clamp and traffic statistics (optional)
+## TC eBPF TCP MSS Clamp and traffic statistics (default auto)
 
 TCX eBPF on the L3 TUN can cap TCP MSS in SYN and SYN-ACK
 without calling `tc`, `iptables`, `nftables`, or `os/exec`.
 The Linux kernel must support **TCX (6.6+)**. Both ingress and egress
 are attached to handle VPN traffic moving in either direction.
+Default `auto` attempts the precompiled `/usr/lib/mqvpn/tun_tc.o`, logging
+a warning and falling back to ordinary TUN forwarding when unsupported or
+missing. Install the ELF with `sudo make install-bpf`. `required` fails
+instead, while `off` disables the attempt.
 
-Build the TC ELF with `make bpf`, then opt in per Server instance:
+Build the TC ELF with `make bpf` and install it. Per-instance overrides:
 
 ~~~yaml
 instances:
@@ -398,7 +402,7 @@ instances:
     tun: mq0
     address: 10.77.0.1/24
     tc:
-      object: /usr/lib/mqvpn/tun_tc.o
+      mode: auto  # off | auto | required; omitting tc also defaults auto
       mss_clamp: auto  # off | auto | numeric (e.g. "1280")
       stats: true
     peers: /etc/mqvpn/peers-a.yaml
@@ -407,10 +411,11 @@ instances:
     client_ca: /etc/mqvpn/tls/a-clients.crt
 ~~~
 
-Client can use `--tc-object /usr/lib/mqvpn/tun_tc.o
---mss-clamp auto --tc-stats`. The same policy is used by QUIC and TCP
-fallback. Without TC options the daemon does **not** attach TC eBPF,
-and an explicitly enabled TCX policy requires a kernel with TCX support.
+Client defaults to `--tc-mode auto --tc-object /usr/lib/mqvpn/tun_tc.o`
+`--mss-clamp auto --tc-stats=true`. QUIC and TCP fallback use the same
+policy. Auto needs the deployed ELF to provide MSS clamping; old-style TC
+settings without an explicit mode stay strict (`required`) for backward
+compatibility. `tc: {mode: off}` disables TCX.
 
 Auto MSS clamp uses the effective TUN MTU (not the raw WAN MTU):
 for MTU 1400, IPv4 MSS is at most **1360** and IPv6 MSS is at

@@ -114,6 +114,21 @@ func TestReloadCommandRejectsInvalidPID(t *testing.T) {
 }
 
 
+func TestAutoTCMissingELFAndELFInstallationOnReload(t *testing.T) {
+	cfg,_:=testServerFiles(t)
+	object:=filepath.Join(t.TempDir(),"tun_tc.o")
+	cfg.Instances[0].TC=&tcebpf.Config{Mode:"auto",Object:object,MSSClamp:"auto",Stats:true}
+	missing,err:=prepareServer(cfg)
+	if err!=nil {t.Fatalf("auto must tolerate missing ELF: %v",err)}
+	if err:=os.WriteFile(object,[]byte("simulated-new-object"),0600);err!=nil{t.Fatal(err)}
+	present,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	if missing.instances["edge-a"].staticHash==present.instances["edge-a"].staticHash {t.Fatal("auto did not notice installed ELF")}
+	cfg.Instances[0].TC.Mode="required"
+	if err:=os.Remove(object);err!=nil{t.Fatal(err)}
+	if _,err:=prepareServer(cfg);err==nil{t.Fatal("required policy must reject missing ELF")}
+}
+
 func TestTCObjectReloadUpdatesOnlyInstanceHash(t *testing.T) {
 	cfg,_:=testServerFiles(t)
 	object:=filepath.Join(t.TempDir(),"tun_tc.o")

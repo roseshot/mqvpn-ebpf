@@ -52,15 +52,15 @@ type Attachment struct {
 	stats *ebpf.Map
 }
 
-// Attach is opt-in. It requires Linux TCX (kernel >= 6.6) and sufficient
-// eBPF privileges; a missing/unsupported feature fails explicitly, never
-// silently bypasses requested MSS Clamp.
+// Attach performs the kernel operation; the caller enforces auto/required
+// error policy. TCX requires Linux 6.6+ and appropriate BPF permissions.
 func Attach(ifname string,cfg Config,mtu int) (*Attachment,error) {
 	norm,err:=cfg.Normalize()
 	if err!=nil{return nil,err}
 	if !norm.Enabled(){return nil,nil}
 	limits,err:=EffectiveLimits(mtu,norm.MSSClamp)
 	if err!=nil{return nil,err}
+	if norm.Stats {limits.Stats=1}
 	iface,err:=net.InterfaceByName(ifname)
 	if err!=nil{return nil,fmt.Errorf("TUN TC interface %q: %w",ifname,err)}
 	spec,err:=ebpf.LoadCollectionSpec(norm.Object)

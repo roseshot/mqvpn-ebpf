@@ -28,8 +28,10 @@ instances:
     server_name: customer-a.vpn.example.com
     tun: mq0
     address: 10.77.0.1/24
-    # Optional; Linux kernel >=6.6, compiled via make bpf:
+    # TCX defaults to auto MSS clamp + stats; install with
+    # 'sudo make install-bpf'. Missing ELF/TCX support falls back to TUN.
     # tc:
+    #   mode: auto      # off | auto | required
     #   object: /usr/lib/mqvpn/tun_tc.o
     #   mss_clamp: auto
     #   stats: true

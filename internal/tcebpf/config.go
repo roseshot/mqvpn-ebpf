@@ -6,61 +6,76 @@ import (
 	"strings"
 )
 
-// Config enables optional TUN TCX processing. All fields are per VPN instance.
-// No BPF program is attached if Object is omitted and Clamp/Stats are disabled.
+const DefaultObject = "/usr/lib/mqvpn/tun_tc.o"
+
+// Config controls per-TUN TCX processing. Auto falls back to ordinary TUN
+// forwarding when the kernel, permissions, or compiled ELF is unavailable.
 type Config struct {
-	Object string `yaml:"object,omitempty"`
+	Mode     string `yaml:"mode,omitempty"` // off | auto | required
+	Object   string `yaml:"object,omitempty"`
 	MSSClamp string `yaml:"mss_clamp,omitempty"`
-	Stats bool `yaml:"stats,omitempty"`
+	Stats    bool   `yaml:"stats,omitempty"`
 }
 
-func (c Config) Enabled() bool {return c.Object!=""}
+func DefaultConfig() Config {
+	return Config{Mode: "auto", Object: DefaultObject, MSSClamp: "auto", Stats: true}
+}
+func (c Config) Enabled() bool { return c.Mode == "auto" || c.Mode == "required" }
 
-// Normalize validates configuration without accessing the kernel or files.
-// The feature is opt-in: without an explicit object and policy, no TCX
-// program is attached.
-func (c Config) Normalize() (Config,error) {
-	c.MSSClamp=strings.ToLower(strings.TrimSpace(c.MSSClamp))
-	if c.MSSClamp=="" {c.MSSClamp="off"}
-	if c.Object=="" {
-		if c.MSSClamp!="off" || c.Stats {
-			return Config{},fmt.Errorf("TUN TC eBPF object is required for mss_clamp=%s or stats",c.MSSClamp)
+// Legacy object-based opt-in remains fail-closed as "required".
+func (c Config) Normalize() (Config, error) {
+	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
+	c.Object = strings.TrimSpace(c.Object)
+	c.MSSClamp = strings.ToLower(strings.TrimSpace(c.MSSClamp))
+	switch c.Mode {
+	case "":
+		if c.Object == "" {
+			if (c.MSSClamp != "" && c.MSSClamp != "off") || c.Stats {
+				return Config{}, fmt.Errorf("TUN TC eBPF object is required for mss_clamp=%s or stats", c.MSSClamp)
+			}
+			return Config{Mode: "off", MSSClamp: "off"}, nil
 		}
-		return Config{},nil
+		c.Mode = "required"
+		if c.MSSClamp == "" { c.MSSClamp = "off" }
+	case "off":
+		return Config{Mode: "off", MSSClamp: "off"}, nil
+	case "auto", "required":
+		if c.Object == "" { c.Object = DefaultObject }
+		if c.MSSClamp == "" { c.MSSClamp = "auto" }
+	default:
+		return Config{}, fmt.Errorf("invalid TC eBPF mode %q (off|auto|required)", c.Mode)
 	}
-	if c.MSSClamp!="off" && c.MSSClamp!="auto" {
-		v,err:=strconv.Atoi(c.MSSClamp)
-		if err!=nil || v<256 || v>65535 {
-			return Config{},fmt.Errorf("invalid mss_clamp %q (off|auto|256..65535)",c.MSSClamp)
+	if c.MSSClamp != "off" && c.MSSClamp != "auto" {
+		v, err := strconv.Atoi(c.MSSClamp)
+		if err != nil || v < 256 || v > 65535 {
+			return Config{}, fmt.Errorf("invalid mss_clamp %q (off|auto|256..65535)", c.MSSClamp)
 		}
 	}
-	return c,nil
+	return c, nil
 }
 
 type Limits struct {
-	MTU uint32
-	MSS4 uint16
-	MSS6 uint16
+	MTU   uint32
+	MSS4  uint16
+	MSS6  uint16
 	Clamp uint32
+	Stats uint32
 }
 
-// EffectiveLimits computes maximum inner TCP MSS from the actual TUN MTU.
-// Even explicit values may only LOWER the MTU-derived limit; never increase it.
-func EffectiveLimits(mtu int,raw string)(Limits,error) {
-	if mtu<576||mtu>65535{return Limits{},fmt.Errorf("invalid TUN MTU %d",mtu)}
-	c,err:=(Config{Object:"enabled",MSSClamp:raw}).Normalize()
-	if err!=nil{return Limits{},err}
-	r:=Limits{MTU:uint32(mtu)}
-	if c.MSSClamp=="off"{return r,nil}
-	v4,v6:=mtu-40,mtu-60
-	if v4<=0 || v6<=0 {return Limits{},fmt.Errorf("invalid TUN MTU %d for TCP MSS",mtu)}
-	if c.MSSClamp!="auto" {
-		target,_:=strconv.Atoi(c.MSSClamp)
-		if v4>target {v4=target}
-		if v6>target {v6=target}
+// EffectiveLimits never increases the MTU-derived TCP MSS limit.
+func EffectiveLimits(mtu int, raw string) (Limits, error) {
+	if mtu < 576 || mtu > 65535 { return Limits{}, fmt.Errorf("invalid TUN MTU %d", mtu) }
+	c, err := (Config{Object: "enabled", MSSClamp: raw}).Normalize()
+	if err != nil { return Limits{}, err }
+	r := Limits{MTU: uint32(mtu)}
+	if c.MSSClamp == "off" { return r, nil }
+	v4, v6 := mtu-40, mtu-60
+	if v4 <= 0 || v6 <= 0 { return Limits{}, fmt.Errorf("invalid TUN MTU %d for TCP MSS", mtu) }
+	if c.MSSClamp != "auto" {
+		target, _ := strconv.Atoi(c.MSSClamp)
+		if v4 > target { v4 = target }
+		if v6 > target { v6 = target }
 	}
-	r.MSS4=uint16(v4)
-	r.MSS6=uint16(v6)
-	r.Clamp=1
-	return r,nil
+	r.MSS4, r.MSS6, r.Clamp = uint16(v4), uint16(v6), 1
+	return r, nil
 }

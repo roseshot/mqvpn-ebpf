@@ -23,6 +23,7 @@ struct tun_settings {
     __u16 mss4;
     __u16 mss6;
     __u32 clamp;
+    __u32 stats;
 };
 
 struct tun_counters {
@@ -61,7 +62,7 @@ static __always_inline int load(struct __sk_buff *skb, __u32 off, void *dst, __u
 
 static __always_inline int ip_to_tcp(struct __sk_buff *skb, __u32 *offset,
                                      __u16 *max_mss, __u16 mss4, __u16 mss6,
-                                     struct tun_counters *stats) {
+                                     struct tun_counters *stats, int collect) {
     __u8 version;
     if (load(skb, 0, &version, sizeof(version)) < 0)
         return -1;
@@ -73,7 +74,7 @@ static __always_inline int ip_to_tcp(struct __sk_buff *skb, __u32 *offset,
         __u32 hlen = (__u32)ip.ihl * 4;
         if (hlen > skb->len)
             return -1;
-        stats->ipv4++;
+        if (collect) stats->ipv4++;
         // Never mutate IP fragments (including first fragments).
         if (bpf_ntohs(ip.frag_off) & 0x3fff || ip.protocol != IPPROTO_TCP)
             return 0;
@@ -85,7 +86,7 @@ static __always_inline int ip_to_tcp(struct __sk_buff *skb, __u32 *offset,
         struct ipv6hdr ip6;
         if (load(skb, 0, &ip6, sizeof(ip6)) < 0)
             return -1;
-        stats->ipv6++;
+        if (collect) stats->ipv6++;
         __u8 next = ip6.nexthdr;
         __u32 off = sizeof(ip6);
 for (int i = 0; i < MAX_EXT_HEADERS; i++) {
@@ -180,19 +181,19 @@ static long scan_option(__u32 iteration, void *opaque) {
 // on malformed or non-TCP traffic. Unrecoverable checksum write failure
 // drops the packet rather than forwarding it corrupted.
 static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
-                                      __u16 limit, struct tun_counters *stats) {
+                                      __u16 limit, struct tun_counters *stats, int collect) {
     __u8 tcp[20];
     if (load(skb, tcp_off, tcp, sizeof(tcp)) < 0) {
-        stats->parse_errors++;
+        if (collect) stats->parse_errors++;
         return TC_ACT_OK;
     }
     if (!(tcp[13] & 0x02))
         return TC_ACT_OK;
-    stats->syn++;
+    if (collect) stats->syn++;
     __u32 header_len = (__u32)(tcp[12] >> 4) * 4;
     if (header_len < 20 || header_len > 60 ||
         tcp_off > skb->len || header_len > skb->len - tcp_off) {
-        stats->parse_errors++;
+        if (collect) stats->parse_errors++;
         return TC_ACT_OK;
     }
     __u32 opt_len = header_len - 20;
@@ -220,15 +221,15 @@ static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
     }
 #undef LOAD_OPTIONS
     if (load_result < 0) {
-        stats->parse_errors++;
+        if (collect) stats->parse_errors++;
         return TC_ACT_OK;
     }
     if (bpf_loop(MAX_TCP_OPT_BYTES, scan_option, &scan, 0) < 0) {
-        stats->parse_errors++;
+        if (collect) stats->parse_errors++;
         return TC_ACT_OK;
     }
     if (scan.invalid) {
-        stats->parse_errors++;
+        if (collect) stats->parse_errors++;
         return TC_ACT_OK;
     }
     if (!scan.found || bpf_ntohs(scan.old_mss) <= limit)
@@ -236,15 +237,15 @@ static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
     __be16 updated = bpf_htons(limit);
     if (bpf_l4_csum_replace(skb, tcp_off + 16,
                             scan.old_mss, updated, sizeof(updated)) < 0) {
-        stats->checksum_errors++;
+        if (collect) stats->checksum_errors++;
         return TC_ACT_SHOT;
     }
     if (bpf_skb_store_bytes(skb, tcp_off + 20 + scan.mss_offset,
                             &updated, sizeof(updated), 0) < 0) {
-        stats->checksum_errors++;
+        if (collect) stats->checksum_errors++;
         return TC_ACT_SHOT;
     }
-    stats->clamped++;
+    if (collect) stats->clamped++;
     return TC_ACT_OK;
 }
 
@@ -252,24 +253,27 @@ static __always_inline int run_tun(struct __sk_buff *skb, __u32 direction) {
     struct tun_counters *stats = bpf_map_lookup_elem(&tun_stats, &direction);
     if (!stats)
         return TC_ACT_OK;
-    stats->packets++;
-    stats->bytes += skb->len;
     __u32 index = 0;
     struct tun_settings *conf = bpf_map_lookup_elem(&tun_config, &index);
     if (!conf)
         return TC_ACT_OK;
-    if (conf->mtu && skb->len > conf->mtu)
-        stats->oversize++;
+    int collect = conf->stats != 0;
+    if (collect) {
+        stats->packets++;
+        stats->bytes += skb->len;
+        if (conf->mtu && skb->len > conf->mtu)
+            stats->oversize++;
+    }
     __u32 off = 0;
     __u16 limit = 0;
-    int result = ip_to_tcp(skb, &off, &limit, conf->mss4, conf->mss6, stats);
+    int result = ip_to_tcp(skb, &off, &limit, conf->mss4, conf->mss6, stats, collect);
     if (result < 0) {
-        stats->parse_errors++;
+        if (collect) stats->parse_errors++;
         return TC_ACT_OK;
     }
     if (result == 0 || !conf->clamp || limit == 0)
         return TC_ACT_OK;
-    return clamp_syn(skb, off, limit, stats);
+    return clamp_syn(skb, off, limit, stats, collect);
 }
 
 SEC("tc")

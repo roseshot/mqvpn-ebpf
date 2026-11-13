@@ -36,16 +36,25 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
 	maxFrame := fs.Int("max-frame", 0, "maximum Ethernet frame bytes, 0 = computed TUN MTU + 14")
-	tcObject := fs.String("tc-object", "", "optional compiled TUN TCX eBPF ELF")
-	mssClamp := fs.String("mss-clamp", "off", "TUN TCP SYN MSS clamp: off|auto|numeric")
-	tcStats := fs.Bool("tc-stats", false, "collect TUN ingress/egress BPF counters")
+	tcMode := fs.String("tc-mode", "auto", "TUN TCX mode: off|auto|required")
+	tcObject := fs.String("tc-object", tcebpf.DefaultObject, "compiled TUN TCX eBPF ELF")
+	mssClamp := fs.String("mss-clamp", "auto", "TUN TCP SYN MSS clamp: off|auto|numeric")
+	tcStats := fs.Bool("tc-stats", true, "collect TUN ingress/egress BPF counters")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	if err := fs.Parse(args); err != nil { return err }
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
 	if err:=mtu.ValidateRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
-	tcConfig,err:=(tcebpf.Config{Object:*tcObject,MSSClamp:*mssClamp,Stats:*tcStats}).Normalize()
+	// Legacy explicit TC flags remain strict unless --tc-mode is supplied.
+	legacyTC,explicitMode:=false,false
+	fs.Visit(func(f *flag.Flag){
+		if f.Name=="tc-mode" {explicitMode=true}
+		if f.Name=="tc-object"||f.Name=="mss-clamp"||f.Name=="tc-stats" {legacyTC=true}
+	})
+	mode:=*tcMode
+	if !explicitMode&&legacyTC {mode="required"}
+	tcConfig,err:=(tcebpf.Config{Mode:mode,Object:*tcObject,MSSClamp:*mssClamp,Stats:*tcStats}).Normalize()
 	if err!=nil{return fmt.Errorf("TUN TC eBPF config: %w",err)}
 	if *transportMode!="auto"&&*transportMode!="quic"&&*transportMode!="tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)",*transportMode)
@@ -183,7 +192,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		"auto",budget.Auto,"wan_links",underlays)
 	dev, err := tun.Open(*tunName,*tunAddress,budget.TUNMTU)
 	if err != nil { return err }
-	tcAttachment,err:=tcebpf.Attach(*tunName,tcConfig,budget.TUNMTU)
+	tcAttachment,err:=attachConfiguredTC(*tunName,tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)
 	done := make(chan struct{})

@@ -109,7 +109,7 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if err!=nil{return err}
 	device,err:=tun.Open(o.tunName,o.tunAddress,budget.TUNMTU)
 	if err!=nil{return err}
-	tcAttachment,err:=tcebpf.Attach(o.tunName,o.tcConfig,budget.TUNMTU)
+	tcAttachment,err:=attachConfiguredTC(o.tunName,o.tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = device.Close();return fmt.Errorf("attach TCP TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)

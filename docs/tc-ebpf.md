@@ -2,7 +2,7 @@
 
 The Linux L3 TUN is configured with IP/CIDR, MTU and UP using Go +
 Netlink; Linux owns its connected-prefix route. TCX eBPF is an
-**optional** addition on the TUN itself and requires kernel >=6.6.
+**default-auto** addition on the TUN itself and requires kernel >=6.6.
 All BPF program loading/attaching is pure Go via cilium/ebpf, not
 a shell command.
 
@@ -14,9 +14,13 @@ Run **make bpf** (development-only Clang/LLVM). It produces:
   counters, including UDP listener matching and pass-through traffic.
 - **bpf/tun_tc.o**: TUN TCX ingress and egress classifiers.
 
-Deploy the new \`tun_tc.o\` with the daemon binary. No compilation
-occurs at daemon runtime. Without a TC object setting, no TCX program
-is attached; opting into TCX requires a kernel with TCX support.
+Deploy the precompiled `tun_tc.o` to `/usr/lib/mqvpn/tun_tc.o` with
+`sudo make install-bpf` (or configure a custom object path). No compilation
+occurs at runtime. Default `auto` attempts TCX, warns and continues ordinary
+TUN forwarding when the kernel, privileges or ELF are unavailable. It cannot
+clamp MSS unless the ELF is deployed. `required` stays fail-closed, and
+`off` disables TCX. Legacy YAML with an explicit object and no mode
+remains strict for backward compatibility.
 
 ## Server (per Instance)
 
@@ -27,7 +31,7 @@ instances:
     tun: mq0
     address: 10.77.0.1/24
     tc:
-      object: /usr/lib/mqvpn/tun_tc.o
+      mode: auto
       mss_clamp: auto
       stats: true
     peers: /etc/mqvpn/peers-a.yaml
@@ -41,11 +45,10 @@ instances:
 maximum: IPv4 MTU minus 40 and IPv6 MTU minus 60. For example,
 TUN MTU **1400** means MSS **1360** for IPv4 and **1340** for IPv6.
 
-\`tc.stats: true\` enables a statistics-only deployment if
-\`mss_clamp: off\`. The stats map is per CPU with a single independent
-map instance per TUN, not shared between VPN tenants. Statistics
-are logged at shutdown / instance reload; no peer IP/port ACLs
-are introduced.
+`tc.stats: true` enables per-CPU counters; `stats: false` disables
+counter updates inside the BPF program. A statistics-only deployment uses
+`mss_clamp: off`. Each TUN has independent maps (not shared across tenants).
+Counters are logged at shutdown / reload; no inner traffic ACLs are introduced.
 
 ## Client
 
@@ -53,16 +56,17 @@ are introduced.
 mqvpn-client --url https://a.vpn.example.com/.well-known/masque/ethernet/ \
   --tun mq0 --tun-address 10.77.0.2/24 \
   --source-interface enp1s0 \
-  --tc-object /usr/lib/mqvpn/tun_tc.o --mss-clamp auto --tc-stats \
+  --tc-mode auto --mss-clamp auto --tc-stats \
   --ca /etc/mqvpn/ca.crt --cert /etc/mqvpn/client.crt \
   --key /etc/mqvpn/client.key
 ~~~
 
-Both QUIC/MPQUIC and HTTP/1.1 TCP fallback use the same TUN TCX
-attachment. A TCX attach failure fails the opted-in instance or
-client (no silently disabled clamp). Server hot reload restarts
-only the instance when the TC config or ELF bytes change; the shared
-UDP/443 and optional TCP/443 listeners remain running.
+Both QUIC/MPQUIC and HTTP/1.1 TCP fallback use the same TCX policy.
+An `auto` attach error logs a warning and continues normal TUN forwarding;
+`required` fails the opted-in instance or client. Existing explicit
+client TC flags stay strict unless `--tc-mode` is provided. Hot reload
+restarts only the affected instance when the TC policy or ELF changes;
+installing an ELF previously missing in auto mode also changes the digest.
 
 ## Packet rules and limits
 

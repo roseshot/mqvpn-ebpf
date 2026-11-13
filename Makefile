@@ -3,13 +3,19 @@
 CLANG ?= /usr/bin/clang
 BPF_INCLUDE ?= /usr/include/x86_64-linux-gnu
 
-.PHONY: bpf go test clean
+.PHONY: bpf install-bpf go test clean
+
+BPF_INSTALL_DIR ?= /usr/lib/mqvpn
 
 bpf:
 	$(CLANG) -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 	  -I$(BPF_INCLUDE) -c bpf/xdp_mqvpn.c -o bpf/xdp_mqvpn.o
 	$(CLANG) -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
 	  -I$(BPF_INCLUDE) -c bpf/tun_tc.c -o bpf/tun_tc.o
+
+install-bpf: bpf
+	install -D -m 0644 bpf/tun_tc.o $(DESTDIR)$(BPF_INSTALL_DIR)/tun_tc.o
+	install -D -m 0644 bpf/xdp_mqvpn.o $(DESTDIR)$(BPF_INSTALL_DIR)/xdp_mqvpn.o
 
 go:
 	CGO_ENABLED=0 go build -mod=mod ./cmd/...

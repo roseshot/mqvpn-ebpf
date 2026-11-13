@@ -99,10 +99,13 @@ func (c *ServerConfig) Validate() error {
 		if err:=mtu.ValidateRequest(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
 			return fmt.Errorf("instance %s: %w",inst.Name,err)
 		}
-		if inst.TC!=nil{
+		if inst.TC==nil {
+			defaultTC:=tcebpf.DefaultConfig()
+			inst.TC=&defaultTC
+		} else {
 			next,err:=inst.TC.Normalize()
 			if err!=nil{return fmt.Errorf("instance %s TC eBPF: %w",inst.Name,err)}
-			if next.Enabled(){inst.TC=&next}else{inst.TC=nil}
+			inst.TC=&next // Preserve explicit mode: off; nil means default auto.
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
 		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
