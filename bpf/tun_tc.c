@@ -88,8 +88,7 @@ static __always_inline int ip_to_tcp(struct __sk_buff *skb, __u32 *offset,
         stats->ipv6++;
         __u8 next = ip6.nexthdr;
         __u32 off = sizeof(ip6);
-#pragma unroll
-        for (int i = 0; i < MAX_EXT_HEADERS; i++) {
+for (int i = 0; i < MAX_EXT_HEADERS; i++) {
             if (next == IPPROTO_TCP) {
                 *offset = off;
                 *max_mss = mss6;
@@ -125,6 +124,61 @@ static __always_inline int ip_to_tcp(struct __sk_buff *skb, __u32 *offset,
 // options, never increases MSS, never rewrites payload, and fails open
 // on malformed or non-TCP traffic. Unrecoverable checksum write failure
 // drops the packet rather than forwarding it corrupted.
+// Read each TCP option once into stack memory and scan using bpf_loop.
+// bpf_loop verifies the callback independently, avoiding the 1-million
+// instruction verifier blowup from 40 nested skb-load helper calls.
+struct option_scan {
+    __u8 bytes[40];
+    __u32 count;
+    __u32 cursor;
+    __u32 mss_offset;
+    __be16 old_mss;
+    __u32 found;
+    __u32 invalid;
+};
+
+static long scan_option(__u32 iteration, void *opaque) {
+    struct option_scan *s = opaque;
+    __u32 pos = s->cursor;
+    if (pos >= s->count)
+        return 1;
+    // The fixed array is 40 bytes and count <= 40.
+    if (pos >= 40)
+        return 1;
+    __u8 kind = s->bytes[pos];
+    if (kind == 0)
+        return 1;
+    if (kind == 1) {
+        s->cursor = pos + 1;
+        return 0;
+    }
+    if (pos + 1 >= s->count || pos + 1 >= 40) {
+        s->invalid = 1;
+        return 1;
+    }
+    __u8 length = s->bytes[pos + 1];
+    if (length < 2 || length > s->count - pos) {
+        s->invalid = 1;
+        return 1;
+    }
+    if (kind == 2 && length == 4) {
+        if (pos + 4 > 40) {
+            s->invalid = 1;
+            return 1;
+        }
+        __builtin_memcpy(&s->old_mss, &s->bytes[pos + 2], sizeof(s->old_mss));
+        s->mss_offset = pos + 2;
+        s->found = 1;
+        return 1;
+    }
+    s->cursor = pos + length;
+    return 0;
+}
+
+// Modifies only existing TCP MSS options in SYN / SYN-ACK. Never inserts
+// options, never increases MSS, never rewrites payload, and fails open
+// on malformed or non-TCP traffic. Unrecoverable checksum write failure
+// drops the packet rather than forwarding it corrupted.
 static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
                                       __u16 limit, struct tun_counters *stats) {
     __u8 tcp[20];
@@ -141,61 +195,37 @@ static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
         stats->parse_errors++;
         return TC_ACT_OK;
     }
-    __u32 pos = tcp_off + 20;
-    __u32 remaining = header_len - 20;
-// A verifier-bounded loop; full unrolling of 40 iterations exceeds
-    // Clang's optimizer budget. TCX requires modern bounded-loop kernels.
-    for (int i = 0; i < MAX_TCP_OPT_BYTES; i++) {
-        if (!remaining)
-            break;
-        __u8 kind;
-        if (load(skb, pos, &kind, 1) < 0) {
-            stats->parse_errors++;
-            break;
-        }
-        if (kind == 0)
-            break;
-        if (kind == 1) {
-            pos++;
-            remaining--;
-            continue;
-        }
-        if (remaining < 2) {
-            stats->parse_errors++;
-            break;
-        }
-        __u8 length;
-        if (load(skb, pos + 1, &length, 1) < 0 ||
-            length < 2 || length > remaining) {
-            stats->parse_errors++;
-            break;
-        }
-        if (kind == 2 && length == 4) {
-            __be16 old_mss;
-            if (load(skb, pos + 2, &old_mss, sizeof(old_mss)) < 0) {
-                stats->parse_errors++;
-                break;
-            }
-            if (bpf_ntohs(old_mss) <= limit)
-                break;
-            __be16 updated = bpf_htons(limit);
-            // Incremental TCP checksum helper also handles CHECKSUM_PARTIAL
-            // skb states; no userland checksum logic or netfilter rules.
-            if (bpf_l4_csum_replace(skb, tcp_off + 16,
-                                    old_mss, updated, sizeof(updated)) < 0) {
-                stats->checksum_errors++;
-                return TC_ACT_SHOT;
-            }
-            if (bpf_skb_store_bytes(skb, pos + 2, &updated, sizeof(updated), 0) < 0) {
-                stats->checksum_errors++;
-                return TC_ACT_SHOT;
-            }
-            stats->clamped++;
-            break;
-        }
-        pos += length;
-        remaining -= length;
+    __u32 opt_len = header_len - 20;
+    if (!opt_len)
+        return TC_ACT_OK;
+    struct option_scan scan = {};
+    scan.count = opt_len;
+    if (bpf_skb_load_bytes(skb, tcp_off + 20, scan.bytes, opt_len) < 0) {
+        stats->parse_errors++;
+        return TC_ACT_OK;
     }
+    if (bpf_loop(MAX_TCP_OPT_BYTES, scan_option, &scan, 0) < 0) {
+        stats->parse_errors++;
+        return TC_ACT_OK;
+    }
+    if (scan.invalid) {
+        stats->parse_errors++;
+        return TC_ACT_OK;
+    }
+    if (!scan.found || bpf_ntohs(scan.old_mss) <= limit)
+        return TC_ACT_OK;
+    __be16 updated = bpf_htons(limit);
+    if (bpf_l4_csum_replace(skb, tcp_off + 16,
+                            scan.old_mss, updated, sizeof(updated)) < 0) {
+        stats->checksum_errors++;
+        return TC_ACT_SHOT;
+    }
+    if (bpf_skb_store_bytes(skb, tcp_off + 20 + scan.mss_offset,
+                            &updated, sizeof(updated), 0) < 0) {
+        stats->checksum_errors++;
+        return TC_ACT_SHOT;
+    }
+    stats->clamped++;
     return TC_ACT_OK;
 }
 
