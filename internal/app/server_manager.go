@@ -48,8 +48,9 @@ func hashRecord(h hash.Hash, data []byte) {
 }
 
 // All instance YAML files, certificates and peer maps are validated before
-// any live hub or shared listener is changed. The daemon does not configure
-// Linux TUN addresses, routes, VRFs, kernel multicast or firewall state.
+// touching live hubs. Interface creation/IP/MTU/UP is performed by tun.Open
+// on startup and changed instances only. No route, iprule, VRF, multicast,
+// forwarding or firewall management is performed by the daemon.
 func prepareServer(config ServerConfig) (preparedServer, error) {
 	if err := config.Validate(); err != nil { return preparedServer{}, err }
 	next := preparedServer{
@@ -180,7 +181,7 @@ func newServerManager(ctx context.Context, logger *slog.Logger) *serverManager {
 }
 
 func (m *serverManager) start(p preparedInstance) error {
-	device, err := tun.Open(p.spec.TUN)
+	device, err := tun.Open(p.spec.TUN,p.spec.Address,p.spec.MTU)
 	if err != nil { return fmt.Errorf("instance %s TUN: %w", p.spec.Name, err) }
 	logger := m.logger.With("instance", p.spec.Name, "tun", p.spec.TUN)
 	hub, err := p2mp.New(device, p.peers, p.spec.MaxFrame, logger)
@@ -199,7 +200,8 @@ func (m *serverManager) start(p preparedInstance) error {
 		case <-m.ctx.Done():
 		}
 	}()
-	logger.Info("VPN instance attached", "server_name", p.spec.ServerName, "peers", len(p.peers.Peers))
+	logger.Info("VPN instance attached", "server_name", p.spec.ServerName,
+		"address",p.spec.Address,"mtu",p.spec.MTU,"peers", len(p.peers.Peers))
 	return nil
 }
 

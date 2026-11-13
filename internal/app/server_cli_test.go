@@ -25,6 +25,7 @@ func TestInstanceCLISharedPortUpsertDelete(t *testing.T) {
 	if err := runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-b",
 		"--server-name", "edge-b.example.test", "--tun", "mq1",
+		"--address","10.77.0.1/24",
 		"--peers", first.Peers, "--cert", first.Cert,
 		"--key", first.Key, "--client-ca", first.ClientCA,
 	}, nil); err != nil { t.Fatal(err) }
@@ -60,6 +61,7 @@ func TestInstanceCLIDuplicateSNIAtomicReject(t *testing.T) {
 	err = runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-b",
 		"--server-name", "edge-a.example.test", "--tun", "mq1",
+		"--address","10.77.0.1/24",
 		"--peers", first.Peers, "--cert", first.Cert,
 		"--key", first.Key, "--client-ca", first.ClientCA,
 	}, nil)
@@ -74,4 +76,19 @@ func TestNoLegacyInstanceListenFlag(t *testing.T) {
 	if err := runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-a", "--listen", ":4434",
 	}, nil); err == nil { t.Fatal("legacy per-instance --listen flag accepted") }
+}
+
+
+func TestInstanceCLIUpdatesManagedTunAddressAndMTU(t *testing.T){
+	cfg,_:=testServerFiles(t)
+	path:=writeTestServerYAML(t,cfg,0600)
+	if err:=runInstanceCLI([]string{
+		"upsert","--config",path,"--name","edge-a",
+		"--address","10.77.0.254/24","--mtu","1000",
+	},nil);err!=nil{t.Fatal(err)}
+	out,err:=loadServerConfig(path)
+	if err!=nil{t.Fatal(err)}
+	if out.Instances[0].Address!="10.77.0.254/24"||out.Instances[0].MTU!=1000{
+		t.Fatalf("managed TUN edit not persisted: %+v",out.Instances[0])
+	}
 }

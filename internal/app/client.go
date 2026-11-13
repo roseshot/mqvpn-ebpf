@@ -27,7 +27,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	wan2 := fs.String("wan2-ip", "", "secondary WAN local source IPv4/IPv6 address (optional)")
 	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
 	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
-	tunName := fs.String("tun", "mq0", "single L3 TUN interface, IP-addressed and route-based")
+	tunName := fs.String("tun", "mq0", "Linux L3 TUN name (created and configured by daemon)")
+	tunAddress := fs.String("tun-address", "", "required local TUN host IPv4/IPv6 CIDR")
+	tunMTU := fs.Int("tun-mtu", tun.DefaultMTU, "TUN MTU (default 1100)")
 	caFile := fs.String("ca", "", "CA verifying the remote server")
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
@@ -37,6 +39,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	if err := fs.Parse(args); err != nil { return err }
 	if *maxFrame < 64 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
+	if err:=tun.Validate(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
 	if *transportMode!="auto"&&*transportMode!="quic"&&*transportMode!="tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)",*transportMode)
 	}
@@ -51,6 +54,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcpOptions:=clientTCPOptions{
 		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,tcpPort:*tcpPort,
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
+		tunAddress:*tunAddress,tunMTU:*tunMTU,
 	}
 	if *transportMode=="tcp" {
 		if *wan2!=""||*wan2Iface!="" {return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")}
@@ -150,11 +154,11 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		pathID, _ := path.ID()
 		logger.Info("second QUIC path validated", "path_id", pathID, "source", otherUDP.LocalAddr())
 	}
-	dev, err := tun.Open(*tunName)
+	dev, err := tun.Open(*tunName,*tunAddress,*tunMTU)
 	if err != nil { return err }
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
-	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName)
+	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",*tunAddress,"mtu",*tunMTU)
 	err = p2mp.ClientPump(ctx, dev, stream, *maxFrame, logger)
 	close(done)
 	return err

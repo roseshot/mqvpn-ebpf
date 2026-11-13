@@ -25,7 +25,9 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	configPath:=fs.String("config","","server YAML configuration path")
 	name:=fs.String("name","","instance name (upsert/delete)")
 	serverName:=fs.String("server-name","","TLS SNI hostname unique to this VPN instance")
-	tunName:=fs.String("tun","","pre-existing TUN interface name")
+	tunName:=fs.String("tun","","Linux TUN interface name (created or attached by daemon)")
+	address:=fs.String("address","","TUN local host IPv4/IPv6 CIDR (required)")
+	mtu:=fs.Int("mtu",0,"TUN MTU in bytes (default 1100)")
 	peers:=fs.String("peers","","peer destination mapping YAML path")
 	cert:=fs.String("cert","","TLS server certificate path")
 	key:=fs.String("key","","TLS private key path")
@@ -69,6 +71,8 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 		if !found{inst.Name=*name}
 		if updates["server-name"]{inst.ServerName=*serverName}
 		if updates["tun"]{inst.TUN=*tunName}
+		if updates["address"]{inst.Address=*address}
+		if updates["mtu"]{inst.MTU=*mtu}
 		if updates["peers"]{inst.Peers=*peers}
 		if updates["cert"]{inst.Cert=*cert}
 		if updates["key"]{inst.Key=*key}

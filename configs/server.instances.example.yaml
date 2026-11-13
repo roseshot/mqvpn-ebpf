@@ -17,6 +17,8 @@ instances:
   - name: customer-a
     server_name: customer-a.vpn.example.com
     tun: mq0
+    address: 10.77.0.1/24
+    mtu: 1100
     peers: /etc/mqvpn/peers-a.yaml
     path: /.well-known/masque/ethernet/
     cert: /etc/mqvpn/tls/a-server.crt
@@ -27,6 +29,8 @@ instances:
   - name: customer-b
     server_name: customer-b.vpn.example.com
     tun: mq1
+    address: 10.77.0.1/24  # overlapping VPN segment; separate VRF
+    mtu: 1100
     peers: /etc/mqvpn/peers-b.yaml
     path: /.well-known/masque/ethernet/
     cert: /etc/mqvpn/tls/b-server.crt

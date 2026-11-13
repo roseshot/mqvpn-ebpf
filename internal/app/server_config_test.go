@@ -9,7 +9,7 @@ import (
 
 func sampleInstance(name, serverName, tunName string) ServerInstance {
 	return ServerInstance{
-		Name: name, ServerName: serverName, TUN: tunName,
+		Name: name, ServerName: serverName, TUN: tunName,Address:"10.77.0.1/24",
 		Peers: "peers.yaml", Cert: "server.crt", Key: "server.key", ClientCA: "ca.crt",
 	}
 }
@@ -88,5 +88,24 @@ func TestTCPFallbackDisabledListenerRejected(t *testing.T){
 	for _,listen:=range []string{":0","not-a-listen",":70000"}{
 		cfg.TCPFallback.Listen=listen
 		if err:=cfg.Validate();err==nil{t.Fatalf("invalid TCP listen %q accepted",listen)}
+	}
+}
+
+
+func TestInstanceAddressAndMTUValidation(t *testing.T) {
+	for _,tc:=range []struct{address string;mtu,frame int;valid bool}{
+		{"10.77.0.1/24",0,0,true},
+		{"fd77::1/64",1280,1300,true},
+		{"",1100,1160,false},
+		{"10.77.0.1",1100,1160,false},
+		{"10.77.0.1/24",1200,1160,false},
+		{"fd77::1/64",1100,1160,false},
+		{"fd77::1/64",1280,1160,false},
+	}{
+		inst:=sampleInstance("a","a.example.test","mq0")
+		inst.Address=tc.address;inst.MTU=tc.mtu;inst.MaxFrame=tc.frame
+		cfg:=ServerConfig{Instances:[]ServerInstance{inst}}
+		err:=cfg.Validate()
+		if (err==nil)!=tc.valid{t.Fatalf("address %q mtu %d max-frame %d: %v",tc.address,tc.mtu,tc.frame,err)}
 	}
 }

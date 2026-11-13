@@ -3,19 +3,89 @@
 package tun
 
 import (
-  "strings"
-  "testing"
+	"errors"
+	"net"
+	"testing"
+
+	"github.com/vishvananda/netlink"
 )
 
-func TestValidateName(t *testing.T) {
-  for _,n:=range []string{"mq0","tun-main","tun.3"}{
-    if err:=validateName(n);err!=nil{t.Fatal(n,err)}
-  }
-  for _,n:=range []string{"","bad name","abcdefghijklmnop","bad/name"}{
-    if err:=validateName(n);err==nil{t.Fatalf("%q accepted",n)}
-  }
+type fakeOps struct {
+	link *netlink.Dummy
+	addr *netlink.Addr
+	order []string
+	failOn string
 }
-func TestMissingTUNNotCreated(t *testing.T) {
-  _,err:=Open("mqvp-unused-0")
-  if err==nil||!strings.Contains(err.Error(),"must already exist"){t.Fatalf("got %v",err)}
+func(f *fakeOps)fail(step string)error{
+	f.order=append(f.order,step)
+	if f.failOn==step{return errors.New("permission denied")}
+	return nil
+}
+func(f *fakeOps)ByName(name string)(netlink.Link,error){
+	if err:=f.fail("find");err!=nil{return nil,err}
+	return f.link,nil
+}
+func(f *fakeOps)SetMTU(_ netlink.Link,mtu int)error{
+	if err:=f.fail("mtu");err!=nil{return err}
+	f.link.MTU=mtu
+	return nil
+}
+func(f *fakeOps)ReplaceAddr(_ netlink.Link,addr *netlink.Addr)error{
+	if err:=f.fail("address");err!=nil{return err}
+	f.addr=addr
+	return nil
+}
+func(f *fakeOps)SetUp(_ netlink.Link)error{
+	if err:=f.fail("up");err!=nil{return err}
+	f.link.Flags|=net.FlagUp
+	return nil
+}
+func(f *fakeOps)ListAddrs(_ netlink.Link)([]netlink.Addr,error){
+	if err:=f.fail("list");err!=nil{return nil,err}
+	if f.addr==nil{return nil,nil}
+	return []netlink.Addr{*f.addr},nil
+}
+func TestValidateName(t *testing.T){
+	for _,name:=range []string{"mq0","tun-main","tun.3"}{if err:=validateName(name);err!=nil{t.Fatal(err)}}
+	for _,name:=range []string{"","bad name","abcdefghijklmnop","bad/name"}{
+		if err:=validateName(name);err==nil{t.Fatalf("invalid name %q accepted",name)}
+	}
+}
+func TestValidateAddress(t *testing.T){
+	for _,tc:=range []struct{cidr string;mtu,frame int}{
+		{"10.77.0.1/24",1100,1160},
+		{"fd77::1/64",1280,1300},
+		{"198.51.100.42/32",1500,1514},
+	}{
+		if err:=ValidateAddress(tc.cidr,tc.mtu,tc.frame);err!=nil{t.Fatal(err)}
+	}
+	for _,tc:=range []struct{cidr string;mtu,frame int}{
+		{"",1100,1160},{"10.77.0.1",1100,1160},
+		{"0.0.0.0/24",1100,1160},{"224.0.0.1/24",1100,1160},
+		{"127.0.0.1/8",1100,1160},{"fe80::1/64",1280,1300},
+		{"10.77.0.1/24",1200,1160},{"fd77::1/64",1100,1160},
+		{"fd77::1/64",1280,1160},
+	}{
+		if err:=ValidateAddress(tc.cidr,tc.mtu,tc.frame);err==nil{t.Fatalf("accepted %+v",tc)}
+	}
+}
+func TestSetupCreatesReadyAddressWithoutRouteOperations(t *testing.T){
+	for _,cidr:=range []string{"10.77.0.1/24","fd77::1/64"}{
+		mtu:=1100
+		if cidr=="fd77::1/64"{mtu=1280}
+		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+		if err:=setupInterface("mq0",cidr,mtu,f);err!=nil{t.Fatal(err)}
+		if f.addr==nil||f.addr.Flags&noPrefixRoute==0{t.Fatalf("did not disable connected route for %s",cidr)}
+		if got:=len(f.order);got!=6{t.Fatalf("expected six link/address/readiness calls, got %v",f.order)}
+		if f.order[1]!="mtu"||f.order[2]!="address"||f.order[3]!="up"{t.Fatalf("wrong readiness order: %v",f.order)}
+	}
+}
+func TestSetupErrorsOnFailedConfiguration(t *testing.T){
+	for _,step:=range []string{"find","mtu","address","up","list"}{
+		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}},failOn:step}
+		if err:=setupInterface("mq0","10.77.0.1/24",1100,f);err==nil{t.Fatalf("%s failure ignored",step)}
+	}
+}
+func TestOpenValidatesBeforeDeviceCreation(t *testing.T){
+	if _,err:=Open("mq0","not-cidr",1100);err==nil{t.Fatal("invalid address reached /dev/net/tun")}
 }
