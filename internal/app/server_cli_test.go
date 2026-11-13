@@ -70,12 +70,12 @@ func TestInstanceCLIDuplicateSNIAtomicReject(t *testing.T) {
 	if err != nil || string(after) != string(before) { t.Fatal("failed YAML CLI changed persisted config") }
 }
 
-func TestNoLegacyInstanceListenFlag(t *testing.T) {
+func TestRejectUnknownInstanceListenFlag(t *testing.T) {
 	cfg, _ := testServerFiles(t)
 	path := writeTestServerYAML(t, cfg, 0600)
 	if err := runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-a", "--listen", ":4434",
-	}, nil); err == nil { t.Fatal("legacy per-instance --listen flag accepted") }
+	}, nil); err == nil { t.Fatal("unknown per-instance --listen flag accepted") }
 }
 
 

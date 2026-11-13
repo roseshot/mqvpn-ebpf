@@ -81,7 +81,7 @@ func TestSetupCreatesReadyAddressAndAllowsKernelConnectedRoute(t *testing.T){
 		if cidr=="fd77::1/64"{mtu=1280}
 		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
 		if err:=setupInterface("mq0",cidr,mtu,f);err!=nil{t.Fatal(err)}
-		if f.addr==nil||f.addr.Flags&noPrefixRoute!=0{t.Fatalf("connected route accidentally suppressed for %s",cidr)}
+		if f.addr==nil||f.addr.Flags!=0{t.Fatalf("expected normal Linux address flags for %s: %d",cidr,f.addr.Flags)}
 		if got:=len(f.order);got!=6{t.Fatalf("expected six link/address/readiness calls, got %v",f.order)}
 		if f.order[1]!="mtu"||f.order[2]!="address"||f.order[3]!="up"{t.Fatalf("wrong readiness order: %v",f.order)}
 	}

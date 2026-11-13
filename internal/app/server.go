@@ -20,7 +20,7 @@ import (
 )
 
 // RunServer requires one YAML config with a shared UDP listener.
-// No legacy single-instance flags or JSON configuration are accepted.
+// The command accepts only the current multi-instance YAML contract.
 func RunServer(ctx context.Context, args []string, logger *slog.Logger) error {
 	if logger == nil { logger = slog.Default() }
 	if len(args) > 0 {

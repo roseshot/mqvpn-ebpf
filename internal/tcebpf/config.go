@@ -17,7 +17,8 @@ type Config struct {
 func (c Config) Enabled() bool {return c.Object!=""}
 
 // Normalize validates configuration without accessing the kernel or files.
-// The unset clamp is "off" for backwards compatibility.
+// The feature is opt-in: without an explicit object and policy, no TCX
+// program is attached.
 func (c Config) Normalize() (Config,error) {
 	c.MSSClamp=strings.ToLower(strings.TrimSpace(c.MSSClamp))
 	if c.MSSClamp=="" {c.MSSClamp="off"}

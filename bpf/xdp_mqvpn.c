@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 // Shared server-side XDP dispatcher: one program per physical WAN interface.
 // The Go control plane hot-updates instance_ports when server instances change.
-// IMPORTANT: while xsks_map is empty, every packet follows XDP_PASS.
-// This program must NOT redirect to an XSK until a fully functioning AF_XDP
-// RX/TX transport owns that socket and is registered for the same NIC/queue.
+// This is a strict, statistics-only XDP program. All VPN traffic goes
+// through the Linux UDP stack; no dormant AF_XDP/XSKMAP scaffolding.
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
@@ -20,13 +19,6 @@ struct {
     __type(value, __u8);    // Nonzero means the port belongs to an instance.
 } instance_ports SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_XSKMAP);
-    __uint(max_entries, 64);
-    __type(key, __u32);     // RX queue index; NOT UDP port.
-    __type(value, __u32);   // AF_XDP socket FD.
-} xsks_map SEC(".maps");
-
 // Per-CPU counters keep the XDP fast path free of global atomics.
 // This dispatcher never blocks unrelated WAN traffic.
 struct xdp_counters {
@@ -34,7 +26,6 @@ struct xdp_counters {
     __u64 bytes;
     __u64 matched_udp;
     __u64 matched_bytes;
-    __u64 redirects;
     __u64 vlan;
 };
 struct {
@@ -63,17 +54,9 @@ static __always_inline int dispatch_udp(void *l4, void *end, struct xdp_md *ctx,
         stats->matched_bytes += (__u64)((long)ctx->data_end - (long)ctx->data);
     }
 
-    // Never redirect unless a real AF_XDP socket is already installed
-    // in the queue index for this device. An empty XSKMAP must not turn
-    // on black-hole redirection for a running kernel UDP listener.
-    __u32 queue = ctx->rx_queue_index;
-    if (queue >= 64)
-        return XDP_PASS;
-    if (!bpf_map_lookup_elem(&xsks_map, &queue))
-        return XDP_PASS;
-    if (stats)
-        stats->redirects++;
-    return bpf_redirect_map(&xsks_map, queue, XDP_PASS);
+    // The XDP data plane measures the encrypted WAN packet; Go owns
+    // the QUIC UDP socket and is solely responsible for RX/TX.
+    return XDP_PASS;
 }
 
 SEC("xdp")

@@ -262,7 +262,9 @@ func (m *serverManager) close() {
 	m.mux.Publish(map[string]*liveInstance{})
 	for name := range m.instances { m.stop(name) }
 	if m.xdp != nil {
-		if counters:=m.xdp.Snapshots();len(counters)>0 {
+		counters,err:=m.xdp.Snapshots()
+		if err!=nil {m.logger.Warn("WAN XDP counters could not be read","error",err)}
+		if len(counters)>0 {
 			m.logger.Info("WAN XDP ingress counters","interfaces",counters)
 		}
 		_ = m.xdp.Close()
