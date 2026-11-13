@@ -12,10 +12,11 @@ import (
 	"github.com/cilium/ebpf/link"
 )
 
-// portDevice is abstracted for rootless tests. Live implementation owns one
-// XDP BPF program, one port map, and one *empty* XSKMAP per NIC.
+// portDevice is abstracted for rootless tests. A live device owns one
+// XDP counter program, its listener-port map, and statistics per WAN NIC.
 type portDevice interface {
 	ReplacePorts([]uint16) error
+	Counters() (Counters,error)
 	Close() error
 }
 
@@ -24,7 +25,6 @@ type bpfDevice struct{
 	collection *ebpf.Collection
 	link link.Link
 	ports *ebpf.Map
-	xsks *ebpf.Map
 	stats *ebpf.Map
 	current map[uint16]bool
 }
@@ -36,23 +36,19 @@ func attachDevice(ifname string,cfg Config)(portDevice,error){
 	if err!=nil{return nil,fmt.Errorf("find XDP interface %s: %w",ifname,err)}
 	spec,err:=ebpf.LoadCollectionSpec(cfg.Object)
 	if err!=nil{return nil,fmt.Errorf("read BPF ELF %q: %w",cfg.Object,err)}
+	if err:=validateXDPObject(spec);err!=nil{return nil,fmt.Errorf("invalid XDP ELF %q: %w",cfg.Object,err)}
 	col,err:=ebpf.NewCollection(spec)
 	if err!=nil{return nil,fmt.Errorf("load BPF program: %w",err)}
 	program:=col.Programs["xdp_mqvpn"]
 	ports:=col.Maps["instance_ports"]
-	xsks:=col.Maps["xsks_map"]
 	stats:=col.Maps["xdp_stats"]
-	if program==nil||ports==nil||xsks==nil{
-		col.Close()
-		return nil,errors.New("BPF object missing xdp_mqvpn / instance_ports / xsks_map")
-	}
-	flags:=link.XDPDriverMode
+		flags:=link.XDPDriverMode
 	if cfg.Mode=="generic"{flags=link.XDPGenericMode}
 	lnk,err:=link.AttachXDP(link.XDPOptions{
 		Program:program,Interface:nic.Index,Flags:flags,
 	})
 	if err!=nil{col.Close();return nil,fmt.Errorf("attach XDP to %s: %w",ifname,err)}
-	return &bpfDevice{collection:col,link:lnk,ports:ports,xsks:xsks,stats:stats,current:map[uint16]bool{}},nil
+	return &bpfDevice{collection:col,link:lnk,ports:ports,stats:stats,current:map[uint16]bool{}},nil
 }
 
 func(d *bpfDevice)ReplacePorts(next []uint16)error{
@@ -64,8 +60,8 @@ func(d *bpfDevice)ReplacePorts(next []uint16)error{
 		target[p]=true
 	}
 	if len(target)>1024{return errors.New("too many XDP instance ports")}
-	// Install additions before deleting removed entries. No AF_XDP socket
-	// has been registered here, so XSKMAP stays empty and packets XDP_PASS.
+	// Install additions before deleting removed entries. The XDP program
+	// only observes packets and never redirects traffic from Go's UDP socket.
 	for p:=range target{
 		if !d.current[p]{
 			if err:=d.ports.Update(p,uint8(1),ebpf.UpdateAny);err!=nil{
@@ -91,9 +87,8 @@ func(d *bpfDevice)Close()error{
 	return nil
 }
 
-// Controller owns the NIC-level program lifecycle. The Go UDP backend remains
-// responsible for all QUIC RX/TX until an actual AF_XDP transport is wired in.
-// The current control plane DOES NOT register any XSK FD or redirect traffic.
+// Controller owns the NIC-level statistics program lifecycle. Go's UDP
+// transport remains the only QUIC RX/TX implementation.
 type Controller struct{
 	devices map[string]portDevice
 	cfg Config
@@ -164,20 +159,17 @@ func(c *Controller)Close()error{
 
 
 // Counters is the sum of per-CPU WAN ingress XDP counters.
-// On older XDP objects without xdp_stats the statistics are unavailable
-// but UDP XDP_PASS behavior remains backwards compatible.
+// The xdp_stats map is mandatory in the current BPF object schema.
 type Counters struct {
 	Packets uint64
 	Bytes uint64
 	MatchedUDP uint64
 	MatchedBytes uint64
-	Redirects uint64
 	VLAN uint64
 }
 func(d *bpfDevice)Counters()(Counters,error){
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.stats==nil{return Counters{},errors.New("XDP object has no xdp_stats map")}
 	cpus,err:=ebpf.PossibleCPU()
 	if err!=nil{return Counters{},err}
 	samples:=make([]Counters,cpus)
@@ -189,17 +181,35 @@ func(d *bpfDevice)Counters()(Counters,error){
 		result.Bytes+=s.Bytes
 		result.MatchedUDP+=s.MatchedUDP
 		result.MatchedBytes+=s.MatchedBytes
-		result.Redirects+=s.Redirects
 		result.VLAN+=s.VLAN
 	}
 	return result,nil
 }
-func(c *Controller)Snapshots()map[string]Counters{
-	out:=make(map[string]Counters)
+func(c *Controller)Snapshots()(map[string]Counters,error){
+	out:=make(map[string]Counters,len(c.devices))
+	var errs []error
 	for name,d:=range c.devices{
-		if collector,ok:=d.(interface{Counters()(Counters,error)});ok {
-			if stats,err:=collector.Counters();err==nil{out[name]=stats}
+		stats,err:=d.Counters()
+		if err!=nil{
+			errs=append(errs,fmt.Errorf("XDP interface %s counters: %w",name,err))
+			continue
 		}
+		out[name]=stats
 	}
-	return out
+	return out,errors.Join(errs...)
+}
+
+
+// validateXDPObject enforces the only supported ELF schema before any
+// privileged program/map load. Older XSKMAP dispatchers and statistics-less
+// objects are not accepted: there is no AF_XDP backend to consume redirects.
+func validateXDPObject(spec *ebpf.CollectionSpec) error {
+	if spec==nil||spec.Programs["xdp_mqvpn"]==nil||
+		spec.Maps["instance_ports"]==nil||spec.Maps["xdp_stats"]==nil {
+		return errors.New("XDP ELF requires xdp_mqvpn, instance_ports and xdp_stats")
+	}
+	if spec.Maps["xsks_map"]!=nil {
+		return errors.New("XDP ELF contains unsupported xsks_map redirect scaffold")
+	}
+	return nil
 }

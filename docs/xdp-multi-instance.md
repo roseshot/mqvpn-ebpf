@@ -1,26 +1,28 @@
-# Shared-port XDP dispatcher
+# Shared-port WAN XDP statistics
 
-All Server VPN instances now share **one UDP/QUIC listener**, e.g. :443.
-The BPF instance_ports map registers the **single shared outer UDP port**.
-XDP has no visibility into TLS SNI or encrypted inner VPN traffic.
+All Server VPN instances share one UDP/QUIC listener (normally :443).
+The optional XDP program counts incoming WAN packets and recognizes
+UDP packets whose destination port is in the shared listener's
+`instance_ports` map. XDP cannot inspect TLS SNI, tenant IDs, or
+encrypted inner VPN packets.
 
-    Intel I226 WAN NIC
-      -> XDP: UDP dest 443 registered?
-           -> no XSK bound: XDP_PASS -> shared kernel UDP socket
-           -> future XSK: XDP_REDIRECT to socket bound to RX queue
-      -> one QUIC server
-           -> TLS SNI customer-a.vpn.example.com -> customer-a TUN mq0
-           -> TLS SNI customer-b.vpn.example.com -> customer-b TUN mq1
+~~~text
+Physical WAN NIC
+  -> XDP counters: total packets/bytes, VLAN headers, VPN UDP match
+  -> XDP_PASS (always)
+  -> Linux kernel UDP socket
+  -> Go HTTP/3 + MPQUIC (TLS SNI selects the tenant/TUN)
+~~~
 
-There is one native/generic XDP program per configured physical NIC, one
-outer-port map and one XSKMAP keyed by RX queue. XDP does not demux by VPN
-Instance; that is done by TLS SNI and HTTP/3 in Go. Hot-adding a VPN
-instance on the same shared UDP port does not change the XDP port map.
+Each WAN NIC owns a separate XDP object and BPF maps. Only the current
+ELF schema is supported: `xdp_mqvpn` program, `instance_ports` map, and
+`xdp_stats` per-CPU map. Objects without required maps or containing
+the unsupported `xsks_map` are rejected *before* loading kernel BPF.
+There is no AF_XDP redirect path or RX queue ownership.
 
-Enable through the top-level Server YAML:
+Configure the optional WAN XDP collector in the Server YAML:
 
 ~~~yaml
-# listen is optional; default UDP/443
 xdp:
   interfaces: [enp1s0, enp2s0]
   object: /usr/lib/mqvpn/xdp_mqvpn.o
@@ -29,6 +31,7 @@ instances:
   - name: vpn-a
     server_name: vpn-a.example.com
     tun: mq0
+    address: 10.77.0.1/24
     peers: /etc/mqvpn/peers-a.yaml
     cert: /etc/mqvpn/tls/a.crt
     key: /etc/mqvpn/tls/a.key
@@ -36,21 +39,20 @@ instances:
   - name: vpn-b
     server_name: vpn-b.example.com
     tun: mq1
+    address: 10.78.0.1/24
     peers: /etc/mqvpn/peers-b.yaml
     cert: /etc/mqvpn/tls/b.crt
     key: /etc/mqvpn/tls/b.key
     client_ca: /etc/mqvpn/tls/b-ca.crt
 ~~~
 
+Build and deploy the current object:
+
 ~~~bash
-sudo apt-get install clang llvm libbpf-dev linux-libc-dev
 make bpf
 sudo install -D -m 0644 bpf/xdp_mqvpn.o /usr/lib/mqvpn/xdp_mqvpn.o
-CGO_ENABLED=0 go build -mod=mod ./cmd/...
 ~~~
 
-**No AF_XDP RX/TX, UMEM or zero-copy backend exists today.** The program
-keeps XSKMAP empty and returns XDP_PASS. Registering an XSK prematurely
-would divert packets away from the working QUIC UDP socket.
-
-No live N200/I226 throughput claim is made.
+Statistics are logged at Server shutdown. XDP does not install
+routes, filter incoming traffic, or replace the Go UDP transport.
+The TCX MSS Clamp is a separate, optional TUN data-plane component.

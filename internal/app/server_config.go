@@ -14,7 +14,7 @@ import (
 )
 
 // defaultServerListen is the shared QUIC/UDP bind when YAML omits listen.
-// Future TCP fallback may use TCP/443 independently; TCP is not yet implemented.
+// Optional TCP fallback uses TCP/443 independently.
 const defaultServerListen = "0.0.0.0:443"
 
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.

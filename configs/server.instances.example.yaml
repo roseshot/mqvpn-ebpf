@@ -17,7 +17,7 @@
 # For overlapping subnets, preattach persistent TUNs to independent VRFs.
 # mtu: 1360 + max_frame: 1374 can be enabled if WAN path MTU supports it.
 
-# Optional: pure-Go XDP controller, empty XSKMAP keeps kernel UDP operational.
+# Optional: pure-Go statistics-only XDP controller; always XDP_PASS.
 # xdp:
 #   interfaces: [enp1s0, enp2s0]
 #   object: /usr/lib/mqvpn/xdp_mqvpn.o

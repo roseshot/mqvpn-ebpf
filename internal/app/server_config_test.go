@@ -50,14 +50,14 @@ func TestMissingSNIRejected(t *testing.T) {
 	}
 }
 
-func TestLegacyPerInstanceListenerAndJSONRejected(t *testing.T) {
+func TestRejectUnknownInstanceListenerAndNonYAML(t *testing.T) {
 	dir := t.TempDir()
 	for path, text := range map[string]string{
 		filepath.Join(dir, "bad.yaml"): "listen: ':4433'\ninstances:\n  - name: a\n    server_name: a.example.test\n    listen: ':4434'\n    tun: mq0\n    peers: p.yaml\n    cert: a.crt\n    key: a.key\n    client_ca: ca.crt\n",
-		filepath.Join(dir, "old.json"): `{"listen":":4433","instances":[]}`,
+		filepath.Join(dir, "config.json"): `{"listen":":4433","instances":[]}`,
 	} {
 		if err := os.WriteFile(path, []byte(text), 0600); err != nil { t.Fatal(err) }
-		if _, err := loadServerConfig(path); err == nil { t.Fatalf("legacy file accepted %q", path) }
+		if _, err := loadServerConfig(path); err == nil { t.Fatalf("invalid config accepted %q", path) }
 	}
 }
 

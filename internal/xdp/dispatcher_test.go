@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"github.com/cilium/ebpf"
 )
 
 type mockDevice struct{
@@ -19,6 +20,7 @@ func(m *mockDevice)ReplacePorts(p []uint16)error{
 	return nil
 }
 func(m *mockDevice)Close()error{m.closed=true;return nil}
+func(m *mockDevice)Counters()(Counters,error){return Counters{Packets:7,Bytes:123},nil}
 
 func TestSharedDispatcherHotReload(t *testing.T){
 	devices:=map[string]*mockDevice{}
@@ -58,4 +60,29 @@ func TestConfigChangeAndMapFailureAreRejected(t *testing.T){
 	d.fail=true
 	if err:=c.Reconcile(cfg,[]uint16{4434});err==nil{t.Fatal("map update failure swallowed")}
 	if !reflect.DeepEqual(c.ports,[]uint16{4433}){t.Fatalf("committed ports changed: %v",c.ports)}
+}
+
+
+func TestCurrentXDPObjectSchemaIsStrict(t *testing.T) {
+	valid:=&ebpf.CollectionSpec{
+		Programs:map[string]*ebpf.ProgramSpec{"xdp_mqvpn":{}},
+		Maps:map[string]*ebpf.MapSpec{
+			"instance_ports":{},"xdp_stats":{},
+		},
+	}
+	if err:=validateXDPObject(valid);err!=nil{t.Fatal(err)}
+	withoutStats:=valid.Copy()
+	delete(withoutStats.Maps,"xdp_stats")
+	if err:=validateXDPObject(withoutStats);err==nil{t.Fatal("XDP object without statistics map accepted")}
+	withXSK:=valid.Copy()
+	withXSK.Maps["xsks_map"]=&ebpf.MapSpec{}
+	if err:=validateXDPObject(withXSK);err==nil{t.Fatal("XDP object with obsolete XSKMAP accepted")}
+	if err:=validateXDPObject(nil);err==nil{t.Fatal("nil XDP spec accepted")}
+}
+
+func TestXDPStatsAreCollectedWithoutCompatibilityFallback(t *testing.T) {
+	c:=&Controller{devices:map[string]portDevice{"wan0":&mockDevice{}}}
+	stats,err:=c.Snapshots()
+	if err!=nil{t.Fatal(err)}
+	if stats["wan0"].Packets!=7||stats["wan0"].Bytes!=123{t.Fatalf("XDP stats missing: %+v",stats)}
 }

@@ -11,12 +11,12 @@ a shell command.
 Run **make bpf** (development-only Clang/LLVM). It produces:
 
 - **bpf/xdp_mqvpn.o**: the existing WAN XDP dispatcher with per-CPU
-  counters, including UDP listener matching, passes and redirects.
+  counters, including UDP listener matching and pass-through traffic.
 - **bpf/tun_tc.o**: TUN TCX ingress and egress classifiers.
 
 Deploy the new \`tun_tc.o\` with the daemon binary. No compilation
 occurs at daemon runtime. Without a TC object setting, no TCX program
-is attached and the system remains compatible with older kernels.
+is attached; opting into TCX requires a kernel with TCX support.
 
 ## Server (per Instance)
 
@@ -82,6 +82,6 @@ UDP/443 and optional TCP/443 listeners remain running.
 - IPv6 extension headers, TCP SYN options, and packet checksum behavior
   should still be validated with real production NICs/kernel versions.
 
-The existing XDP dispatcher remains fail-open for UDP traffic if no
-AF_XDP socket is registered. XDP statistics cover the outer encrypted
+WAN XDP is strictly statistics-only, always `XDP_PASS`, and has no
+XSKMAP/AF_XDP redirect path. XDP statistics cover outer encrypted
 packets; they cannot identify peer sessions or inner TCP MSS.

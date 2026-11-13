@@ -9,12 +9,6 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-const (
-	// Linux IFA_F_NOPREFIXROUTE: old configuration may have set it.
-	// Keep checking it so Linux creates normal connected-prefix routes.
-	noPrefixRoute = 0x200
-)
-
 type linkOps interface {
 	ByName(string)(netlink.Link,error)
 	SetMTU(netlink.Link,int)error
@@ -37,10 +31,8 @@ func setupInterface(name,cidr string,mtu int,ops linkOps)error{
 	// The ioctl above already ensures this name is attached as TUN.
 	addr,err:=netlink.ParseAddr(cidr)
 	if err!=nil{return fmt.Errorf("parse IP/CIDR: %w",err)}
-	// Use normal Linux address semantics, allowing kernel-managed
-	// connected-prefix routes and normal IPv4 address defaults.
-	// Clearing this also upgrades an existing NOPREFIXROUTE address.
-	addr.Flags &^= noPrefixRoute
+	// Use normal Linux address semantics. The kernel installs the
+	// connected-prefix route for the assigned CIDR.
 	if err:=ops.SetMTU(link,mtu);err!=nil{return fmt.Errorf("set MTU %d: %w",mtu,err)}
 	if err:=ops.ReplaceAddr(link,addr);err!=nil{return fmt.Errorf("assign address %s: %w",cidr,err)}
 	if err:=ops.SetUp(link);err!=nil{return fmt.Errorf("bring interface UP: %w",err)}
@@ -53,9 +45,6 @@ func setupInterface(name,cidr string,mtu int,ops linkOps)error{
 	if err!=nil{return fmt.Errorf("verify TUN address: %w",err)}
 	for _,a:=range assigned {
 		if a.IPNet!=nil && a.IPNet.String()==addr.IPNet.String(){
-			if a.Flags & noPrefixRoute!=0 {
-				return fmt.Errorf("TUN %q address %s still has noprefixroute after setup",name,cidr)
-			}
 			return nil
 		}
 	}

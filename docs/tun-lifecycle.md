@@ -44,9 +44,7 @@ The daemon does **not** explicitly install custom routes, VRFs,
 namespace bindings, `ip rule`, firewall, forwarding entries or
 multicast routes. The **connected-prefix route** and local-address
 routes are automatically created and maintained by the kernel when
-an IP address is assigned. The daemon no longer sets
-`IFA_F_NOPREFIXROUTE`. When an old address is replaced, the setup
-also requests normal route semantics.
+an IP address is assigned. No migration-specific address flags are applied by the daemon.
 
 The daemon also does not delete other IP addresses on a pre-existing
 interface. To reconfigure cleanly, set new `address` and restart or

@@ -410,7 +410,7 @@ instances:
 Client can use `--tc-object /usr/lib/mqvpn/tun_tc.o
 --mss-clamp auto --tc-stats`. The same policy is used by QUIC and TCP
 fallback. Without TC options the daemon does **not** attach TC eBPF,
-so older kernels and existing deployments remain compatible.
+and an explicitly enabled TCX policy requires a kernel with TCX support.
 
 Auto MSS clamp uses the effective TUN MTU (not the raw WAN MTU):
 for MTU 1400, IPv4 MSS is at most **1360** and IPv6 MSS is at
@@ -427,10 +427,9 @@ IPv4/IPv6, SYN, clamped, oversize observed and parser/checksum errors.
 Counters are logged when a TUN instance closes. TC eBPF doesn't
 install routes or change the kernel-generated connected-prefix route.
 
-WAN XDP now adds per-CPU packet/byte/UDP port-match/redirect counters
-while continuing to pass packets through the normal UDP kernel
-socket when no AF_XDP socket is installed; the XDP counters are
-logged when the server shuts down. See
+WAN XDP records per-CPU packet/byte/UDP port-match counters and always
+passes traffic to the normal UDP socket. Its unused XSKMAP/redirect
+placeholder has been deleted. The XDP counters are logged on shutdown. See
 [TC eBPF data plane](docs/tc-ebpf.md).
 
 ## Optional XDP (not AF_XDP Zero-Copy)
@@ -438,9 +437,9 @@ logged when the server shuts down. See
 If enabled, one XDP dispatcher per physical WAN NIC recognizes the **one
 shared outer UDP port**, not any private VPN subnet or tenant's identity.
 HTTP/3 QUIC/TLS/SNI performs tenant selection after the handshake.
-The existing XSKMAP is intentionally empty, so matched packets use
-`XDP_PASS` into the working kernel UDP socket. AF_XDP UMEM/rings and
-a QUIC PacketConn replacement are not implemented.
+The only supported XDP ELF has `xdp_mqvpn`, `instance_ports` and
+`xdp_stats`; missing maps or the obsolete `xsks_map` are rejected.
+Packets always take `XDP_PASS` into the Linux UDP socket.
 
 ~~~yaml
 xdp:

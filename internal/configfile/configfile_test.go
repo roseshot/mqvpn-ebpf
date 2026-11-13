@@ -21,9 +21,9 @@ func TestYAMLOnlyRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRejectLegacyJSONAndInvalidYAML(t *testing.T) {
+func TestRejectNonYAMLAndInvalidYAML(t *testing.T) {
 	if err := Decode("server.json", []byte("name: x"), &sample{}); err == nil {
-		t.Fatal("legacy JSON extension accepted")
+		t.Fatal("unsupported JSON extension accepted")
 	}
 	if _, err := Marshal("server.json", sample{}); err == nil { t.Fatal("JSON output accepted") }
 	for _, text := range []string{

@@ -20,7 +20,7 @@ func ParseLevel(value string)(slog.Level,error){
 }
 
 // Extract strips common --log-level and --log-format options before routing
-// remaining arguments to either the standalone CLI or legacy subcommand.
+// remaining arguments to the selected server/client CLI.
 func Extract(args []string)([]string,Options,error){
   level:=os.Getenv("MQVPN_LOG_LEVEL")
   format:=os.Getenv("MQVPN_LOG_FORMAT")
