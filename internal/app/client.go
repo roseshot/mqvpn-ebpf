@@ -14,8 +14,8 @@ import (
 
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
-	"github.com/roseshot/mqvpn-ebpf/internal/forward"
-	"github.com/roseshot/mqvpn-ebpf/internal/tap"
+	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
+	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
@@ -31,7 +31,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs.StringVar(wan1Iface, "wan1-interface", "", "alias of --source-interface")
 	fs.StringVar(wan2, "wan2-ip", "", "alias of --wan2")
 	fs.StringVar(wan2Iface, "wan2-iface", "", "alias of --wan2-interface")
-	tapName := fs.String("tap", "mq0", "name of standalone TAP tunnel interface")
+	tunName := fs.String("tun", "mq0", "single L3 TUN interface, IP-addressed and route-based")
+	groupCSV := fs.String("multicast-groups", "", "explicit IP multicast destinations, comma-separated, e.g. 224.0.0.251")
+	multicastPPS := fs.Int("multicast-pps", 20, "per-client multicast pps upper bound")
 	tunnelIP := fs.String("tunnel-ip", "", "TAP interface CIDR, e.g. 10.77.0.2/30 (required)")
 	tunnelMTU := fs.Int("tunnel-mtu", 1100, "TAP L3 MTU; default is safe for IPv4 QUIC DATAGRAM test")
 	caFile := fs.String("ca", "", "CA verifying the remote server")
@@ -39,7 +41,10 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	keyFile := fs.String("key", "", "client TLS key PEM")
 	maxFrame := fs.Int("max-frame", 1160, "maximum Ethernet frame bytes, excluding FCS")
 	if err := fs.Parse(args); err != nil { return err }
-	if *maxFrame < 14 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
+	if *maxFrame < 64 || *maxFrame > 65535 { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
+	groups, err := p2mp.GroupList(*groupCSV)
+	if err != nil { return err }
+	if *multicastPPS < 1 || *multicastPPS > 1000 { return errors.New("--multicast-pps must be 1..1000") }
 	if *wan1 == "" && *wan1Iface == "" { return errors.New("primary WAN requires --source-ip and/or --source-interface") }
 	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
 	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
@@ -53,7 +58,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	serverAddr, err := net.ResolveUDPAddr("udp", u.Host)
 	if err != nil { return fmt.Errorf("resolve QUIC peer: %w", err) }
-	if err := tap.Configure(*tapName, *tunnelIP, *tunnelMTU, *maxFrame); err != nil { return fmt.Errorf("configure tunnel interface: %w", err) }
+	if err := tun.Configure(*tunName, *tunnelIP, *tunnelMTU, *maxFrame); err != nil { return fmt.Errorf("configure L3 TUN interface: %w", err) }
 	base, selectedIP, err := wan.Listen(ctx, *wan1, *wan1Iface, serverAddr)
 	if err != nil { return err }
 	logger.Info("primary WAN bound", "source_ip", selectedIP, "interface", *wan1Iface, "local", base.LocalAddr())
@@ -128,16 +133,13 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		pathID, _ := path.ID()
 		logger.Info("second QUIC path validated", "path_id", pathID, "source", otherUDP.LocalAddr())
 	}
-	dev, err := tap.Open(*tapName)
+	dev, err := tun.Open(*tunName)
 	if err != nil { return err }
-	var counters forward.Counters
 	done := make(chan struct{})
-	go printCounters(done, &counters, logger)
 	go printPaths(done, conn, logger)
-	logger.Info("TAP bridging started", "tap", *tapName, "max_frame", *maxFrame)
-	err = forward.Run(ctx, dev, stream, *maxFrame, &counters, logger)
+	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName, "cidr", *tunnelIP, "groups", *groupCSV)
+	err = p2mp.ClientPump(ctx, dev, stream, *maxFrame, groups, *multicastPPS, logger)
 	close(done)
-	logger.Info("TAP bridging stopped", "stats", counters.Snapshot())
 	return err
 }
 
