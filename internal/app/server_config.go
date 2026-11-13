@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -37,7 +38,12 @@ func loadServerConfig(path string) (ServerConfig,error) {
 	d:=json.NewDecoder(f)
 	d.DisallowUnknownFields()
 	if err:=d.Decode(&cfg);err!=nil{return ServerConfig{},fmt.Errorf("decode server configuration: %w",err)}
-	if d.Decode(new(any))==nil {return ServerConfig{},errors.New("multiple JSON documents in server configuration")}
+	var extra any
+	if err:=d.Decode(&extra);err==nil {
+		return ServerConfig{},errors.New("multiple JSON documents in server configuration")
+	} else if !errors.Is(err,io.EOF) {
+		return ServerConfig{},fmt.Errorf("invalid trailing data in server configuration: %w",err)
+	}
 	if err:=cfg.Validate();err!=nil{return ServerConfig{},err}
 	return cfg,nil
 }

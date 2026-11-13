@@ -60,7 +60,7 @@ func RunServer(ctx context.Context,args []string,logger *slog.Logger)error {
 		go func(){
 			defer wg.Done()
 			err:=runServerInstance(runCtx,instance,logger.With("instance",instance.Name,"tun",instance.TUN))
-			if err!=nil{cancel()}
+			if err!=nil||runCtx.Err()==nil{cancel()}
 			errs<-err
 		}()
 	}
@@ -177,7 +177,10 @@ func runServerInstance(ctx context.Context,instance ServerInstance,logger *slog.
 	close(closerDone)
 	hubErr:=<-hubDone
 	if hubErr!=nil{return fmt.Errorf("instance %s TUN read: %w",instance.Name,hubErr)}
-	if ctx.Err()!=nil||errors.Is(listenErr,http.ErrServerClosed){return nil}
+	if ctx.Err()!=nil{return nil}
+	if errors.Is(listenErr,http.ErrServerClosed){
+		return fmt.Errorf("instance %s stopped unexpectedly without daemon shutdown",instance.Name)
+	}
 	if listenErr!=nil{return fmt.Errorf("instance %s QUIC listener: %w",instance.Name,listenErr)}
 	return nil
 }
