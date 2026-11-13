@@ -16,10 +16,10 @@ import (
 // destination-UDP-port map covers *all* listeners in the server process.
 // There is no per-instance XDP program, UMEM, or RX-queue ownership.
 type Config struct {
-	Interfaces []string `json:"interfaces,omitempty" yaml:"interfaces,omitempty"`
-	Object string `json:"object,omitempty" yaml:"object,omitempty"`
-	Mode string `json:"mode,omitempty" yaml:"mode,omitempty"`
-	ObjectChecksum [32]byte `json:"-" yaml:"-"`
+	Interfaces []string `yaml:"interfaces,omitempty"`
+	Object string `yaml:"object,omitempty"`
+	Mode string `yaml:"mode,omitempty"`
+	ObjectChecksum [32]byte `yaml:"-"`
 }
 
 // Normalize checks syntax without touching kernel eBPF state. XDP is opt-in.

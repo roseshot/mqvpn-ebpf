@@ -1,12 +1,16 @@
-# Each instance is an isolated IP VPN LAN. Overlapping private addresses are valid.
-# Configure mq0 and mq1 in separate Linux VRFs externally if they share subnets.
-xdp:
-  interfaces: [enp1s0, enp2s0]
-  object: /usr/lib/mqvpn/xdp_mqvpn.o
-  mode: driver
+# One UDP/QUIC listener shared by every VPN Instance.
+# DNS names below must resolve to the same host and match TLS certificate SAN.
+listen: "0.0.0.0:4433"
+
+# Optional: pure-Go XDP controller, empty XSKMAP keeps kernel UDP operational.
+# xdp:
+#   interfaces: [enp1s0, enp2s0]
+#   object: /usr/lib/mqvpn/xdp_mqvpn.o
+#   mode: driver
+
 instances:
   - name: customer-a
-    listen: "0.0.0.0:4433"
+    server_name: customer-a.vpn.example.com
     tun: mq0
     peers: /etc/mqvpn/peers-a.yaml
     path: /.well-known/masque/ethernet/
@@ -14,8 +18,9 @@ instances:
     key: /etc/mqvpn/tls/a-server.key
     client_ca: /etc/mqvpn/tls/a-clients.crt
     max_frame: 1160
+
   - name: customer-b
-    listen: "0.0.0.0:4434"
+    server_name: customer-b.vpn.example.com
     tun: mq1
     peers: /etc/mqvpn/peers-b.yaml
     path: /.well-known/masque/ethernet/

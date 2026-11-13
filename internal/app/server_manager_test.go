@@ -6,98 +6,107 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 )
 
-func testServerFiles(t *testing.T)(ServerConfig,string){
+func testServerFiles(t *testing.T) (ServerConfig, string) {
 	t.Helper()
-	dir:=t.TempDir()
-	pub,priv,err:=ed25519.GenerateKey(rand.Reader)
-	if err!=nil{t.Fatal(err)}
-	tpl:=&x509.Certificate{
-		SerialNumber:big.NewInt(1),
-		NotBefore:time.Now().Add(-time.Hour),
-		NotAfter:time.Now().Add(time.Hour),
-		BasicConstraintsValid:true,IsCA:true,
-		KeyUsage:x509.KeyUsageCertSign|x509.KeyUsageDigitalSignature,
+	dir := t.TempDir()
+	pub, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil { t.Fatal(err) }
+	certificate := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour),
+		BasicConstraintsValid: true,
+		IsCA: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		DNSNames: []string{"edge-a.example.test", "edge-b.example.test", "customer-a.example.test", "customer-b.example.test", "vpn-a.example.test", "vpn-b.example.test"},
 	}
-	der,err:=x509.CreateCertificate(rand.Reader,tpl,tpl,pub,priv)
-	if err!=nil{t.Fatal(err)}
-	keyDER,err:=x509.MarshalPKCS8PrivateKey(priv)
-	if err!=nil{t.Fatal(err)}
-	cert:=filepath.Join(dir,"server.crt")
-	key:=filepath.Join(dir,"server.key")
-	peers:=filepath.Join(dir,"peers.json")
-	write:=func(path string,p []byte){
-		if err:=os.WriteFile(path,p,0600);err!=nil{t.Fatal(err)}
+	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, pub, private)
+	if err != nil { t.Fatal(err) }
+	derKey, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil { t.Fatal(err) }
+	certPath, keyPath, peerPath := filepath.Join(dir, "server.pem"), filepath.Join(dir, "server.key"), filepath.Join(dir, "peers.yaml")
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(path, data, 0600); err != nil { t.Fatal(err) }
 	}
-	write(cert,pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:der}))
-	write(key,pem.EncodeToMemory(&pem.Block{Type:"PRIVATE KEY",Bytes:keyDER}))
-	sum:=sha256.Sum256([]byte("client"))
-	data,err:=json.Marshal(map[string]any{
-		"peers":[]map[string]any{{
-			"id":"peer-a","certificate_sha256":hex.EncodeToString(sum[:]),
-			"routes":[]string{"10.77.0.2/32"},
+	write(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	write(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: derKey}))
+	sum := sha256.Sum256([]byte("test-client"))
+	peers := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
+		ID: "site-a", CertificateSHA256: hex.EncodeToString(sum[:]),
+		Routes: []string{"10.77.0.2/32"},
+	}}}
+	data, err := configfile.Marshal(peerPath, peers)
+	if err != nil { t.Fatal(err) }
+	write(peerPath, data)
+	return ServerConfig{
+		Listen: "0.0.0.0:4433",
+		Instances: []ServerInstance{{
+			Name: "edge-a", ServerName: "edge-a.example.test", TUN: "mq0",
+			Peers: peerPath, Cert: certPath, Key: keyPath, ClientCA: certPath,
 		}},
-	})
-	if err!=nil{t.Fatal(err)}
-	write(peers,data)
-	return ServerConfig{Instances:[]ServerInstance{{
-		Name:"edge-a",Listen:":4433",TUN:"mq0",
-		Cert:cert,Key:key,ClientCA:cert,Peers:peers,
-	}}},peers
+	}, peerPath
 }
 
-func TestPrepareServerDetectsPeerMapChangeWithoutListenerRestart(t *testing.T){
-	cfg,peersFile:=testServerFiles(t)
-	initial,err:=prepareServer(cfg)
-	if err!=nil{t.Fatal(err)}
-	p:=initial.instances["edge-a"]
-	content,err:=os.ReadFile(peersFile)
-	if err!=nil{t.Fatal(err)}
-	var payload map[string]any
-	if err:=json.Unmarshal(content,&payload);err!=nil{t.Fatal(err)}
-	peers:=payload["peers"].([]any)
-	peer:=peers[0].(map[string]any)
-	peer["routes"]=[]string{"10.77.0.2/32","192.168.20.0/24"}
-	content,err=json.Marshal(payload)
-	if err!=nil{t.Fatal(err)}
-	if err:=os.WriteFile(peersFile,content,0600);err!=nil{t.Fatal(err)}
-	after,err:=prepareServer(cfg)
-	if err!=nil{t.Fatal(err)}
-	q:=after.instances["edge-a"]
-	if initial.fingerprint==after.fingerprint{t.Fatal("configuration change not detected")}
-	if p.staticHash!=q.staticHash{t.Fatal("peer-only change would restart QUIC listener")}
-	if p.peerHash==q.peerHash{t.Fatal("peer mapping change was not detected")}
-	if len(q.peers.Peers[0].Routes)!=2{t.Fatal("reloaded prefix not present")}
-}
-
-func TestPrepareServerRejectsInvalidPeerUpdate(t *testing.T){
-	cfg,peersFile:=testServerFiles(t)
-	first,err:=prepareServer(cfg)
-	if err!=nil{t.Fatal(err)}
-	if err:=os.WriteFile(peersFile,[]byte(`{"peers":[{"bad":"missing valid auth"}]}`),0600);err!=nil{t.Fatal(err)}
-	if _,err:=prepareServer(cfg);err==nil{t.Fatal("invalid peer data passed validation")}
-	if len(first.instances["edge-a"].peers.Peers)!=1{t.Fatal("last valid snapshot mutated")}
-}
-
-func TestValidateCommandUsesConfigWithoutTUN(t *testing.T){
-	cfg,_:=testServerFiles(t)
-	path:=filepath.Join(t.TempDir(),"server.json")
-	payload,err:=json.Marshal(cfg)
-	if err!=nil{t.Fatal(err)}
-	if err:=os.WriteFile(path,payload,0600);err!=nil{t.Fatal(err)}
-	if err:=validateServerCLI([]string{"--config",path},nil);err!=nil{t.Fatal(err)}
-}
-
-func TestReloadCommandRejectsInvalidPID(t *testing.T){
-	if err:=reloadServerCLI([]string{"--pid","0"},nil);err==nil{
-		t.Fatal("unsafe PID accepted")
+func TestPrepareServerPeerHotReloadKeepsListenerAndTLS(t *testing.T) {
+	cfg, path := testServerFiles(t)
+	first, err := prepareServer(cfg)
+	if err != nil { t.Fatal(err) }
+	before := first.instances["edge-a"]
+	sum := sha256.Sum256([]byte("test-client"))
+	data, err := configfile.Marshal(path, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
+		ID: "site-a", CertificateSHA256: hex.EncodeToString(sum[:]),
+		Routes: []string{"10.77.0.2/32", "192.168.20.0/24"},
+	}}})
+	if err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, data, 0600); err != nil { t.Fatal(err) }
+	next, err := prepareServer(cfg)
+	if err != nil { t.Fatal(err) }
+	after := next.instances["edge-a"]
+	if first.listen != next.listen || before.staticHash != after.staticHash {
+		t.Fatal("peer-only update changed shared UDP listener or per-SNI TLS identity")
 	}
+	if before.peerHash == after.peerHash || len(after.peers.Peers[0].Routes) != 2 {
+		t.Fatal("new YAML peer routes not reloaded")
+	}
+	if first.fingerprint == next.fingerprint { t.Fatal("configuration digest unchanged") }
+}
+
+func TestPrepareRejectsBadPeerYAML(t *testing.T) {
+	cfg, path := testServerFiles(t)
+	old, err := prepareServer(cfg)
+	if err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, []byte("peers:\n  - bad: true\n"), 0600); err != nil { t.Fatal(err) }
+	if _, err := prepareServer(cfg); err == nil { t.Fatal("invalid peer update accepted") }
+	if len(old.instances["edge-a"].peers.Peers) != 1 { t.Fatal("old validated snapshot modified") }
+}
+
+func TestPrepareRejectsHostnameCertificateMismatch(t *testing.T) {
+	cfg, _ := testServerFiles(t)
+	cfg.Instances[0].ServerName = "not-in-san.example.test"
+	if _, err := prepareServer(cfg); err == nil { t.Fatal("SNI certificate SAN mismatch accepted") }
+}
+
+func TestValidateCLIUsesYAMLWithoutTUN(t *testing.T) {
+	cfg, _ := testServerFiles(t)
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	data, err := configfile.Marshal(path, cfg)
+	if err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, data, 0600); err != nil { t.Fatal(err) }
+	if err := validateServerCLI([]string{"--config", path}, nil); err != nil { t.Fatal(err) }
+}
+func TestReloadCommandRejectsInvalidPID(t *testing.T) {
+	if err := reloadServerCLI([]string{"--pid", "0"}, nil); err == nil { t.Fatal("invalid PID accepted") }
 }

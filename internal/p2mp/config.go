@@ -14,13 +14,13 @@ import (
 // PeerConfig identifies an authenticated session and the destination prefixes
 // that should be delivered to it. Routes are NOT kernel routes or traffic ACLs.
 type PeerConfig struct {
-	ID string `json:"id" yaml:"id"`
-	CertificateSHA256 string `json:"certificate_sha256" yaml:"certificate_sha256"`
-	Routes []string `json:"routes" yaml:"routes"`
+	ID string `yaml:"id"`
+	CertificateSHA256 string `yaml:"certificate_sha256"`
+	Routes []string `yaml:"routes"`
 }
 
 type FileConfig struct {
-	Peers []PeerConfig `json:"peers" yaml:"peers"`
+	Peers []PeerConfig `yaml:"peers"`
 }
 
 type Rule struct {

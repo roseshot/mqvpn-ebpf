@@ -35,6 +35,7 @@ type Hub struct{
 	log *slog.Logger
 	mu sync.RWMutex
 	peers map[string]*Session
+	closed bool
 	writer sync.Mutex
 	txFrames atomic.Uint64
 	rxFrames atomic.Uint64
@@ -61,6 +62,7 @@ func(h *Hub)Authorize(certDER []byte)(*Rule,error){
 func(h *Hub)Attach(ctx context.Context,rule *Rule,stream Stream)(*Session,error){
 	if rule==nil||stream==nil{return nil,errors.New("peer and stream required")}
 	h.mu.Lock()
+	if h.closed { h.mu.Unlock(); return nil, errors.New("VPN instance is stopping") }
 	// An authorization result may have been computed just before a reload.
 	// Verify it against the live config while holding the same lock as reload.
 	valid:=false
@@ -226,4 +228,20 @@ func (h *Hub) ReplaceConfig(next *Config) error {
 	h.cfg=next
 	h.log.Info("P2MP forwarding table reloaded","peers",len(next.Peers))
 	return nil
+}
+
+
+// CloseSessions prevents new attachment and cancels every active session.
+// Requests from an old TLS configuration may still exist but cannot send
+// further IP packets through a retired VPN instance.
+func (h *Hub) CloseSessions() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed { return }
+	h.closed = true
+	for id,s := range h.peers {
+		delete(h.peers,id)
+		s.cancel()
+		close(s.done)
+	}
 }

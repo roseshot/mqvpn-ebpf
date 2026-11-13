@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -9,215 +10,187 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"syscall"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
-	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
-	"github.com/roseshot/mqvpn-ebpf/internal/tun"
-	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
-// RunServer supports config-file hot reload, signal-driven reload via CLI,
-// and the legacy single-instance flags. It never modifies Linux interface,
-// routing, firewall, or kernel multicast state.
-func RunServer(ctx context.Context,args []string,logger *slog.Logger)error {
-	if logger==nil{logger=slog.Default()}
-	if len(args)>0{
-		switch args[0]{
-		case "validate":return validateServerCLI(args[1:],logger)
-		case "reload":return reloadServerCLI(args[1:],logger)
-		case "instance":return runInstanceCLI(args[1:],logger)
+// RunServer requires one YAML config with a shared UDP listener.
+// No legacy single-instance flags or JSON configuration are accepted.
+func RunServer(ctx context.Context, args []string, logger *slog.Logger) error {
+	if logger == nil { logger = slog.Default() }
+	if len(args) > 0 {
+		switch args[0] {
+		case "validate": return validateServerCLI(args[1:], logger)
+		case "reload": return reloadServerCLI(args[1:], logger)
+		case "instance": return runInstanceCLI(args[1:], logger)
 		}
 	}
-	fs:=flag.NewFlagSet("server",flag.ContinueOnError)
-	configFile:=fs.String("config","","YAML multi-instance configuration file (.yaml/.yml; .json legacy)")
-	reloadInterval:=fs.Duration("reload-interval",2*time.Second,"file watch interval in config mode; 0 disables automatic reload")
-	listen:=fs.String("listen",":4433","UDP listen address for single-instance mode")
-	tunName:=fs.String("tun","mq0","existing IP-addressed TUN for single-instance mode")
-	peerFile:=fs.String("peers","","P2MP peer authentication and destination map")
-	path:=fs.String("path",defaultPath,"CONNECT-ETHERNET URL path")
-	certFile:=fs.String("cert","","server TLS certificate")
-	keyFile:=fs.String("key","","server TLS private key")
-	clientCA:=fs.String("client-ca","","mTLS client certificate CA")
-	maxFrame:=fs.Int("max-frame",1160,"max encapsulated Ethernet frame bytes")
-	xdpInterfaces:=fs.String("xdp-interfaces","","opt-in XDP WAN interface list (comma separated)")
-	xdpObject:=fs.String("xdp-object","","compiled BPF ELF path (required with --xdp-interfaces)")
-	xdpMode:=fs.String("xdp-mode","driver","XDP attach mode: driver or generic")
-	if err:=fs.Parse(args);err!=nil{return err}
-	if *reloadInterval<0{return errors.New("--reload-interval cannot be negative")}
-	if *configFile!=""{
-		var invalid string
-		fs.Visit(func(f *flag.Flag){
-			if f.Name!="config"&&f.Name!="reload-interval"{invalid=f.Name}
-		})
-		if invalid!=""{return fmt.Errorf("--config cannot be combined with --%s",invalid)}
-		return runManagedServer(ctx,func()(preparedServer,error){
-			return prepareConfigFile(*configFile)
-		},*reloadInterval,logger)
-	}
-	// Without a config file, the command-line flags remain the source of
-	// truth. SIGHUP is accepted but re-evaluates the same settings; no watch.
-	cfg:=ServerConfig{Instances:[]ServerInstance{{
-		Name:"default",Listen:*listen,TUN:*tunName,Peers:*peerFile,Path:*path,
-		Cert:*certFile,Key:*keyFile,ClientCA:*clientCA,MaxFrame:*maxFrame,
-	}}}
-	if *xdpInterfaces!=""{
-		var interfaces []string
-		for _,name:=range strings.Split(*xdpInterfaces,","){interfaces=append(interfaces,strings.TrimSpace(name))}
-		cfg.XDP=&xdp.Config{Interfaces:interfaces,Object:*xdpObject,Mode:*xdpMode}
-	} else if *xdpObject!=""{
-		return errors.New("--xdp-object requires --xdp-interfaces")
-	}
-	if err:=cfg.Validate();err!=nil{return err}
-	return runManagedServer(ctx,func()(preparedServer,error){
-		return prepareServer(cfg)
-	},0,logger)
+	fs := flag.NewFlagSet("mqvpn-server", flag.ContinueOnError)
+	config := fs.String("config", "", "YAML Server config with shared UDP listen and multiple instances")
+	reload := fs.Duration("reload-interval", 2*time.Second, "YAML and certificate/peer file poll interval (0 disables)")
+	if err := fs.Parse(args); err != nil { return err }
+	if *config == "" || fs.NArg() != 0 { return errors.New("usage: mqvpn-server --config server.yaml [--reload-interval 2s]") }
+	return runManagedServer(ctx, func() (preparedServer, error) { return prepareConfigFile(*config) }, *reload, logger)
 }
 
-// validate checks the YAML schema, peer directory, and TLS files without
-// opening TUN devices or binding sockets, and without changing the daemon.
-func validateServerCLI(args []string,logger *slog.Logger)error{
-	if logger==nil{logger=slog.Default()}
-	fs:=flag.NewFlagSet("validate",flag.ContinueOnError)
-	path:=fs.String("config","","configuration file to validate")
-	if err:=fs.Parse(args);err!=nil{return err}
-	if *path==""||fs.NArg()!=0{return errors.New("usage: mqvpn-server validate --config /path/to/server.yaml")}
-	prepared,err:=prepareConfigFile(*path)
-	if err!=nil{return err}
-	logger.Info("server configuration valid","config",*path,"instances",len(prepared.instances))
+func validateServerCLI(args []string, logger *slog.Logger) error {
+	if logger == nil { logger = slog.Default() }
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	path := fs.String("config", "", "YAML config to validate")
+	if err := fs.Parse(args); err != nil { return err }
+	if *path == "" || fs.NArg() != 0 { return errors.New("usage: mqvpn-server validate --config server.yaml") }
+	prepared, err := prepareConfigFile(*path)
+	if err != nil { return err }
+	logger.Info("YAML configuration valid", "config", *path, "listen", prepared.listen, "instances", len(prepared.instances))
 	return nil
 }
 
-// reload is a control-plane CLI request to the running server via SIGHUP.
-// Successful kill(2) means the request was delivered, not that the new config
-// passed validation. The daemon logs the final reload result.
-func reloadServerCLI(args []string,logger *slog.Logger)error{
-	fs:=flag.NewFlagSet("reload",flag.ContinueOnError)
-	pid:=fs.Int("pid",0,"PID of running mqvpn-server daemon")
-	if err:=fs.Parse(args);err!=nil{return err}
-	if *pid<=1||fs.NArg()!=0{return errors.New("usage: mqvpn-server reload --pid <daemon-pid>")}
-	if err:=syscall.Kill(*pid,syscall.SIGHUP);err!=nil{
-		return fmt.Errorf("request reload of daemon PID %d: %w",*pid,err)
+func reloadServerCLI(args []string, logger *slog.Logger) error {
+	if logger == nil { logger = slog.Default() }
+	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
+	pid := fs.Int("pid", 0, "PID of the running server")
+	if err := fs.Parse(args); err != nil { return err }
+	if *pid <= 1 || fs.NArg() != 0 { return errors.New("usage: mqvpn-server reload --pid <daemon-pid>") }
+	if err := syscall.Kill(*pid, syscall.SIGHUP); err != nil {
+		return fmt.Errorf("request config reload of PID %d: %w", *pid, err)
 	}
-	logger.Info("server reload signal sent","pid",*pid)
+	logger.Info("reload signal delivered (result will be logged by daemon)", "pid", *pid)
 	return nil
 }
-func runServerInstance(ctx context.Context,instance ServerInstance,logger *slog.Logger,ready chan<- *p2mp.Hub)error {
-	peerCfg,err:=p2mp.Load(instance.Peers)
-	if err!=nil{return fmt.Errorf("instance %s load peers: %w",instance.Name,err)}
-	cert,err:=keyPair(instance.Cert,instance.Key)
-	if err!=nil{return fmt.Errorf("instance %s: %w",instance.Name,err)}
-	pool,err:=certPool(instance.ClientCA)
-	if err!=nil{return fmt.Errorf("instance %s: %w",instance.Name,err)}
-	device,err:=tun.Open(instance.TUN)
-	if err!=nil{return fmt.Errorf("instance %s TUN: %w",instance.Name,err)}
-	hub,err:=p2mp.New(device,peerCfg,instance.MaxFrame,logger)
-	if err!=nil{_ = device.Close();return err}
-	// Bind the UDP listener before advertising the instance as ready.
-	// A port conflict rejects the new instance and allows manager rollback.
-	packetConn,err:=net.ListenPacket("udp",instance.Listen)
-	if err!=nil{_ = device.Close();return fmt.Errorf("instance %s bind %s: %w",instance.Name,instance.Listen,err)}
-	defer packetConn.Close()
 
-	runCtx,cancel:=context.WithCancel(ctx)
-	defer cancel()
-	hubDone:=make(chan error,1)
-	go func(){
-		hubDone<-hub.Run(runCtx)
-		cancel()
-	}()
-	handler:=http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
-		if r.Method!=http.MethodConnect||r.Proto!="connect-ethernet"||r.URL.Path!=instance.Path{
-			http.Error(w,"CONNECT-ETHERNET required",http.StatusBadRequest)
-			return
-		}
-		if r.Header.Get("Capsule-Protocol")!="?1"{
-			http.Error(w,"Capsule-Protocol: ?1 required",http.StatusBadRequest)
-			return
-		}
-		if r.TLS==nil||len(r.TLS.PeerCertificates)==0{
-			http.Error(w,"TLS client certificate required",http.StatusForbidden)
-			return
-		}
-		rule,err:=hub.Authorize(r.TLS.PeerCertificates[0].Raw)
-		if err!=nil{
-			logger.Warn("unauthorized client certificate","remote",r.RemoteAddr)
-			http.Error(w,"unauthorized site",http.StatusForbidden)
-			return
-		}
-		setter,ok:=w.(interface{
-			ReceivedSettings()<-chan struct{}
-			Settings()*http3.Settings
-		})
-		if !ok{http.Error(w,"HTTP/3 required",http.StatusHTTPVersionNotSupported);return}
-		select{
-		case <-r.Context().Done():return
-		case <-setter.ReceivedSettings():
-		}
-		if !setter.Settings().EnableDatagrams{
-			http.Error(w,"HTTP/3 DATAGRAM required",http.StatusBadRequest)
-			return
-		}
-		streamer,ok:=w.(http3.HTTPStreamer)
-		if !ok{http.Error(w,"HTTP/3 stream unavailable",http.StatusInternalServerError);return}
-		w.Header().Set("Capsule-Protocol","?1")
-		w.WriteHeader(http.StatusOK)
-		session,err:=hub.Attach(r.Context(),rule,streamer.HTTPStream())
-		if err!=nil {
-			logger.Warn("duplicate or invalid site session","site",rule.ID,"error",err)
-			return
-		}
-		defer hub.Detach(session)
-		logger.Info("peer connected","site",rule.ID,"remote",r.RemoteAddr)
-		if err:=hub.Receive(r.Context(),session);err!=nil{
-			logger.Warn("peer receive ended","site",rule.ID,"error",err)
-		}else{
-			logger.Info("peer disconnected","site",rule.ID)
-		}
+// serverMux owns one HTTP/3 listener for multiple isolated P2MP hubs.
+// SNI selects both the mTLS identity during handshake and the traffic
+// forwarding domain for CONNECT-ETHERNET. It never examines inner VPN policy.
+type serverMux struct {
+	mu sync.RWMutex
+	bySNI map[string]*liveInstance
+}
+
+func newServerMux() *serverMux {
+	return &serverMux{bySNI: make(map[string]*liveInstance)}
+}
+
+func (m *serverMux) Publish(instances map[string]*liveInstance) {
+	next := make(map[string]*liveInstance, len(instances))
+	for _, instance := range instances {
+		next[instance.prepared.spec.ServerName] = instance
+	}
+	m.mu.Lock()
+	m.bySNI = next
+	m.mu.Unlock()
+}
+
+func (m *serverMux) Lookup(name string) *liveInstance {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.bySNI[strings.ToLower(name)]
+}
+
+func (m *serverMux) TLSConfigFor(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+	instance := m.Lookup(hello.ServerName)
+	if instance == nil {
+		return nil, fmt.Errorf("unknown VPN SNI %q", hello.ServerName)
+	}
+	// ServerName, client root CAs and client auth are INSTANCE-LOCAL.
+	return instance.prepared.tlsConfig, nil
+}
+
+func requestAuthorityMatchesSNI(host, serverName string) bool {
+	// Extended CONNECT :authority may include the shared UDP port.
+	if h, _, err := net.SplitHostPort(host); err == nil { host = h }
+	return strings.EqualFold(strings.TrimSuffix(host, "."), serverName)
+}
+
+func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.TLS == nil || r.TLS.ServerName == "" {
+		http.Error(w, "TLS SNI required", http.StatusMisdirectedRequest)
+		return
+	}
+	instance := m.Lookup(r.TLS.ServerName)
+	if instance == nil || !requestAuthorityMatchesSNI(r.Host, instance.prepared.spec.ServerName) {
+		http.Error(w, "unknown VPN virtual host", http.StatusMisdirectedRequest)
+		return
+	}
+	if r.Method != http.MethodConnect || r.Proto != "connect-ethernet" ||
+		r.URL.Path != instance.prepared.spec.Path {
+		http.Error(w, "CONNECT-ETHERNET required", http.StatusBadRequest)
+		return
+	}
+	if r.Header.Get("Capsule-Protocol") != "?1" {
+		http.Error(w, "Capsule-Protocol: ?1 required", http.StatusBadRequest)
+		return
+	}
+	if len(r.TLS.PeerCertificates) == 0 || len(r.TLS.VerifiedChains) == 0 {
+		http.Error(w, "verified client certificate required", http.StatusForbidden)
+		return
+	}
+	// Revalidate against the current SNI tenant CA after a hot reload.
+	// An old HTTP/3 connection must not retain permissions after CA rotation.
+	intermediates := x509.NewCertPool()
+	for _, cert := range r.TLS.PeerCertificates[1:] { intermediates.AddCert(cert) }
+	if _, err := r.TLS.PeerCertificates[0].Verify(x509.VerifyOptions{
+		Roots: instance.prepared.tlsConfig.ClientCAs,
+		Intermediates: intermediates,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
+		http.Error(w, "client CA no longer authorized for this instance", http.StatusForbidden)
+		return
+	}
+	rule, err := instance.hub.Authorize(r.TLS.PeerCertificates[0].Raw)
+	if err != nil {
+		instance.logger.Warn("unauthorized client", "remote", r.RemoteAddr)
+		http.Error(w, "unauthorized site", http.StatusForbidden)
+		return
+	}
+	setter, ok := w.(interface{
+		ReceivedSettings() <-chan struct{}
+		Settings() *http3.Settings
 	})
+	if !ok { http.Error(w, "HTTP/3 required", http.StatusHTTPVersionNotSupported); return }
+	select {
+	case <-r.Context().Done(): return
+	case <-setter.ReceivedSettings():
+	}
+	if !setter.Settings().EnableDatagrams {
+		http.Error(w, "HTTP/3 DATAGRAM required", http.StatusBadRequest)
+		return
+	}
+	streamer, ok := w.(http3.HTTPStreamer)
+	if !ok { http.Error(w, "HTTP/3 stream unavailable", http.StatusInternalServerError); return }
+	// Attach before sending HTTP 200 so duplicate sessions can get HTTP 409.
+	session, err := instance.hub.Attach(r.Context(), rule, streamer.HTTPStream())
+	if err != nil { http.Error(w, "site session already connected", http.StatusConflict); return }
+	defer instance.hub.Detach(session)
+	w.Header().Set("Capsule-Protocol", "?1")
+	w.WriteHeader(http.StatusOK)
+	instance.logger.Info("peer connected", "site", rule.ID, "remote", r.RemoteAddr)
+	if err := instance.hub.Receive(r.Context(), session); err != nil {
+		instance.logger.Warn("peer receive ended", "site", rule.ID, "error", err)
+	}
+	instance.logger.Info("peer disconnected", "site", rule.ID)
+}
 
-	srv:=&http3.Server{
-		Addr:instance.Listen,
-		Handler:handler,
-		TLSConfig:&tls.Config{
-			MinVersion:tls.VersionTLS13,
-			Certificates:[]tls.Certificate{cert},
-			ClientCAs:pool,
-			ClientAuth:tls.RequireAndVerifyClientCert,
+func newSharedHTTP3Server(mux *serverMux) *http3.Server {
+	return &http3.Server{
+		Handler: mux,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			GetConfigForClient: mux.TLSConfigFor,
 		},
-		EnableDatagrams:true,
-		QUICConfig:&quic.Config{
-			EnableDatagrams:true,
-			MaxPaths:2,
-			MultipathControllerFactory:func()quic.MultipathController{
+		EnableDatagrams: true,
+		QUICConfig: &quic.Config{
+			EnableDatagrams: true,
+			MaxPaths: 2,
+			MultipathControllerFactory: func() quic.MultipathController {
 				return quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler())
 			},
-			KeepAlivePeriod:10*time.Second,
-			MaxIdleTimeout:30*time.Second,
+			KeepAlivePeriod: 10*time.Second,
+			MaxIdleTimeout: 30*time.Second,
 		},
 	}
-	closerDone:=make(chan struct{})
-	go func(){
-		select{
-		case <-runCtx.Done():_ = srv.Close()
-		case <-closerDone:
-		}
-	}()
-	logger.Info("server instance listening","listen",instance.Listen,
-		"path",instance.Path,"peers",len(peerCfg.Peers))
-	if ready!=nil{ready<-hub}
-	listenErr:=srv.Serve(packetConn)
-	cancel()
-	close(closerDone)
-	hubErr:=<-hubDone
-	if hubErr!=nil{return fmt.Errorf("instance %s TUN read: %w",instance.Name,hubErr)}
-	if ctx.Err()!=nil{return nil}
-	if errors.Is(listenErr,http.ErrServerClosed){
-		return fmt.Errorf("instance %s stopped unexpectedly without daemon shutdown",instance.Name)
-	}
-	if listenErr!=nil{return fmt.Errorf("instance %s QUIC listener: %w",instance.Name,listenErr)}
-	return nil
 }
