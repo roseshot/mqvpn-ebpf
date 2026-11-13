@@ -28,18 +28,18 @@ func TestRejectLegacyJSONAndInvalidYAML(t *testing.T) {
 	if _, err := Marshal("server.json", sample{}); err == nil { t.Fatal("JSON output accepted") }
 	for _, text := range []string{
 		"",
-		"name: x
+		`name: x
 unknown: forbidden
-",
-		"name: x
+`,
+		`name: x
 name: duplicate
-",
-		"name: first
+`,
+		`name: first
 ---
 name: second
-",
-		"name: [not-a-string]
-",
+`,
+		`name: [not-a-string]
+`,
 	} {
 		var got sample
 		if err := Decode("server.yaml", []byte(text), &got); err == nil { t.Fatalf("accepted %q", text) }
