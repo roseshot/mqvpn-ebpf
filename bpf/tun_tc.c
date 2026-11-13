@@ -200,7 +200,26 @@ static __always_inline int clamp_syn(struct __sk_buff *skb, __u32 tcp_off,
         return TC_ACT_OK;
     struct option_scan scan = {};
     scan.count = opt_len;
-    if (bpf_skb_load_bytes(skb, tcp_off + 20, scan.bytes, opt_len) < 0) {
+    // TCP data offset is in 32-bit words. Pass a compile-time constant
+    // stack-buffer length to skb_load_bytes for verifier safety.
+    int load_result = -1;
+#define LOAD_OPTIONS(N) case N: load_result = bpf_skb_load_bytes(skb, tcp_off + 20, scan.bytes, N); break
+    switch (opt_len) {
+        LOAD_OPTIONS(4);
+        LOAD_OPTIONS(8);
+        LOAD_OPTIONS(12);
+        LOAD_OPTIONS(16);
+        LOAD_OPTIONS(20);
+        LOAD_OPTIONS(24);
+        LOAD_OPTIONS(28);
+        LOAD_OPTIONS(32);
+        LOAD_OPTIONS(36);
+        LOAD_OPTIONS(40);
+    default:
+        break;
+    }
+#undef LOAD_OPTIONS
+    if (load_result < 0) {
         stats->parse_errors++;
         return TC_ACT_OK;
     }
