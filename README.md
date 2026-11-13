@@ -1,341 +1,184 @@
-# mqvpn-ebpf — transparent routed P2MP tunnel
+# mqvpn-ebpf
 
-Experimental Go CONNECT-ETHERNET over encrypted HTTP/3 DATAGRAM + Multipath
-QUIC. One VPN **instance** represents one IP-based P2MP virtual LAN:
+Experimental **MASQUE CONNECT-ETHERNET** over HTTP/3 QUIC DATAGRAM and
+Multipath QUIC. Linux server supports multiple independent, route-based,
+point-to-multipoint (P2MP) VPN LANs within one daemon. Every instance has
+one **preconfigured IP-addressed TUN**, one UDP listener, its own authenticated
+clients, and an independent Peer → destination-prefix table.
 
-    mq0 (server, 10.77.0.1/24)
-      ↕ one shared Linux TUN
-      ├── authenticated MPQUIC site A (10.77.0.2, 192.168.20.0/24)
-      └── authenticated MPQUIC site B (10.77.0.3, 192.168.30.0/24)
+**Configuration is YAML by default** (`.yaml` / `.yml`). Existing `.json`
+server and peer configuration files remain readable for migration.
 
-Each server instance has a *single* IP-addressed TUN and accepts many
-clients. The server process may host multiple independent instances
-(mq0/UDP4433, mq1/UDP4434, etc.).
+## Independent instances, including overlapping subnets
 
-**This is a Layer-3 TUN overlay, not an Ethernet switch or Linux bridge.**
-"VPN LAN" means all peers participate in the same logical IP subnet and
-multicast/broadcast distribution domain, but Ethernet frames from the
-physical LAN (ARP/DHCP/unknown L2 broadcasts) are **not** bridged.
+Two VPN LANs may both use **10.77.0.0/24** for their tunnel addresses and
+**192.168.20.0/24** for their site LANs:
 
-## Transparent inner traffic: no daemon ACLs
+| Instance | TUN | Underlay port | VPN prefix | Remote LAN prefix |
+| --- | --- | --- | --- | --- |
+| customer-a | mq0 | UDP/4433 | 10.77.0.0/24 | 192.168.20.0/24 |
+| customer-b | mq1 | UDP/4434 | 10.77.0.0/24 | 192.168.20.0/24 |
 
-The daemon establishes authenticated CONNECT-ETHERNET/MPQUIC sessions
-and moves IP packets between Linux TUN and the corresponding QUIC stream.
-It does not classify inner traffic by source IP, destination transport
-port, protocol, mDNS content, TTL/HopLimit, or packet rate.
+Each instance owns its own destination lookup and session set; the same IP
+means a **different Peer depending on the instance**. Neither the P2MP hub
+nor XDP shares inner prefix mappings across instances. Duplicate TUN names
+or UDP listen ports remain prohibited. Within *one* instance, overlapping
+destinations for two different Peers remain invalid because the next hop
+would be ambiguous.
 
-- **Unicast:** Linux decides whether to send a packet into TUN using its
-  own routing table. The daemon resolves the destination IP to a remote
-  session using the static peer-to-prefix map. This map is only next-hop
-  selection, *not* a source-address allowlist or kernel routing table.
-- **IP multicast and limited IP broadcast:** packets *received from the
-  TUN* are replicated to every connected peer in the same VPN instance.
-  Packets received from a peer are delivered to the server's TUN and to
-  every other peer in the instance. No membership lists, group filters,
-  mDNS-specific checks, TTL rewriting, or PPS rate limits are applied.
-- **No cross-instance replication:** separate server instances do not
-  share traffic. No physical-LAN L2 broadcast bridging occurs.
+**Linux must separately isolate overlapping routing domains.** Putting two
+identical subnet routes into one main routing table does not create isolated
+VPNs. Configure a distinct Linux **VRF** (or network namespace) for each
+TUN, using ordinary route-based tables. mqvpn does **not** create VRFs,
+TUN devices, IP addresses, routes, multicast routes, firewall or policy rules.
+See [VRF setup and isolation](docs/overlapping-subnets-vrf.md).
 
-**Important operational consequence:** IP multicast/broadcast arriving
-at the VPN TUN can now be replicated to *every* connected peer.
-A broadcast/multicast flood *inside the VPN* can affect the entire VPN
-instance. Control it with the host firewall, traffic-control/qdisc, network
-multicast routing configuration, or an external multicast proxy—not with
-mqvpn packet filters. This is intentional per transparent-tunnel semantics.
+This is an IP VPN LAN on TUN, not an Ethernet bridge. VPN IP multicast /
+limited broadcast entering the TUN is replicated within that **one
+instance**; physical LAN L2 broadcasts are not bridged. No daemon packet
+ACLs, mDNS filters, PPS limits or content inspection are imposed.
 
-There is no IGMP/MLD membership discovery in mqvpn. The Linux networking
-stack or a dedicated service controls multicast subscription/routing. To
-carry local application-generated mDNS traffic over TUN, the OS must first
-send those packets to TUN. Physical LAN discovery requires an external
-mDNS reflector or service proxy; a TUN is not an Ethernet bridge.
+## Compile without CGO
 
-Transport still rejects malformed L3 packets and frames larger than the
-negotiated QUIC DATAGRAM / configured maximum Ethernet frame. This is a
-protocol/MTU limitation, not a user-configurable inner traffic policy.
-
-## The OS owns TUN addresses and all routing
-
-Daemon never creates TUN devices, configures IP addresses/MTU, edits Linux
-routes/rules, sets forwarding sysctls, manages multicast groups, or sets
-firewall/TC rules. Configure the TUN and routes *before* starting mqvpn via
-systemd-networkd, NetworkManager, iproute2, etc.
-
-Example **server**:
+Linux amd64, Go 1.26+, /dev/net/tun. Preconfigure the TUN and its routes
+externally before starting. Runtime TLS 1.3/QUIC and the Go XDP control
+plane do not require CGO.
 
 ~~~bash
-sudo ip tuntap add dev mq0 mode tun
-sudo ip address add 10.77.0.1/24 dev mq0
-sudo ip link set dev mq0 mtu 1100 up
-sudo ip route replace 192.168.20.0/24 dev mq0
-sudo ip route replace 192.168.30.0/24 dev mq0
-# Optional kernel routing between spokes:
-sudo sysctl -w net.ipv4.ip_forward=1
-~~~
-
-Example **client A**:
-
-~~~bash
-sudo ip tuntap add dev mq0 mode tun
-sudo ip address add 10.77.0.2/24 dev mq0
-sudo ip link set dev mq0 mtu 1100 up
-sudo ip route replace 192.168.30.0/24 dev mq0
-~~~
-
-If you want overlay multicast, configure the relevant Linux multicast
-routes externally (if necessary) so packets reach mq0. No daemon changes
-to the host routing or multicast control plane.
-
-## Build
-
-Linux amd64, Go 1.26+, /dev/net/tun, preconfigured UP TUN and permissions
-to attach the TUN; SO_BINDTODEVICE may need additional permissions.
-
-~~~bash
-go mod tidy
-go build -o mqvpn-server ./cmd/mqvpn-server
-go build -o mqvpn-client ./cmd/mqvpn-client
-go test -race ./...
-~~~
-
-The compatibility CLI (mqvpn server|client) is retained.
-
-## Peer directory (session next-hop lookup)
-
-Server file: /etc/mqvpn/peers.json, format in
-[configs/peers.example.json](configs/peers.example.json).
-Each peer has an **mTLS client certificate SHA-256 DER fingerprint**
-and a list of destination IP prefixes sent to that client. mTLS is required
-to authenticate tunnel sessions; inner IP packets receive no daemon ACLs.
-
-~~~json
-{
-  "peers": [
-    {
-      "id": "site-a",
-      "certificate_sha256": "<64-digit certificate SHA-256>",
-      "routes": ["10.77.0.2/32", "192.168.20.0/24"]
-    },
-    {
-      "id": "site-b",
-      "certificate_sha256": "<different 64-digit SHA-256>",
-      "routes": ["10.77.0.3/32", "192.168.30.0/24"]
-    }
-  ]
-}
-~~~
-
-The field "routes" is an overlay **IP-to-session destination map**, not
-kernel routes and not a source spoofing filter. A missing unicast mapping
-cannot be delivered because there is no next-hop session to select.
-Overlapping destination prefixes for different peers are rejected as
-ambiguous. Administrators remain responsible for kernel firewall/source
-validation if desired. This is separate from the VPN daemon.
-
-The previous "multicast_groups" and "multicast_pps" peer configuration
-fields are obsolete and have no effect; remove them from config files.
-
-To get the SHA-256 fingerprint for a test client certificate:
-
-~~~bash
-openssl x509 -in certs/client.crt -outform DER | sha256sum
-~~~
-
-## Optional multi-instance XDP dispatcher (CGO disabled)
-
-The experimental XDP control plane is opt-in. One XDP program is attached
-per physical WAN NIC, sharing a dynamic destination UDP port map across all
-server instances. Changes through the existing hot-reload mechanism update
-the map without recreating the NIC program or changing VPN routing.
-
-**AF_XDP RX/TX and zero-copy QUIC remain NOT implemented.** In this stage
-the XSKMAP is deliberately empty. Even when a UDP port matches, the XDP
-program returns XDP_PASS, preserving the working Linux UDP socket backend.
-There is no throughput increase to claim from enabling the dispatcher alone.
-
-Compile the kernel eBPF ELF at build time (no runtime CGO):
-
-~~~bash
-sudo apt-get install clang llvm libbpf-dev linux-libc-dev
-make bpf
 CGO_ENABLED=0 go build -mod=mod -o mqvpn-server ./cmd/mqvpn-server
-sudo install -D -m 0644 bpf/xdp_mqvpn.o /usr/lib/mqvpn/xdp_mqvpn.o
+CGO_ENABLED=0 go build -mod=mod -o mqvpn-client ./cmd/mqvpn-client
+CGO_ENABLED=0 go test -mod=mod ./...
 ~~~
 
-Add this top-level section to the existing multi-instance server.json:
+Optional experimental XDP dispatcher is compiled separately with Clang:
+`make bpf`. It currently provides dynamic multi-instance UDP port maps,
+**not** an AF_XDP zero-copy packet backend. XSKMAP is intentionally empty
+and the established transport still uses Linux UDP Socket. The N200/I226
+1–2.5 Gbps goal has not been benchmarked.
 
-~~~json
-"xdp": {
-  "interfaces": ["enp1s0", "enp2s0"],
-  "object": "/usr/lib/mqvpn/xdp_mqvpn.o",
-  "mode": "driver"
-}
+## Multi-instance Server YAML
+
+See [configs/server.instances.example.yaml](configs/server.instances.example.yaml).
+
+~~~yaml
+instances:
+  - name: customer-a
+    listen: "0.0.0.0:4433"
+    tun: mq0
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a-server.crt
+    key: /etc/mqvpn/tls/a-server.key
+    client_ca: /etc/mqvpn/tls/a-clients.crt
+
+  - name: customer-b
+    listen: "0.0.0.0:4434"
+    tun: mq1
+    peers: /etc/mqvpn/peers-b.yaml
+    cert: /etc/mqvpn/tls/b-server.crt
+    key: /etc/mqvpn/tls/b-server.key
+    client_ca: /etc/mqvpn/tls/b-clients.crt
 ~~~
 
-This section is alongside the existing instances array; individual
-instances continue listening on their distinct UDP ports. XDP is omitted
-by default. A running instance configuration edit updates the selected
-port set automatically. Use mode driver for native I226/igc XDP, or generic
-for software XDP testing.
+Peer examples (the second intentionally overlaps with the first):
+[configs/peers.example.yaml](configs/peers.example.yaml) and
+[configs/peers-b.example.yaml](configs/peers-b.example.yaml).
 
-For the single-instance CLI, optional flags are:
---xdp-interfaces enp1s0,enp2s0 --xdp-object /usr/lib/mqvpn/xdp_mqvpn.o
---xdp-mode driver. Enabling XDP can conflict with a program already attached
-to a NIC; use dedicated test interfaces first. Replacing the object/mode
-on a live NIC requires daemon restart.
+~~~yaml
+# /etc/mqvpn/peers-a.yaml
+peers:
+  - id: site-a
+    certificate_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    routes:
+      - 10.77.0.2/32
+      - 192.168.20.0/24
+~~~
 
-See [multi-instance XDP details](docs/xdp-multi-instance.md).
+`routes` is **only** the destination IP → MPQUIC session selector inside
+this VPN instance, not a Linux route, a source-IP ACL, or a global prefix
+registry. mTLS client certificate fingerprints distinguish client sessions.
+All configured prefix maps stay private to the instance.
 
-## Server CLI configuration and hot reload
+## YAML validation, CLI edits and hot reload
 
-The server supports both single-instance flags and a versioned JSON
-multi-instance configuration. **No daemon network configuration is applied:**
-TUN devices, IPs, routes, policy rules and multicast controls stay owned by
-systemd-networkd / NetworkManager / iproute2.
-
-Validate an edited configuration without opening any TUN or UDP socket:
+Strict YAML loading rejects unknown keys, duplicate keys, multiple documents,
+malformed types and invalid Peer maps. Legacy JSON uses strict field checks.
+Use `.yaml` or `.yml` for new deployments; an existing `.json` file can
+still be managed without changing its format.
 
 ~~~bash
-mqvpn-server validate --config /etc/mqvpn/server.json
-~~~
+mqvpn-server validate --config /etc/mqvpn/server.yaml
 
-Start the server with automatic hot reload (default interval: **2 seconds**):
-
-~~~bash
-mqvpn-server --config /etc/mqvpn/server.json \
+mqvpn-server --config /etc/mqvpn/server.yaml \
   --reload-interval 2s --log-level info --log-format json
-~~~
 
-After editing the JSON, or a referenced peer/certificate/CA file, the daemon
-revalidates before applying changes. An invalid JSON, peer directory or TLS
-file **does not replace the active configuration**; a warning is logged and
-the running connections continue. Setting --reload-interval=0 disables
-polling while leaving manual SIGHUP reload available.
+mqvpn-server instance list --config /etc/mqvpn/server.yaml
 
-For an immediate reload from another terminal:
-
-~~~bash
-# Obtain the correct PID from your service manager, not an arbitrary process.
-mqvpn-server reload --pid "$(systemctl show -p MainPID --value mqvpn-server.service)"
-# Alternatively: systemctl kill -s HUP mqvpn-server.service
-~~~
-
-The CLI reports that the SIGHUP signal was sent. Check the daemon log for
-the **reload applied/rejected result**; signaling alone does not prove the
-new configuration was accepted.
-
-You can also edit the multi-instance JSON using the server's CLI:
-
-~~~bash
-# Print configured instances:
-mqvpn-server instance list --config /etc/mqvpn/server.json
-
-# Add a new instance (requires that mq2 is already provisioned in Linux):
-mqvpn-server instance upsert --config /etc/mqvpn/server.json \
-  --name edge-c --listen 0.0.0.0:4435 --tun mq2 \
-  --peers /etc/mqvpn/peers-c.json \
+mqvpn-server instance upsert --config /etc/mqvpn/server.yaml \
+  --name customer-c --listen 0.0.0.0:4435 --tun mq2 \
+  --peers /etc/mqvpn/peers-c.yaml \
   --cert /etc/mqvpn/tls/c-server.crt \
   --key /etc/mqvpn/tls/c-server.key \
   --client-ca /etc/mqvpn/tls/c-clients.crt
 
-# Change only the fields you specify:
-mqvpn-server instance upsert --config /etc/mqvpn/server.json \
-  --name edge-c --listen 0.0.0.0:4436
+mqvpn-server instance upsert --config /etc/mqvpn/server.yaml \
+  --name customer-c --listen 0.0.0.0:4436
 
-# Remove one instance (the last remaining instance cannot be removed):
-mqvpn-server instance delete --config /etc/mqvpn/server.json \
-  --name edge-c
+mqvpn-server instance delete --config /etc/mqvpn/server.yaml \
+  --name customer-c
+
+mqvpn-server reload --pid <server-pid>
 ~~~
 
-Instance edits validate all referenced peer and TLS files, and write a
-complete new JSON by atomic rename, preserving the existing file owner
-and permissions (create the initial config with appropriate access rights). When the watcher
-is disabled, add --pid <daemon-pid> to upsert/delete to request SIGHUP.
-The CLI edits persistent configuration; it does not change Linux routes.
+The CLI validates referenced Peer/TLS files before an atomic config-file
+rewrite, preserving permissions and ownership. The daemon watches the YAML
+and referenced files, or handles SIGHUP. Invalid updates keep live instances
+running. Peer destination updates do not restart unchanged QUIC sessions;
+listener/TUN/TLS changes restart only their affected instance. A configuration
+with zero instances is currently invalid.
 
-**Reload behavior:**
+Optional top-level XDP YAML, in the same file as `instances`:
 
-- An unchanged instance retains its listener, TUN and established MPQUIC
-  sessions.
-- Peer destination-prefix changes with unchanged certificates take effect
-  **in-place**; existing QUIC connections remain up.
-- Removing a peer or rotating its certificate fingerprint disconnects
-  that peer's old session. New peers can connect without restarting the
-  instance.
-- Adding/removing instances starts/stops only those instances.
-- Changes to UDP listen address, TUN, TLS certificate/key/CA, path or
-  max-frame require a **targeted instance restart** and briefly interrupt
-  that instance's sessions. Other instances remain connected.
-- An invalid configuration is rejected before applying any changes. If an
-  OS-level resource failure happens during a targeted restart (for example,
-  a UDP port conflict), the manager attempts to restore the previous
-  instance and reports the error. That affected instance may experience
-  brief downtime; this is not a transactional zero-downtime socket swap.
-
-No automatic TUN/interface reconfiguration, multicast membership management,
-IP forwarding, firewall rules or Linux route modifications are performed by
-this CLI or daemon.
-
-## Single-instance server
-
-~~~bash
-sudo ./mqvpn-server \
-  --listen :4433 --tun mq0 \
-  --peers /etc/mqvpn/peers.json \
-  --cert /etc/mqvpn/server.crt \
-  --key /etc/mqvpn/server.key \
-  --client-ca /etc/mqvpn/ca.crt \
-  --log-level info --log-format text
+~~~yaml
+xdp:
+  interfaces: [enp1s0, enp2s0]
+  object: /usr/lib/mqvpn/xdp_mqvpn.o
+  mode: driver
 ~~~
 
-## Multi-instance server
+The XDP dispatcher maps **outer UDP destination ports** (4433, 4434, ...)
+to the shared NIC XDP program, without looking into encrypted VPN IP data.
+XDP is opt-in; see [docs/xdp-multi-instance.md](docs/xdp-multi-instance.md).
 
-[configs/server.instances.example.json](configs/server.instances.example.json)
-shows one process listening on separate UDP ports and attaching to separate
-pre-existing TUN devices. Each instance has its own certificates, peer
-directory and traffic forwarding domain.
+## Client / WAN binding
 
-~~~bash
-sudo ./mqvpn-server --config /etc/mqvpn/server.json \
-  --log-level debug --log-format json
-~~~
-
-Instance startup fails if the TUN is unavailable. The server stops all
-instances if one fails unexpectedly. Peer map updates can be hot-reloaded without closing
-unchanged client sessions.
-
-## Client (dual WAN)
+The independent client CLI remains unchanged: `--source-ip` and
+`--source-interface` select WAN1, while `--wan2-ip` and
+`--wan2-interface` select WAN2. Both client and server attach to
+**pre-existing, UP, IP-addressed** TUNs.
 
 ~~~bash
-sudo ./mqvpn-client \
+mqvpn-client \
   --url https://vpn.local:4433/.well-known/masque/ethernet/ \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
   --wan2-ip 198.51.100.10 --wan2-interface enp2s0 \
   --tun mq0 --max-frame 1160 \
   --ca /etc/mqvpn/ca.crt \
-  --cert /etc/mqvpn/client.crt --key /etc/mqvpn/client.key \
-  --log-level debug
+  --cert /etc/mqvpn/client.crt --key /etc/mqvpn/client.key
 ~~~
 
-WAN source-interface options constrain the **outer** QUIC UDP paths via
-SO_BINDTODEVICE; Linux network administration is responsible for valid WAN
-source routes. The *inner* VPN still uses normal destination-based routing.
+Multicast, inner traffic routing and firewall policy are controlled
+externally by Linux. Underlay WAN source routing is likewise outside mqvpn.
 
-The old --multicast-groups and --multicast-pps CLI flags are removed.
-Traffic is forwarded without inner multicast/packet rate policies.
+## Limitations
 
-## Current limitations
+- One TUN per instance; overlapping instances require OS VRF/netns isolation.
+- No automatic LAN-to-LAN L2 bridging, IGMP/MLD, mDNS reflector or NHRP.
+- No AF_XDP userspace UMEM/rings/Zero-Copy, no experimental performance claims.
+- QUIC DATAGRAM frames cannot exceed path MTU; default max Ethernet frame is
+  1160 bytes. Examples use an IPv4 TUN MTU of 1100; IPv6 requires >=1280
+  and sufficient underlay PMTU.
+- Full hardware I226/N200 P2MP multi-instance interoperability has not been
+  validated on a production host.
 
-- 1–2.5 Gbps Intel N200/I226 performance target is **not** measured.
-- AF_XDP Zero-Copy is not wired into Go; optional multi-port XDP control plane remains XDP_PASS unless an XSK consumer is registered.
-- QUIC DATAGRAM cannot transport Ethernet frames exceeding path PMTU;
-  default maximum frame=1160; default Linux TUN MTU in examples=1100.
-  IPv6 requires MTU >=1280 and sufficient QUIC underlay PMTU.
-- Full Cisco DMVPN/NHRP discovery/spoke-to-spoke direct paths, BGP and
-  dynamic peer learning are not implemented.
-- No LAN L2 bridging, no IGMP/MLD processing, no LAN mDNS reflector.
-- VPN-wide IP multicast/broadcast amplification can occur. This is a
-  shared IP overlay, not multicast isolation between sites.
-
-Protocol specifications:
-- https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
-- https://www.rfc-editor.org/rfc/rfc10069.html
+Protocols: https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
+and https://www.rfc-editor.org/rfc/rfc10069.html

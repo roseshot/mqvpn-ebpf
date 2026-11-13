@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 	"errors"
 	"fmt"
 	"hash"
@@ -54,8 +55,8 @@ func prepareServer(config ServerConfig)(preparedServer,error){
 		peersRaw,err:=os.ReadFile(spec.Peers)
 		if err!=nil{return preparedServer{},fmt.Errorf("instance %s peers: %w",spec.Name,err)}
 		var peerFile p2mp.FileConfig
-		if err:=json.Unmarshal(peersRaw,&peerFile);err!=nil{
-			return preparedServer{},fmt.Errorf("instance %s peers JSON: %w",spec.Name,err)
+		if err:=configfile.Decode(spec.Peers,peersRaw,&peerFile);err!=nil{
+			return preparedServer{},fmt.Errorf("instance %s peers YAML: %w",spec.Name,err)
 		}
 		peers,err:=p2mp.Parse(peerFile)
 		if err!=nil{return preparedServer{},fmt.Errorf("instance %s peers validation: %w",spec.Name,err)}

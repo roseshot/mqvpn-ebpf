@@ -1,0 +1,25 @@
+# Each instance is an isolated IP VPN LAN. Overlapping private addresses are valid.
+# Configure mq0 and mq1 in separate Linux VRFs externally if they share subnets.
+xdp:
+  interfaces: [enp1s0, enp2s0]
+  object: /usr/lib/mqvpn/xdp_mqvpn.o
+  mode: driver
+instances:
+  - name: customer-a
+    listen: "0.0.0.0:4433"
+    tun: mq0
+    peers: /etc/mqvpn/peers-a.yaml
+    path: /.well-known/masque/ethernet/
+    cert: /etc/mqvpn/tls/a-server.crt
+    key: /etc/mqvpn/tls/a-server.key
+    client_ca: /etc/mqvpn/tls/a-clients.crt
+    max_frame: 1160
+  - name: customer-b
+    listen: "0.0.0.0:4434"
+    tun: mq1
+    peers: /etc/mqvpn/peers-b.yaml
+    path: /.well-known/masque/ethernet/
+    cert: /etc/mqvpn/tls/b-server.crt
+    key: /etc/mqvpn/tls/b-server.key
+    client_ca: /etc/mqvpn/tls/b-clients.crt
+    max_frame: 1160

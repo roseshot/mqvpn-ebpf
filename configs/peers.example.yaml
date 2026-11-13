@@ -1,0 +1,12 @@
+# VPN instance customer-a (mq0). The destination prefixes are private to it.
+peers:
+  - id: customer-a-site-1
+    certificate_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    routes:
+      - 10.77.0.2/32
+      - 192.168.20.0/24
+  - id: customer-a-site-2
+    certificate_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    routes:
+      - 10.77.0.3/32
+      - 192.168.30.0/24
