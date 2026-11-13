@@ -1,52 +1,39 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"io"
 	"strconv"
 	"strings"
 
- "github.com/roseshot/mqvpn-ebpf/internal/xdp"
+	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
 // ServerInstance is an independent QUIC listener, TUN and peer namespace.
 // The daemon attaches to an existing TUN; IP/multicast/routes are configured
 // by external system administration, not by the daemon.
 type ServerInstance struct {
-	Name     string `json:"name"`
-	Listen   string `json:"listen"`
-	TUN      string `json:"tun"`
-	Peers    string `json:"peers"`
-	Path     string `json:"path,omitempty"`
-	Cert     string `json:"cert"`
-	Key      string `json:"key"`
-	ClientCA string `json:"client_ca"`
-	MaxFrame int    `json:"max_frame,omitempty"`
+	Name     string `json:"name" yaml:"name"`
+	Listen   string `json:"listen" yaml:"listen"`
+	TUN      string `json:"tun" yaml:"tun"`
+	Peers    string `json:"peers" yaml:"peers"`
+	Path     string `json:"path,omitempty" yaml:"path,omitempty"`
+	Cert     string `json:"cert" yaml:"cert"`
+	Key      string `json:"key" yaml:"key"`
+	ClientCA string `json:"client_ca" yaml:"client_ca"`
+	MaxFrame int    `json:"max_frame,omitempty" yaml:"max_frame,omitempty"`
 }
 
 type ServerConfig struct {
-	Instances []ServerInstance `json:"instances"`
-	XDP *xdp.Config `json:"xdp,omitempty"`
+	Instances []ServerInstance `json:"instances" yaml:"instances"`
+	XDP *xdp.Config `json:"xdp,omitempty" yaml:"xdp,omitempty"`
 }
 
 func loadServerConfig(path string) (ServerConfig,error) {
-	f,err:=os.Open(path)
-	if err!=nil{return ServerConfig{},fmt.Errorf("open server configuration: %w",err)}
-	defer f.Close()
 	var cfg ServerConfig
-	d:=json.NewDecoder(f)
-	d.DisallowUnknownFields()
-	if err:=d.Decode(&cfg);err!=nil{return ServerConfig{},fmt.Errorf("decode server configuration: %w",err)}
-	var extra any
-	if err:=d.Decode(&extra);err==nil {
-		return ServerConfig{},errors.New("multiple JSON documents in server configuration")
-	} else if !errors.Is(err,io.EOF) {
-		return ServerConfig{},fmt.Errorf("invalid trailing data in server configuration: %w",err)
-	}
+	if err:=configfile.Read(path,&cfg);err!=nil{return ServerConfig{},err}
 	if err:=cfg.Validate();err!=nil{return ServerConfig{},err}
 	return cfg,nil
 }

@@ -1,32 +1,32 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
-// runInstanceCLI edits the on-disk source-of-truth JSON configuration.
+// runInstanceCLI edits the on-disk source-of-truth YAML configuration.
 // Atomic rename prevents the watcher from observing partial JSON writes.
 // Existing file owner and permissions are preserved.
 // The watcher reloads changed files automatically; --pid requests immediate
 // reload via SIGHUP when using --reload-interval=0 or for faster application.
 func runInstanceCLI(args []string,logger *slog.Logger)error{
-	if len(args)==0{return errors.New("usage: mqvpn-server instance list|upsert|delete --config /path/to/server.json")}
+	if len(args)==0{return errors.New("usage: mqvpn-server instance list|upsert|delete --config /path/to/server.yaml")}
 	if logger==nil{logger=slog.Default()}
 	action:=args[0]
 	fs:=flag.NewFlagSet("instance "+action,flag.ContinueOnError)
-	configPath:=fs.String("config","","server JSON configuration path")
+	configPath:=fs.String("config","","server YAML configuration path")
 	name:=fs.String("name","","instance name (upsert/delete)")
 	listen:=fs.String("listen","","UDP bind address")
 	tunName:=fs.String("tun","","pre-existing TUN interface name")
-	peers:=fs.String("peers","","peer destination mapping JSON path")
+	peers:=fs.String("peers","","peer destination mapping YAML path")
 	cert:=fs.String("cert","","TLS server certificate path")
 	key:=fs.String("key","","TLS private key path")
 	ca:=fs.String("client-ca","","client CA certificate path")
@@ -42,7 +42,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	cfg,err:=loadServerConfig(*configPath)
 	if err!=nil{return err}
 	if action=="list"{
-		b,err:=json.MarshalIndent(cfg,"","  ")
+		b,err:=configfile.Marshal(*configPath,cfg)
 		if err!=nil{return err}
 		fmt.Println(string(b))
 		return nil
@@ -77,7 +77,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 		if updates["max-frame"]{inst.MaxFrame=*maxFrame}
 		if found{cfg.Instances[index]=inst}else{cfg.Instances=append(cfg.Instances,inst)}
 	}
-	// Validation includes the referenced cert/keys and peer JSON, not just
+	// Validation includes the referenced cert/keys and peer YAML, not just
 	// the shape of the configuration. Rejected edits leave the file intact.
 	if _,err:=prepareServer(cfg);err!=nil{return fmt.Errorf("refuse invalid instance edit: %w",err)}
 	if err:=writeServerConfigAtomic(*configPath,cfg);err!=nil{return err}
@@ -92,12 +92,8 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 }
 
 func writeServerConfigAtomic(path string,cfg ServerConfig)error{
-	if !strings.HasSuffix(strings.ToLower(path),".json"){
-		return fmt.Errorf("config path %q must end with .json",path)
-	}
-	data,err:=json.MarshalIndent(cfg,"","  ")
+	data,err:=configfile.Marshal(path,cfg)
 	if err!=nil{return err}
-	data=append(data,'\n')
 	dir:=filepath.Dir(path)
 	current,err:=os.Stat(path)
 	if err!=nil{return fmt.Errorf("stat existing config %s: %w",path,err)}

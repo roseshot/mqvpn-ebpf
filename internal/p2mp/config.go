@@ -3,24 +3,24 @@ package p2mp
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"strings"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
 // PeerConfig identifies an authenticated session and the destination prefixes
 // that should be delivered to it. Routes are NOT kernel routes or traffic ACLs.
 type PeerConfig struct {
-	ID string `json:"id"`
-	CertificateSHA256 string `json:"certificate_sha256"`
-	Routes []string `json:"routes"`
+	ID string `json:"id" yaml:"id"`
+	CertificateSHA256 string `json:"certificate_sha256" yaml:"certificate_sha256"`
+	Routes []string `json:"routes" yaml:"routes"`
 }
 
 type FileConfig struct {
-	Peers []PeerConfig `json:"peers"`
+	Peers []PeerConfig `json:"peers" yaml:"peers"`
 }
 
 type Rule struct {
@@ -34,11 +34,9 @@ type Config struct {
 }
 
 func Load(path string) (*Config,error) {
-	if path==""{return nil,errors.New("--peers JSON file is required to select destination sessions")}
-	data,err:=os.ReadFile(path)
-	if err!=nil{return nil,err}
+	if path==""{return nil,errors.New("--peers YAML file is required to select destination sessions")}
 	var file FileConfig
-	if err:=json.Unmarshal(data,&file);err!=nil{return nil,fmt.Errorf("parse peers JSON: %w",err)}
+	if err:=configfile.Read(path,&file);err!=nil{return nil,fmt.Errorf("load peers: %w",err)}
 	return Parse(file)
 }
 

@@ -38,37 +38,35 @@ sudo install -D -m 0644 bpf/xdp_mqvpn.o /usr/lib/mqvpn/xdp_mqvpn.o
 CGO_ENABLED=0 go build -mod=mod ./cmd/...
 ~~~
 
-Example multi-instance server.json:
+Example multi-instance server.yaml:
 
-~~~json
-{
-  "xdp": {
-    "interfaces": ["enp1s0", "enp2s0"],
-    "object": "/usr/lib/mqvpn/xdp_mqvpn.o",
-    "mode": "driver"
-  },
-  "instances": [
-    {
-      "name": "vpn-a",
-      "listen": "0.0.0.0:4433",
-      "tun": "mq0",
-      "peers": "/etc/mqvpn/peers-a.json",
-      "cert": "/etc/mqvpn/tls/a.crt",
-      "key": "/etc/mqvpn/tls/a.key",
-      "client_ca": "/etc/mqvpn/tls/client-ca.crt"
-    },
-    {
-      "name": "vpn-b",
-      "listen": "0.0.0.0:4434",
-      "tun": "mq1",
-      "peers": "/etc/mqvpn/peers-b.json",
-      "cert": "/etc/mqvpn/tls/b.crt",
-      "key": "/etc/mqvpn/tls/b.key",
-      "client_ca": "/etc/mqvpn/tls/client-ca.crt"
-    }
-  ]
-}
+~~~yaml
+xdp:
+  interfaces: [enp1s0, enp2s0]
+  object: /usr/lib/mqvpn/xdp_mqvpn.o
+  mode: driver
+
+instances:
+  - name: vpn-a
+    listen: "0.0.0.0:4433"
+    tun: mq0
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a.crt
+    key: /etc/mqvpn/tls/a.key
+    client_ca: /etc/mqvpn/tls/client-ca.crt
+  - name: vpn-b
+    listen: "0.0.0.0:4434"
+    tun: mq1
+    peers: /etc/mqvpn/peers-b.yaml
+    cert: /etc/mqvpn/tls/b.crt
+    key: /etc/mqvpn/tls/b.key
+    client_ca: /etc/mqvpn/tls/client-ca.crt
 ~~~
+
+XDP sees only the *outer UDP port*, so even when vpn-a and vpn-b
+both carry 10.77.0.0/24 or 192.168.20.0/24 internally, their XDP
+port bindings remain independent. Linux host routing for overlapping
+TUN subnets should be isolated in externally managed VRFs.
 
 Omit xdp completely to preserve existing UDP-only behavior. The dispatcher
 is **opt-in**; test on dedicated NICs because another attached XDP program
