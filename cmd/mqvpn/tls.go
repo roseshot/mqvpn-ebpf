@@ -1,0 +1,25 @@
+package main
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"os"
+)
+
+func certPool(pemFile string) (*x509.CertPool, error) {
+	if pemFile == "" { return nil, errors.New("a CA certificate file is required") }
+	b, err := os.ReadFile(pemFile)
+	if err != nil { return nil, fmt.Errorf("read CA %s: %w", pemFile, err) }
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(b) { return nil, fmt.Errorf("no PEM certificates in %s", pemFile) }
+	return pool, nil
+}
+
+func keyPair(certFile, keyFile string) (tls.Certificate, error) {
+	if certFile == "" || keyFile == "" { return tls.Certificate{}, errors.New("both --cert and --key are required") }
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil { return tls.Certificate{}, fmt.Errorf("load TLS key pair: %w", err) }
+	return cert, nil
+}
