@@ -1,111 +1,109 @@
 # mqvpn-ebpf
 
-Experimental **MASQUE CONNECT-ETHERNET** over HTTP/3 QUIC DATAGRAM and
-Multipath QUIC. Linux server supports multiple independent, route-based,
-point-to-multipoint (P2MP) VPN LANs within one daemon. Every instance has
-one **preconfigured IP-addressed TUN**, one UDP listener, its own authenticated
-clients, and an independent Peer → destination-prefix table.
+Go, `CGO_ENABLED=0`, Linux: **MASQUE CONNECT-ETHERNET** over encrypted
+HTTP/3 DATAGRAM + MPQUIC. One Server daemon exposes **ONE UDP listener**
+to many independent, isolated route-based P2MP VPN LANs.
 
-**Configuration is YAML by default** (`.yaml` / `.yml`). Existing `.json`
-server and peer configuration files remain readable for migration.
+**Configuration format: YAML only.** Server and Peer configuration must be
+`.yaml` or `.yml`. The server has no JSON loader, no single-instance CLI
+fallback, and no combined `mqvpn server|client` executable. Build the
+independent `mqvpn-server` and `mqvpn-client` commands.
 
-## Independent instances, including overlapping subnets
+## Shared UDP listener and per-instance TLS SNI
 
-Two VPN LANs may both use **10.77.0.0/24** for their tunnel addresses and
-**192.168.20.0/24** for their site LANs:
+Each instance has:
+- a unique `server_name` (DNS name used as **TLS SNI**, not an IP literal);
+- one externally configured IP-addressed TUN;
+- its own TLS certificate, verified client CA and Peer destination map;
+- its own P2MP sessions, so overlaps between instances are allowed.
 
-| Instance | TUN | Underlay port | VPN prefix | Remote LAN prefix |
-| --- | --- | --- | --- | --- |
-| customer-a | mq0 | UDP/4433 | 10.77.0.0/24 | 192.168.20.0/24 |
-| customer-b | mq1 | UDP/4434 | 10.77.0.0/24 | 192.168.20.0/24 |
+All instances share the **top-level `listen: "0.0.0.0:4433"`**. The server
+accepts QUIC handshakes on this one UDP socket. TLS SNI determines which
+instance certificate and client CA are used; the same SNI also selects
+which P2MP hub handles the CONNECT-ETHERNET request. HTTP/3 authority must
+match the SNI. Unknown or missing SNI is refused; there is no default
+tenant that could accidentally receive another VPN's traffic.
 
-Each instance owns its own destination lookup and session set; the same IP
-means a **different Peer depending on the instance**. Neither the P2MP hub
-nor XDP shares inner prefix mappings across instances. Duplicate TUN names
-or UDP listen ports remain prohibited. Within *one* instance, overlapping
-destinations for two different Peers remain invalid because the next hop
-would be ambiguous.
+~~~yaml
+# /etc/mqvpn/server.yaml
+listen: "0.0.0.0:4433"
+instances:
+  - name: customer-a
+    server_name: customer-a.vpn.example.com
+    tun: mq0
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a.crt
+    key: /etc/mqvpn/tls/a.key
+    client_ca: /etc/mqvpn/tls/a-clients.crt
 
-**Linux must separately isolate overlapping routing domains.** Putting two
-identical subnet routes into one main routing table does not create isolated
-VPNs. Configure a distinct Linux **VRF** (or network namespace) for each
-TUN, using ordinary route-based tables. mqvpn does **not** create VRFs,
-TUN devices, IP addresses, routes, multicast routes, firewall or policy rules.
-See [VRF setup and isolation](docs/overlapping-subnets-vrf.md).
+  - name: customer-b
+    server_name: customer-b.vpn.example.com
+    tun: mq1
+    peers: /etc/mqvpn/peers-b.yaml
+    cert: /etc/mqvpn/tls/b.crt
+    key: /etc/mqvpn/tls/b.key
+    client_ca: /etc/mqvpn/tls/b-clients.crt
+~~~
 
-This is an IP VPN LAN on TUN, not an Ethernet bridge. VPN IP multicast /
-limited broadcast entering the TUN is replicated within that **one
-instance**; physical LAN L2 broadcasts are not bridged. No daemon packet
-ACLs, mDNS filters, PPS limits or content inspection are imposed.
+Both DNS hostnames must resolve to the **same server IP**; both certificates
+must have their respective `server_name` in DNS SAN. Per-instance mTLS
+client CAs and Peer certificate fingerprint lists are kept separate.
+Clients target different hostnames but the **same UDP port**:
 
-## Compile without CGO
+~~~bash
+mqvpn-client \
+  --url https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --tun mq0 --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --ca /etc/mqvpn/a-ca.crt \
+  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 
-Linux amd64, Go 1.26+, /dev/net/tun. Preconfigure the TUN and its routes
-externally before starting. Runtime TLS 1.3/QUIC and the Go XDP control
-plane do not require CGO.
+mqvpn-client \
+  --url https://customer-b.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --tun mq0 --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --ca /etc/mqvpn/b-ca.crt \
+  --cert /etc/mqvpn/b-client.crt --key /etc/mqvpn/b-client.key
+~~~
+
+On separate client hosts, local `mq0` names may be the same. If both
+VPN instances are deployed on one client Linux host, use separate local
+TUNs and network routing domains as appropriate.
+
+## Overlapping subnets and host routing
+
+`customer-a` and `customer-b` may both use `10.77.0.0/24` tunnel
+addresses and `192.168.20.0/24` routed LANs. They have separate
+`mq0` / `mq1` interfaces and **separate session destination tables**.
+Their respective Peer YAML files may specify identical `routes`:
+
+~~~yaml
+peers:
+  - id: site-1
+    certificate_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    routes: [10.77.0.2/32, 192.168.20.0/24]
+~~~
+
+These Peer `routes` select the QUIC session from **within** the
+corresponding VPN instance; they do not modify Linux routes or filter
+inner IP packets. Different clients inside the *same instance* cannot
+claim ambiguous overlapping destination prefixes.
+
+Linux overlapping subnets must be separated by VRF or network namespace,
+configured **outside mqvpn**. See
+[VRF route-based setup](docs/overlapping-subnets-vrf.md). The daemon never
+creates TUN devices, changes IP addresses, routes, multicast memberships,
+`ip rule`, firewall or routing tables.
+
+This remains a Layer-3 IP VPN LAN, not an Ethernet bridge. IP broadcast /
+multicast traffic entering one instance's TUN is replicated only within
+that instance. Physical LAN Ethernet broadcasts are not bridged, and
+the daemon imposes no inner traffic ACLs, mDNS filters or PPS limits.
+
+## Server CLI, YAML hot reload
 
 ~~~bash
 CGO_ENABLED=0 go build -mod=mod -o mqvpn-server ./cmd/mqvpn-server
 CGO_ENABLED=0 go build -mod=mod -o mqvpn-client ./cmd/mqvpn-client
-CGO_ENABLED=0 go test -mod=mod ./...
-~~~
 
-Optional experimental XDP dispatcher is compiled separately with Clang:
-`make bpf`. It currently provides dynamic multi-instance UDP port maps,
-**not** an AF_XDP zero-copy packet backend. XSKMAP is intentionally empty
-and the established transport still uses Linux UDP Socket. The N200/I226
-1–2.5 Gbps goal has not been benchmarked.
-
-## Multi-instance Server YAML
-
-See [configs/server.instances.example.yaml](configs/server.instances.example.yaml).
-
-~~~yaml
-instances:
-  - name: customer-a
-    listen: "0.0.0.0:4433"
-    tun: mq0
-    peers: /etc/mqvpn/peers-a.yaml
-    cert: /etc/mqvpn/tls/a-server.crt
-    key: /etc/mqvpn/tls/a-server.key
-    client_ca: /etc/mqvpn/tls/a-clients.crt
-
-  - name: customer-b
-    listen: "0.0.0.0:4434"
-    tun: mq1
-    peers: /etc/mqvpn/peers-b.yaml
-    cert: /etc/mqvpn/tls/b-server.crt
-    key: /etc/mqvpn/tls/b-server.key
-    client_ca: /etc/mqvpn/tls/b-clients.crt
-~~~
-
-Peer examples (the second intentionally overlaps with the first):
-[configs/peers.example.yaml](configs/peers.example.yaml) and
-[configs/peers-b.example.yaml](configs/peers-b.example.yaml).
-
-~~~yaml
-# /etc/mqvpn/peers-a.yaml
-peers:
-  - id: site-a
-    certificate_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    routes:
-      - 10.77.0.2/32
-      - 192.168.20.0/24
-~~~
-
-`routes` is **only** the destination IP → MPQUIC session selector inside
-this VPN instance, not a Linux route, a source-IP ACL, or a global prefix
-registry. mTLS client certificate fingerprints distinguish client sessions.
-All configured prefix maps stay private to the instance.
-
-## YAML validation, CLI edits and hot reload
-
-Strict YAML loading rejects unknown keys, duplicate keys, multiple documents,
-malformed types and invalid Peer maps. Legacy JSON uses strict field checks.
-Use `.yaml` or `.yml` for new deployments; an existing `.json` file can
-still be managed without changing its format.
-
-~~~bash
 mqvpn-server validate --config /etc/mqvpn/server.yaml
 
 mqvpn-server --config /etc/mqvpn/server.yaml \
@@ -114,29 +112,39 @@ mqvpn-server --config /etc/mqvpn/server.yaml \
 mqvpn-server instance list --config /etc/mqvpn/server.yaml
 
 mqvpn-server instance upsert --config /etc/mqvpn/server.yaml \
-  --name customer-c --listen 0.0.0.0:4435 --tun mq2 \
-  --peers /etc/mqvpn/peers-c.yaml \
-  --cert /etc/mqvpn/tls/c-server.crt \
-  --key /etc/mqvpn/tls/c-server.key \
+  --name customer-c --server-name customer-c.vpn.example.com \
+  --tun mq2 --peers /etc/mqvpn/peers-c.yaml \
+  --cert /etc/mqvpn/tls/c.crt --key /etc/mqvpn/tls/c.key \
   --client-ca /etc/mqvpn/tls/c-clients.crt
-
-mqvpn-server instance upsert --config /etc/mqvpn/server.yaml \
-  --name customer-c --listen 0.0.0.0:4436
 
 mqvpn-server instance delete --config /etc/mqvpn/server.yaml \
   --name customer-c
 
-mqvpn-server reload --pid <server-pid>
+mqvpn-server reload --pid <daemon-pid>
 ~~~
 
-The CLI validates referenced Peer/TLS files before an atomic config-file
-rewrite, preserving permissions and ownership. The daemon watches the YAML
-and referenced files, or handles SIGHUP. Invalid updates keep live instances
-running. Peer destination updates do not restart unchanged QUIC sessions;
-listener/TUN/TLS changes restart only their affected instance. A configuration
-with zero instances is currently invalid.
+CLI edits YAML using an atomic rewrite with original owner/mode preserved.
+YAML validation rejects unknown fields/duplicate keys/multiple documents,
+invalid certificates and SNI collisions. A failed parse or certificate
+check keeps running instances active.
 
-Optional top-level XDP YAML, in the same file as `instances`:
+**Hot reload preserves the ONE shared UDP socket.** Adding/removing
+instances updates the SNI registry and starts/stops only the affected TUN
+hub. Peer destination-prefix updates preserve unchanged MPQUIC sessions.
+Rotating an instance's TLS identity, TUN or max-frame restarts only
+that hub, leaving the shared UDP socket and other instances running.
+Existing session closures follow the hub's lifecycle. **Changing the
+top-level `listen` address requires restarting the daemon** (a UDP socket
+cannot safely be rebound in place).
+
+## Optional XDP (not AF_XDP Zero-Copy)
+
+If enabled, one XDP dispatcher per physical WAN NIC recognizes the **one
+shared outer UDP port**, not any private VPN subnet or tenant's identity.
+HTTP/3 QUIC/TLS/SNI performs tenant selection after the handshake.
+The existing XSKMAP is intentionally empty, so matched packets use
+`XDP_PASS` into the working kernel UDP socket. AF_XDP UMEM/rings and
+a QUIC PacketConn replacement are not implemented.
 
 ~~~yaml
 xdp:
@@ -145,40 +153,19 @@ xdp:
   mode: driver
 ~~~
 
-The XDP dispatcher maps **outer UDP destination ports** (4433, 4434, ...)
-to the shared NIC XDP program, without looking into encrypted VPN IP data.
-XDP is opt-in; see [docs/xdp-multi-instance.md](docs/xdp-multi-instance.md).
-
-## Client / WAN binding
-
-The independent client CLI remains unchanged: `--source-ip` and
-`--source-interface` select WAN1, while `--wan2-ip` and
-`--wan2-interface` select WAN2. Both client and server attach to
-**pre-existing, UP, IP-addressed** TUNs.
-
-~~~bash
-mqvpn-client \
-  --url https://vpn.local:4433/.well-known/masque/ethernet/ \
-  --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --wan2-ip 198.51.100.10 --wan2-interface enp2s0 \
-  --tun mq0 --max-frame 1160 \
-  --ca /etc/mqvpn/ca.crt \
-  --cert /etc/mqvpn/client.crt --key /etc/mqvpn/client.key
-~~~
-
-Multicast, inner traffic routing and firewall policy are controlled
-externally by Linux. Underlay WAN source routing is likewise outside mqvpn.
+Install `clang`, `llvm`, `libbpf-dev` and `linux-libc-dev` to run
+`make bpf`; production Go binaries remain CGO-free.
+See [XDP control plane](docs/xdp-multi-instance.md).
 
 ## Limitations
 
-- One TUN per instance; overlapping instances require OS VRF/netns isolation.
-- No automatic LAN-to-LAN L2 bridging, IGMP/MLD, mDNS reflector or NHRP.
-- No AF_XDP userspace UMEM/rings/Zero-Copy, no experimental performance claims.
-- QUIC DATAGRAM frames cannot exceed path MTU; default max Ethernet frame is
-  1160 bytes. Examples use an IPv4 TUN MTU of 1100; IPv6 requires >=1280
-  and sufficient underlay PMTU.
-- Full hardware I226/N200 P2MP multi-instance interoperability has not been
-  validated on a production host.
+- SNI-based tenant demux requires DNS, per-instance server SAN, and
+  unique `server_name`. Distinct TLS identities can share one UDP port.
+- Peer session selection is static; hot reload does not implement NHRP.
+- IPv4 TUN example MTU: 1100; CONNECT-ETHERNET over QUIC DATAGRAM cannot
+  fragment oversized Ethernet frames. Standard IPv6 needs >=1280 and
+  sufficient underlay PMTU.
+- No LAN L2 bridge or mDNS reflector, no full AF_XDP Zero-Copy backend,
+  no measured N200/I226 throughput, no real multi-tenant E2E test yet.
 
-Protocols: https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
-and https://www.rfc-editor.org/rfc/rfc10069.html
+Protocol reference: https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/

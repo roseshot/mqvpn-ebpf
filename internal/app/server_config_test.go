@@ -2,37 +2,61 @@ package app
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func sampleInstance(name,listen,tun string)ServerInstance {
-	return ServerInstance{Name:name,Listen:listen,TUN:tun,Peers:"peers.json",Cert:"s.crt",Key:"s.key",ClientCA:"ca.crt"}
-}
-
-func TestServerMultiInstanceConfig(t *testing.T){
-	cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("siteA",":4433","mq0"),sampleInstance("siteB",":4434","mq1")}}
-	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
-	if cfg.Instances[0].Path!=defaultPath || cfg.Instances[1].MaxFrame!=1160{t.Fatal("wrong defaults",cfg)}
-}
-func TestDuplicateTUNAndPortRejected(t *testing.T){
-	a:=sampleInstance("a",":4433","mq0")
-	for _,b:=range []ServerInstance{
-		sampleInstance("b",":4434","mq0"),
-		sampleInstance("b","0.0.0.0:4433","mq1"),
-		sampleInstance("a",":4434","mq1"),
-	}{
-		cfg:=ServerConfig{Instances:[]ServerInstance{a,b}}
-		if err:=cfg.Validate();err==nil{t.Fatalf("accepted duplicate %+v",b)}
+func sampleInstance(name, serverName, tunName string) ServerInstance {
+	return ServerInstance{
+		Name: name, ServerName: serverName, TUN: tunName,
+		Peers: "peers.yaml", Cert: "server.crt", Key: "server.key", ClientCA: "ca.crt",
 	}
 }
-func TestServerConfigMissingField(t *testing.T){
-	cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("a",":4433","mq0")}}
-	cfg.Instances[0].ClientCA=""
-	if err:=cfg.Validate();err==nil||!strings.Contains(err.Error(),"client_ca"){t.Fatal(err)}
+
+func TestSharedUDPConfigAndDefaults(t *testing.T) {
+	cfg := ServerConfig{
+		Listen: "0.0.0.0:4433",
+		Instances: []ServerInstance{
+			sampleInstance("a", "a.example.test", "mq0"),
+			sampleInstance("b", "b.example.test", "mq1"),
+		},
+	}
+	if err := cfg.Validate(); err != nil { t.Fatal(err) }
+	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 1160 {
+		t.Fatal("default path/frame missing")
+	}
 }
-func TestReadServerConfigRejectsUnknown(t *testing.T){
-	path:=t.TempDir()+"/instances.json"
-	if err:=os.WriteFile(path,[]byte(`{"instances":[{"name":"a","listen":":4433","tun":"mq0","peers":"p","cert":"c","key":"k","client_ca":"ca","unknown":true}]}`),0600);err!=nil{t.Fatal(err)}
-	if _,err:=loadServerConfig(path);err==nil{t.Fatal("unknown key accepted")}
+
+func TestDuplicateSNIAndTUNRejected(t *testing.T) {
+	first := sampleInstance("a", "a.example.test", "mq0")
+	for _, second := range []ServerInstance{
+		sampleInstance("b", "b.example.test", "mq0"),
+		sampleInstance("b", "a.example.test", "mq1"),
+		sampleInstance("a", "b.example.test", "mq1"),
+	} {
+		cfg := ServerConfig{Listen: ":4433", Instances: []ServerInstance{first, second}}
+		if err := cfg.Validate(); err == nil { t.Fatalf("accepted conflicting instance %+v", second) }
+	}
+}
+func TestMissingSharedPortOrSNIRejected(t *testing.T) {
+	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("a", "a.example.test", "mq0")}}
+	if err := cfg.Validate(); err == nil { t.Fatal("missing shared listen accepted") }
+	cfg.Listen = "0.0.0.0:4433"
+	cfg.Instances[0].ServerName = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "server_name") { t.Fatal(err) }
+	for _, s := range []string{"10.77.0.1", "*.vpn.test", "a", "a..test", "-a.test", "a.test."} {
+		if err := validateSNI(s); err == nil { t.Fatalf("bad SNI accepted %q", s) }
+	}
+}
+
+func TestLegacyPerInstanceListenerAndJSONRejected(t *testing.T) {
+	dir := t.TempDir()
+	for path, text := range map[string]string{
+		filepath.Join(dir, "bad.yaml"): "listen: ':4433'\ninstances:\n  - name: a\n    server_name: a.example.test\n    listen: ':4434'\n    tun: mq0\n    peers: p.yaml\n    cert: a.crt\n    key: a.key\n    client_ca: ca.crt\n",
+		filepath.Join(dir, "old.json"): `{"listen":":4433","instances":[]}`,
+	} {
+		if err := os.WriteFile(path, []byte(text), 0600); err != nil { t.Fatal(err) }
+		if _, err := loadServerConfig(path); err == nil { t.Fatalf("legacy file accepted %q", path) }
+	}
 }

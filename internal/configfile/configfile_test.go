@@ -1,50 +1,49 @@
 package configfile
 
 import (
-    "strings"
-    "testing"
+	"strings"
+	"testing"
 )
 
-type cfg struct {
-    Name string `yaml:"name" json:"name"`
-    Routes []string `yaml:"routes" json:"routes"`
+type sample struct {
+	Name string   `yaml:"name"`
+	Routes []string `yaml:"routes"`
 }
 
-func TestDecodeYAMLAndLegacyJSON(t *testing.T){
-    for _,tc:=range []struct{path,body string}{
-        {"peer.yaml","name: site-a\nroutes:\n  - 192.168.20.0/24\n"},
-        {"peer.yml","name: site-b\nroutes: [192.168.20.0/24]\n"},
-        {"peer.json",`{"name":"site-c","routes":["192.168.20.0/24"]}`},
-    }{
-        var got cfg
-        if err:=Decode(tc.path,[]byte(tc.body),&got);err!=nil{t.Fatalf("%s: %v",tc.path,err)}
-        if got.Name==""||len(got.Routes)!=1{t.Fatalf("bad decode: %+v",got)}
-        out,err:=Marshal(tc.path,got)
-        if err!=nil{t.Fatal(err)}
-        var back cfg
-        if err:=Decode(tc.path,out,&back);err!=nil||back.Name!=got.Name{t.Fatalf("roundtrip: %v",err)}
-    }
+func TestYAMLOnlyRoundTrip(t *testing.T) {
+	for _, path := range []string{"config.yaml", "config.yml"} {
+		in := sample{Name: ":4433", Routes: []string{"192.168.20.0/24"}}
+		b, err := Marshal(path, in)
+		if err != nil { t.Fatal(err) }
+		var got sample
+		if err := Decode(path, b, &got); err != nil { t.Fatal(err) }
+		if got.Name != in.Name || got.Routes[0] != in.Routes[0] { t.Fatalf("%+v", got) }
+	}
 }
-func TestRejectUnknownFieldsMultipleDocsAndMalformed(t *testing.T){
-    for _,tc:=range []struct{path,body string}{
-        {"server.yaml","name: site-a\nunknown: forbidden\n"},
-        {"server.yaml","name: first\n---\nname: second\n"},
-        {"server.yaml","name: [not a scalar]\n"},
-        {"server.yaml","name: x\nname: y\n"},
-        {"server.json",`{"name":"x","unexpected":"y"}`},
-        {"server.json",`{"name":"x"}{"name":"y"}`},
-        {"server.yaml",""},
-    }{
-        var got cfg
-        if err:=Decode(tc.path,[]byte(tc.body),&got);err==nil{t.Fatalf("accepted %s %q",tc.path,tc.body)}
-    }
-    if err:=Decode("unknown.toml",[]byte("name: x"),&cfg{});err==nil{t.Fatal("unsupported format accepted")}
-    if _,err:=Marshal("unknown.txt",cfg{});err==nil{t.Fatal("invalid output extension accepted")}
-}
-func TestYAMLQuotedStrings(t *testing.T){
-    out,err:=Marshal("config.yaml",cfg{Name:":4433",Routes:[]string{"0.0.0.0/0"}})
-    if err!=nil{t.Fatal(err)}
-    if !strings.Contains(string(out),"4433"){t.Fatal(string(out))}
-    var back cfg
-    if err:=Decode("config.yaml",out,&back);err!=nil||back.Name!=":4433"{t.Fatalf("failed: %+v, %v",back,err)}
+
+func TestRejectLegacyJSONAndInvalidYAML(t *testing.T) {
+	if err := Decode("server.json", []byte("name: x"), &sample{}); err == nil {
+		t.Fatal("legacy JSON extension accepted")
+	}
+	if _, err := Marshal("server.json", sample{}); err == nil { t.Fatal("JSON output accepted") }
+	for _, text := range []string{
+		"",
+		"name: x
+unknown: forbidden
+",
+		"name: x
+name: duplicate
+",
+		"name: first
+---
+name: second
+",
+		"name: [not-a-string]
+",
+	} {
+		var got sample
+		if err := Decode("server.yaml", []byte(text), &got); err == nil { t.Fatalf("accepted %q", text) }
+	}
+	out, err := Marshal("server.yaml", sample{Name: ":4433"})
+	if err != nil || !strings.Contains(string(out), "4433") { t.Fatalf("%s: %v", out, err) }
 }

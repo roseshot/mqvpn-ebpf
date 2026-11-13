@@ -1,35 +1,46 @@
-# Multi-instance XDP dispatcher — opt-in control plane
+# Shared-port XDP dispatcher
 
-One XDP program per physical WAN NIC. Linux UDP destination port selects
-the server VPN instance. NIC RX queue index selects the AF_XDP socket.
-Those are **different keys**; do not put instance IDs into XSKMAP.
+All Server VPN instances now share **one UDP/QUIC listener**, e.g. :4433.
+The BPF instance_ports map registers the **single shared outer UDP port**.
+XDP has no visibility into TLS SNI or encrypted inner VPN traffic.
 
-    Intel I226 / igc NIC
-       |
-       +--- shared xdp_mqvpn dispatcher
-             |
-             +--- instance_ports: HASH [u16 host-order UDP dest port] -> u8
-             |       4433 -> edge-a, 4434 -> edge-b, 4435 -> edge-c
-             |
-             +--- xsks_map: XSKMAP [u32 RX queue index] -> XSK socket fd
-                     |
-                     +--- default EMPTY -> always XDP_PASS
-                     +--- future working AF_XDP socket -> XDP_REDIRECT
+    Intel I226 WAN NIC
+      -> XDP: UDP dest 4433 registered?
+           -> no XSK bound: XDP_PASS -> shared kernel UDP socket
+           -> future XSK: XDP_REDIRECT to socket bound to RX queue
+      -> one QUIC server
+           -> TLS SNI customer-a.vpn.example.com -> customer-a TUN mq0
+           -> TLS SNI customer-b.vpn.example.com -> customer-b TUN mq1
 
-The Go package internal/xdp uses cilium/ebpf (no CGO) and exposes a
-Controller to attach/detach NIC programs and to replace all desired
-instance listener UDP ports on configuration hot reload. Adding or deleting
-an instance does not require reattaching XDP. Other traffic, including
-ARP, fragmented IPv4, IPv6 extension headers and non-instance UDP packets,
-passes to the kernel stack without modification.
+There is one native/generic XDP program per configured physical NIC, one
+outer-port map and one XSKMAP keyed by RX queue. XDP does not demux by VPN
+Instance; that is done by TLS SNI and HTTP/3 in Go. Hot-adding a VPN
+instance on the same shared UDP port does not change the XDP port map.
 
-**The working transport remains the Linux UDP Socket backend.**
-There is currently NO AF_XDP userspace socket, UMEM, RX/TX rings, raw UDP
-checksum handling, or mp-quic-go PacketConn integration. Therefore XSKMAP
-is never populated by the running application. The explicit BPF lookup of
-XSKMAP prevents accidental packet redirection to an absent consumer.
+Enable through the top-level Server YAML:
 
-### Build and enable
+~~~yaml
+listen: "0.0.0.0:4433"
+xdp:
+  interfaces: [enp1s0, enp2s0]
+  object: /usr/lib/mqvpn/xdp_mqvpn.o
+  mode: driver
+instances:
+  - name: vpn-a
+    server_name: vpn-a.example.com
+    tun: mq0
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a.crt
+    key: /etc/mqvpn/tls/a.key
+    client_ca: /etc/mqvpn/tls/a-ca.crt
+  - name: vpn-b
+    server_name: vpn-b.example.com
+    tun: mq1
+    peers: /etc/mqvpn/peers-b.yaml
+    cert: /etc/mqvpn/tls/b.crt
+    key: /etc/mqvpn/tls/b.key
+    client_ca: /etc/mqvpn/tls/b-ca.crt
+~~~
 
 ~~~bash
 sudo apt-get install clang llvm libbpf-dev linux-libc-dev
@@ -38,53 +49,8 @@ sudo install -D -m 0644 bpf/xdp_mqvpn.o /usr/lib/mqvpn/xdp_mqvpn.o
 CGO_ENABLED=0 go build -mod=mod ./cmd/...
 ~~~
 
-Example multi-instance server.yaml:
+**No AF_XDP RX/TX, UMEM or zero-copy backend exists today.** The program
+keeps XSKMAP empty and returns XDP_PASS. Registering an XSK prematurely
+would divert packets away from the working QUIC UDP socket.
 
-~~~yaml
-xdp:
-  interfaces: [enp1s0, enp2s0]
-  object: /usr/lib/mqvpn/xdp_mqvpn.o
-  mode: driver
-
-instances:
-  - name: vpn-a
-    listen: "0.0.0.0:4433"
-    tun: mq0
-    peers: /etc/mqvpn/peers-a.yaml
-    cert: /etc/mqvpn/tls/a.crt
-    key: /etc/mqvpn/tls/a.key
-    client_ca: /etc/mqvpn/tls/client-ca.crt
-  - name: vpn-b
-    listen: "0.0.0.0:4434"
-    tun: mq1
-    peers: /etc/mqvpn/peers-b.yaml
-    cert: /etc/mqvpn/tls/b.crt
-    key: /etc/mqvpn/tls/b.key
-    client_ca: /etc/mqvpn/tls/client-ca.crt
-~~~
-
-XDP sees only the *outer UDP port*, so even when vpn-a and vpn-b
-both carry 10.77.0.0/24 or 192.168.20.0/24 internally, their XDP
-port bindings remain independent. Linux host routing for overlapping
-TUN subnets should be isolated in externally managed VRFs.
-
-Omit xdp completely to preserve existing UDP-only behavior. The dispatcher
-is **opt-in**; test on dedicated NICs because another attached XDP program
-may conflict with it. Program ELF/mode replacement on an attached NIC needs
-a daemon restart, while adding/removing instance UDP ports is hot-reloadable.
-
-### Limitations and future work
-
-- Go AF_XDP socket creation, UMEM and ring allocation.
-- Proper AF_XDP RX queue ownership and negotiated zero-copy verification.
-- Raw WAN Ethernet/IP/UDP TX, checksums, neighbor and PMTU handling.
-- MPQUIC PacketConn integration and per-instance QUIC demultiplexing.
-- Real N200/I226 performance measurements.
-
-Do not populate the XSKMAP without all of the above. A registered but
-unserviced XSK will divert encrypted QUIC traffic away from kernel UDP
-and interrupt the VPN. XDP pass-through by itself is not acceleration.
-
-References:
-https://docs.kernel.org/networking/af_xdp.html
-https://github.com/cilium/ebpf
+No live N200/I226 throughput claim is made.

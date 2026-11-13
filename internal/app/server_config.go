@@ -7,67 +7,87 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
-// ServerInstance is an independent QUIC listener, TUN and peer namespace.
-// The daemon attaches to an existing TUN; IP/multicast/routes are configured
-// by external system administration, not by the daemon.
+// ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
+// All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
 type ServerInstance struct {
-	Name     string `json:"name" yaml:"name"`
-	Listen   string `json:"listen" yaml:"listen"`
-	TUN      string `json:"tun" yaml:"tun"`
-	Peers    string `json:"peers" yaml:"peers"`
-	Path     string `json:"path,omitempty" yaml:"path,omitempty"`
-	Cert     string `json:"cert" yaml:"cert"`
-	Key      string `json:"key" yaml:"key"`
-	ClientCA string `json:"client_ca" yaml:"client_ca"`
-	MaxFrame int    `json:"max_frame,omitempty" yaml:"max_frame,omitempty"`
+	Name       string `yaml:"name"`
+	ServerName string `yaml:"server_name"`
+	TUN        string `yaml:"tun"`
+	Peers      string `yaml:"peers"`
+	Path       string `yaml:"path,omitempty"`
+	Cert       string `yaml:"cert"`
+	Key        string `yaml:"key"`
+	ClientCA   string `yaml:"client_ca"`
+	MaxFrame   int    `yaml:"max_frame,omitempty"`
 }
 
 type ServerConfig struct {
-	Instances []ServerInstance `json:"instances" yaml:"instances"`
-	XDP *xdp.Config `json:"xdp,omitempty" yaml:"xdp,omitempty"`
+	Listen    string           `yaml:"listen"`
+	XDP       *xdp.Config      `yaml:"xdp,omitempty"`
+	Instances []ServerInstance `yaml:"instances"`
 }
 
-func loadServerConfig(path string) (ServerConfig,error) {
+func loadServerConfig(path string) (ServerConfig, error) {
 	var cfg ServerConfig
-	if err:=configfile.Read(path,&cfg);err!=nil{return ServerConfig{},err}
-	if err:=cfg.Validate();err!=nil{return ServerConfig{},err}
-	return cfg,nil
+	if err := configfile.Read(path, &cfg); err != nil { return ServerConfig{}, err }
+	if err := cfg.Validate(); err != nil { return ServerConfig{}, err }
+	return cfg, nil
 }
 
-func (c *ServerConfig)Validate()error {
+func (c *ServerConfig) Validate() error {
+	if c.Listen == "" { return errors.New("shared listen UDP address is required") }
+	_, port, err := net.SplitHostPort(c.Listen)
+	if err != nil { return fmt.Errorf("invalid shared listen %q: %w", c.Listen, err) }
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 { return fmt.Errorf("invalid shared listen UDP port %q", port) }
 	if c.XDP != nil {
-		normalized,err:=c.XDP.Normalize()
-		if err!=nil{return fmt.Errorf("XDP configuration: %w",err)}
-		c.XDP=&normalized
+		normalized, err := c.XDP.Normalize()
+		if err != nil { return fmt.Errorf("XDP: %w", err) }
+		c.XDP = &normalized
 	}
-	if len(c.Instances)==0{return errors.New("server requires at least one instance")}
-	if len(c.Instances)>128{return errors.New("server instance count exceeds 128")}
-	names:=map[string]bool{}
-	tuns:=map[string]bool{}
-	ports:=map[string]bool{}
-	for i:=range c.Instances {
-		s:=&c.Instances[i]
-		if s.Path==""{s.Path=defaultPath}
-		if s.MaxFrame==0{s.MaxFrame=1160}
-		if s.Name=="" || s.TUN=="" || s.Listen=="" || s.Peers=="" || s.Cert=="" || s.Key=="" || s.ClientCA=="" {
-			return fmt.Errorf("instance %d must set name, listen, tun, peers, cert, key, client_ca",i)
+	if len(c.Instances) == 0 { return errors.New("at least one VPN instance is required") }
+	if len(c.Instances) > 128 { return errors.New("maximum 128 VPN instances") }
+	names, tuns, sni := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for i := range c.Instances {
+		inst := &c.Instances[i]
+		if inst.Path == "" { inst.Path = defaultPath }
+		if inst.MaxFrame == 0 { inst.MaxFrame = 1160 }
+		if inst.Name == "" || inst.ServerName == "" || inst.TUN == "" ||
+			inst.Peers == "" || inst.Cert == "" || inst.Key == "" || inst.ClientCA == "" {
+			return fmt.Errorf("instance %d requires name, server_name, tun, peers, cert, key and client_ca", i)
 		}
-		if !strings.HasPrefix(s.Path,"/"){return fmt.Errorf("instance %s path must begin with /",s.Name)}
-		if s.MaxFrame<64||s.MaxFrame>65535{return fmt.Errorf("instance %s max_frame outside 64..65535",s.Name)}
-		_,port,err:=net.SplitHostPort(s.Listen)
-		if err!=nil{return fmt.Errorf("instance %s invalid listen address: %w",s.Name,err)}
-		p,err:=strconv.Atoi(port)
-		if err!=nil||p<1||p>65535{return fmt.Errorf("instance %s invalid listen port %s",s.Name,port)}
-		// Reject overlapping wildcard listeners conservatively: one UDP port
-		// per instance. Future per-address socket sharing needs explicit logic.
-		if names[s.Name]||tuns[s.TUN]||ports[port]{
-			return fmt.Errorf("duplicate instance name, TUN, or UDP port at %s",s.Name)
+		inst.ServerName = strings.ToLower(inst.ServerName)
+		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
+		if !strings.HasPrefix(inst.Path, "/") { return fmt.Errorf("instance %s path must start with /", inst.Name) }
+		if inst.MaxFrame < 64 || inst.MaxFrame > 65535 { return fmt.Errorf("instance %s invalid max_frame", inst.Name) }
+		if names[inst.Name] || tuns[inst.TUN] || sni[inst.ServerName] {
+			return fmt.Errorf("duplicate instance name, TUN or TLS server_name in %s", inst.Name)
 		}
-		names[s.Name]=true;tuns[s.TUN]=true;ports[port]=true
+		names[inst.Name], tuns[inst.TUN], sni[inst.ServerName] = true, true, true
+	}
+	return nil
+}
+
+// SNI must be an unambiguous DNS hostname, not an IP literal or wildcard.
+// An IP-literal HTTPS URL cannot reliably transmit SNI for demultiplexing.
+func validateSNI(s string) error {
+	if len(s) == 0 || len(s) > 253 || net.ParseIP(s) != nil || !strings.Contains(s, ".") {
+		return fmt.Errorf("invalid server_name %q: use a DNS hostname, not an IP", s)
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("invalid DNS server_name %q", s)
+		}
+		for _, b := range []byte(label) {
+			if (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-' {
+				continue
+			}
+			return fmt.Errorf("invalid DNS server_name %q", s)
+		}
 	}
 	return nil
 }

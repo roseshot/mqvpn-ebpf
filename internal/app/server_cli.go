@@ -12,7 +12,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
-// runInstanceCLI edits the on-disk source-of-truth YAML configuration.
+// runInstanceCLI edits the YAML instance configuration. Shared UDP listen is top-level.
 // Atomic rename prevents the watcher from observing partial JSON writes.
 // Existing file owner and permissions are preserved.
 // The watcher reloads changed files automatically; --pid requests immediate
@@ -24,7 +24,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	fs:=flag.NewFlagSet("instance "+action,flag.ContinueOnError)
 	configPath:=fs.String("config","","server YAML configuration path")
 	name:=fs.String("name","","instance name (upsert/delete)")
-	listen:=fs.String("listen","","UDP bind address")
+	serverName:=fs.String("server-name","","TLS SNI hostname unique to this VPN instance")
 	tunName:=fs.String("tun","","pre-existing TUN interface name")
 	peers:=fs.String("peers","","peer destination mapping YAML path")
 	cert:=fs.String("cert","","TLS server certificate path")
@@ -67,7 +67,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 			if p.Name==*name{inst=p;found=true;index=i;break}
 		}
 		if !found{inst.Name=*name}
-		if updates["listen"]{inst.Listen=*listen}
+		if updates["server-name"]{inst.ServerName=*serverName}
 		if updates["tun"]{inst.TUN=*tunName}
 		if updates["peers"]{inst.Peers=*peers}
 		if updates["cert"]{inst.Cert=*cert}
