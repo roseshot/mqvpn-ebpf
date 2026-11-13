@@ -34,7 +34,7 @@ func TestTCPFallbackOnlyOnUDPHandshakeTimeout(t *testing.T){
 
 
 func TestTCPPortIndependentOfUDPPort(t *testing.T){
-	ep,err:=planClientEndpoint("https://tenant.example.com:54433/.well-known/masque/ethernet/","198.51.100.77","")
+	ep,err:=planClientEndpoint("tenant.example.com:54433","","198.51.100.77")
 	if err!=nil{t.Fatal(err)}
 	dial,request,err:=tcpTarget(clientTCPOptions{endpoint:ep,tcpPort:443})
 	if err!=nil{t.Fatal(err)}
