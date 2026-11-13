@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Config is optional. One dispatcher is attached to each WAN NIC, and its
@@ -33,8 +34,7 @@ func (c Config) Normalize() (Config,error) {
 	if len(c.Interfaces)>16 {return Config{},errors.New("too many XDP interfaces (max 16)")}
 	seen:=make(map[string]bool)
 	for _,name:=range c.Interfaces {
-		if name==""||strings.ContainsAny(name,"/ 	
-") {return Config{},fmt.Errorf("invalid XDP interface name %q",name)}
+		if name==""||strings.Contains(name,"/")||strings.IndexFunc(name,unicode.IsSpace)>=0 {return Config{},fmt.Errorf("invalid XDP interface name %q",name)}
 		if seen[name] {return Config{},fmt.Errorf("duplicate XDP interface %q",name)}
 		seen[name]=true
 	}

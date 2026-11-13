@@ -111,7 +111,7 @@ func (c *Controller) Reconcile(next Config,ports []uint16)error{
 	if c.open==nil{c.open=attachDevice}
 	// Reloadable: port list and added/removed NICs. Replacing an already
 	// attached XDP object/mode requires a deliberate daemon restart.
-	if len(c.devices)>0 && (next.Object!=c.cfg.Object||next.Mode!=c.cfg.Mode) && len(next.Interfaces)>0{
+	if len(c.devices)>0 && (next.Object!=c.cfg.Object||next.Mode!=c.cfg.Mode||next.ObjectChecksum!=c.cfg.ObjectChecksum) && len(next.Interfaces)>0{
 		return errors.New("XDP object/mode change requires daemon restart")
 	}
 	existing:=make(map[string]bool,len(next.Interfaces))

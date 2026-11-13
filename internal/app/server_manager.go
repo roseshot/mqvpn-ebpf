@@ -44,6 +44,7 @@ func prepareServer(config ServerConfig)(preparedServer,error){
 			object,err:=os.ReadFile(next.xdp.Object)
 			if err!=nil{return preparedServer{},fmt.Errorf("XDP object %q: %w",next.xdp.Object,err)}
 			hashRecord(digest,object)
+			next.xdp.ObjectChecksum=sha256.Sum256(object)
 		}
 		xdpSpec,err:=json.Marshal(next.xdp)
 		if err!=nil{return preparedServer{},err}
