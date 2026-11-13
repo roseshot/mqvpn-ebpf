@@ -131,7 +131,12 @@ func prepareConfigFile(path string) (preparedServer, error) {
 // A live instance owns a single TUN and its independent P2MP map.
 // All instances share the same outer QUIC listener.
 type liveInstance struct {
+	// Prepared holds immutable SNI/TLS/static identity while the instance
+	// is published. Peer-map generations are tracked separately so hot
+	// reload never races with concurrent HTTP/3 TLS/CONNECT handlers.
 	prepared preparedInstance
+	peerHash [32]byte
+	peerConfig *p2mp.Config
 	hub *p2mp.Hub
 	logger *slog.Logger
 	cancel context.CancelFunc
@@ -170,7 +175,7 @@ func (m *serverManager) start(p preparedInstance) error {
 	if err != nil { _ = device.Close(); return err }
 	ctx, cancel := context.WithCancel(m.ctx)
 	live := &liveInstance{
-		prepared: p, hub: hub, logger: logger,
+		prepared: p, peerHash: p.peerHash, peerConfig: p.peers, hub: hub, logger: logger,
 		cancel: cancel, done: make(chan struct{}),
 	}
 	m.instances[p.spec.Name] = live
@@ -240,6 +245,8 @@ func (m *serverManager) apply(next preparedServer) error {
 		if !exists { m.stop(name); continue }
 		if old.prepared.staticHash != newCfg.staticHash {
 			previous := old.prepared
+			previous.peers = old.peerConfig
+			previous.peerHash = old.peerHash
 			m.stop(name)
 			if err := m.start(newCfg); err != nil {
 				if restoreErr := m.start(previous); restoreErr != nil {
@@ -249,9 +256,10 @@ func (m *serverManager) apply(next preparedServer) error {
 			}
 			continue
 		}
-		if old.prepared.peerHash != newCfg.peerHash {
+		if old.peerHash != newCfg.peerHash {
 			if err := old.hub.ReplaceConfig(newCfg.peers); err != nil { return err }
-			old.prepared = newCfg
+			old.peerHash = newCfg.peerHash
+			old.peerConfig = newCfg.peers
 			old.logger.Info("P2MP peer map hot-reloaded", "peers", len(newCfg.peers.Peers))
 		}
 	}
