@@ -140,6 +140,96 @@ To get the SHA-256 fingerprint for a test client certificate:
 openssl x509 -in certs/client.crt -outform DER | sha256sum
 ~~~
 
+## Server CLI configuration and hot reload
+
+The server supports both single-instance flags and a versioned JSON
+multi-instance configuration. **No daemon network configuration is applied:**
+TUN devices, IPs, routes, policy rules and multicast controls stay owned by
+systemd-networkd / NetworkManager / iproute2.
+
+Validate an edited configuration without opening any TUN or UDP socket:
+
+~~~bash
+mqvpn-server validate --config /etc/mqvpn/server.json
+~~~
+
+Start the server with automatic hot reload (default interval: **2 seconds**):
+
+~~~bash
+mqvpn-server --config /etc/mqvpn/server.json \
+  --reload-interval 2s --log-level info --log-format json
+~~~
+
+After editing the JSON, or a referenced peer/certificate/CA file, the daemon
+revalidates before applying changes. An invalid JSON, peer directory or TLS
+file **does not replace the active configuration**; a warning is logged and
+the running connections continue. Setting --reload-interval=0 disables
+polling while leaving manual SIGHUP reload available.
+
+For an immediate reload from another terminal:
+
+~~~bash
+# Obtain the correct PID from your service manager, not an arbitrary process.
+mqvpn-server reload --pid "$(systemctl show -p MainPID --value mqvpn-server.service)"
+# Alternatively: systemctl kill -s HUP mqvpn-server.service
+~~~
+
+The CLI reports that the SIGHUP signal was sent. Check the daemon log for
+the **reload applied/rejected result**; signaling alone does not prove the
+new configuration was accepted.
+
+You can also edit the multi-instance JSON using the server's CLI:
+
+~~~bash
+# Print configured instances:
+mqvpn-server instance list --config /etc/mqvpn/server.json
+
+# Add a new instance (requires that mq2 is already provisioned in Linux):
+mqvpn-server instance upsert --config /etc/mqvpn/server.json \
+  --name edge-c --listen 0.0.0.0:4435 --tun mq2 \
+  --peers /etc/mqvpn/peers-c.json \
+  --cert /etc/mqvpn/tls/c-server.crt \
+  --key /etc/mqvpn/tls/c-server.key \
+  --client-ca /etc/mqvpn/tls/c-clients.crt
+
+# Change only the fields you specify:
+mqvpn-server instance upsert --config /etc/mqvpn/server.json \
+  --name edge-c --listen 0.0.0.0:4436
+
+# Remove one instance (the last remaining instance cannot be removed):
+mqvpn-server instance delete --config /etc/mqvpn/server.json \
+  --name edge-c
+~~~
+
+Instance edits validate all referenced peer and TLS files, and write a
+complete new JSON by atomic rename, preserving the existing file owner
+and permissions (create the initial config with appropriate access rights). When the watcher
+is disabled, add --pid <daemon-pid> to upsert/delete to request SIGHUP.
+The CLI edits persistent configuration; it does not change Linux routes.
+
+**Reload behavior:**
+
+- An unchanged instance retains its listener, TUN and established MPQUIC
+  sessions.
+- Peer destination-prefix changes with unchanged certificates take effect
+  **in-place**; existing QUIC connections remain up.
+- Removing a peer or rotating its certificate fingerprint disconnects
+  that peer's old session. New peers can connect without restarting the
+  instance.
+- Adding/removing instances starts/stops only those instances.
+- Changes to UDP listen address, TUN, TLS certificate/key/CA, path or
+  max-frame require a **targeted instance restart** and briefly interrupt
+  that instance's sessions. Other instances remain connected.
+- An invalid configuration is rejected before applying any changes. If an
+  OS-level resource failure happens during a targeted restart (for example,
+  a UDP port conflict), the manager attempts to restore the previous
+  instance and reports the error. That affected instance may experience
+  brief downtime; this is not a transactional zero-downtime socket swap.
+
+No automatic TUN/interface reconfiguration, multicast membership management,
+IP forwarding, firewall rules or Linux route modifications are performed by
+this CLI or daemon.
+
 ## Single-instance server
 
 ~~~bash
@@ -165,8 +255,8 @@ sudo ./mqvpn-server --config /etc/mqvpn/server.json \
 ~~~
 
 Instance startup fails if the TUN is unavailable. The server stops all
-instances if one fails unexpectedly. Static peer map updates require a
-process restart.
+instances if one fails unexpectedly. Peer map updates can be hot-reloaded without closing
+unchanged client sessions.
 
 ## Client (dual WAN)
 
