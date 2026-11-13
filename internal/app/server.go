@@ -10,12 +10,14 @@ import (
 	"net"
 	"net/http"
 	"syscall"
+	"strings"
 	"time"
 
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
+	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
 // RunServer supports config-file hot reload, signal-driven reload via CLI,
@@ -41,6 +43,9 @@ func RunServer(ctx context.Context,args []string,logger *slog.Logger)error {
 	keyFile:=fs.String("key","","server TLS private key")
 	clientCA:=fs.String("client-ca","","mTLS client certificate CA")
 	maxFrame:=fs.Int("max-frame",1160,"max encapsulated Ethernet frame bytes")
+	xdpInterfaces:=fs.String("xdp-interfaces","","opt-in XDP WAN interface list (comma separated)")
+	xdpObject:=fs.String("xdp-object","","compiled BPF ELF path (required with --xdp-interfaces)")
+	xdpMode:=fs.String("xdp-mode","driver","XDP attach mode: driver or generic")
 	if err:=fs.Parse(args);err!=nil{return err}
 	if *reloadInterval<0{return errors.New("--reload-interval cannot be negative")}
 	if *configFile!=""{
@@ -59,6 +64,13 @@ func RunServer(ctx context.Context,args []string,logger *slog.Logger)error {
 		Name:"default",Listen:*listen,TUN:*tunName,Peers:*peerFile,Path:*path,
 		Cert:*certFile,Key:*keyFile,ClientCA:*clientCA,MaxFrame:*maxFrame,
 	}}}
+	if *xdpInterfaces!=""{
+		var interfaces []string
+		for _,name:=range strings.Split(*xdpInterfaces,","){interfaces=append(interfaces,strings.TrimSpace(name))}
+		cfg.XDP=&xdp.Config{Interfaces:interfaces,Object:*xdpObject,Mode:*xdpMode}
+	} else if *xdpObject!=""{
+		return errors.New("--xdp-object requires --xdp-interfaces")
+	}
 	if err:=cfg.Validate();err!=nil{return err}
 	return runManagedServer(ctx,func()(preparedServer,error){
 		return prepareServer(cfg)

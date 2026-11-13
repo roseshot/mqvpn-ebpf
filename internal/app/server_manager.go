@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
+	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
 type preparedInstance struct {
@@ -26,6 +27,7 @@ type preparedInstance struct {
 
 type preparedServer struct {
 	instances map[string]preparedInstance
+	xdp xdp.Config
 	fingerprint [32]byte
 }
 
@@ -36,6 +38,17 @@ func prepareServer(config ServerConfig)(preparedServer,error){
 	if err:=config.Validate();err!=nil{return preparedServer{},err}
 	next:=preparedServer{instances:make(map[string]preparedInstance,len(config.Instances))}
 	digest:=sha256.New()
+	if config.XDP!=nil{
+		next.xdp=*config.XDP
+		if len(next.xdp.Interfaces)>0{
+			object,err:=os.ReadFile(next.xdp.Object)
+			if err!=nil{return preparedServer{},fmt.Errorf("XDP object %q: %w",next.xdp.Object,err)}
+			hashRecord(digest,object)
+		}
+		xdpSpec,err:=json.Marshal(next.xdp)
+		if err!=nil{return preparedServer{},err}
+		hashRecord(digest,xdpSpec)
+	}
 	for _,spec:=range config.Instances{
 		peersRaw,err:=os.ReadFile(spec.Peers)
 		if err!=nil{return preparedServer{},fmt.Errorf("instance %s peers: %w",spec.Name,err)}
@@ -103,6 +116,7 @@ type liveInstance struct {
 type serverManager struct{
 	ctx context.Context
 	logger *slog.Logger
+	xdp *xdp.Controller
 	instances map[string]*liveInstance
 	exits chan *liveInstance
 }
@@ -111,6 +125,7 @@ func newServerManager(ctx context.Context,logger *slog.Logger)*serverManager{
 	return &serverManager{
 		ctx:ctx,logger:logger,
 		instances:make(map[string]*liveInstance),
+		xdp:xdp.NewController(),
 		exits:make(chan *liveInstance,256),
 	}
 }
@@ -154,6 +169,7 @@ func(m *serverManager)stop(name string){
 
 func(m *serverManager)stopAll(){
 	for name:=range m.instances{m.stop(name)}
+	if m.xdp!=nil{_ = m.xdp.Close()}
 }
 
 // apply updates only changed instances. For unchanged listener/TUN/TLS
@@ -161,6 +177,21 @@ func(m *serverManager)stopAll(){
 // connections. Changed TLS/listener/TUN configuration requires a targeted
 // instance restart. Existing unaffected instances remain connected.
 func(m *serverManager)apply(next preparedServer)error{
+	// All server instance ports are in one map per WAN NIC. This is the
+	// *outer* UDP listener table, independent of inner VPN data and peers.
+	var listeners []string
+	for _,inst:=range next.instances{listeners=append(listeners,inst.spec.Listen)}
+	ports,err:=xdp.ListenersToPorts(listeners)
+	if err!=nil{return err}
+	if m.xdp!=nil{
+		if err:=m.xdp.Reconcile(next.xdp,ports);err!=nil{
+			return fmt.Errorf("reconcile multi-instance XDP dispatcher: %w",err)
+		}
+		if len(next.xdp.Interfaces)>0{
+			m.logger.Info("XDP instance port maps updated",
+				"interfaces",next.xdp.Interfaces,"ports",ports)
+		}
+	}
 	names:=make([]string,0,len(m.instances))
 	for name:=range m.instances{names=append(names,name)}
 	sort.Strings(names)

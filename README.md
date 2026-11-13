@@ -140,6 +140,51 @@ To get the SHA-256 fingerprint for a test client certificate:
 openssl x509 -in certs/client.crt -outform DER | sha256sum
 ~~~
 
+## Optional multi-instance XDP dispatcher (CGO disabled)
+
+The experimental XDP control plane is opt-in. One XDP program is attached
+per physical WAN NIC, sharing a dynamic destination UDP port map across all
+server instances. Changes through the existing hot-reload mechanism update
+the map without recreating the NIC program or changing VPN routing.
+
+**AF_XDP RX/TX and zero-copy QUIC remain NOT implemented.** In this stage
+the XSKMAP is deliberately empty. Even when a UDP port matches, the XDP
+program returns XDP_PASS, preserving the working Linux UDP socket backend.
+There is no throughput increase to claim from enabling the dispatcher alone.
+
+Compile the kernel eBPF ELF at build time (no runtime CGO):
+
+~~~bash
+sudo apt-get install clang llvm libbpf-dev linux-libc-dev
+make bpf
+CGO_ENABLED=0 go build -mod=mod -o mqvpn-server ./cmd/mqvpn-server
+sudo install -D -m 0644 bpf/xdp_mqvpn.o /usr/lib/mqvpn/xdp_mqvpn.o
+~~~
+
+Add this top-level section to the existing multi-instance server.json:
+
+~~~json
+"xdp": {
+  "interfaces": ["enp1s0", "enp2s0"],
+  "object": "/usr/lib/mqvpn/xdp_mqvpn.o",
+  "mode": "driver"
+}
+~~~
+
+This section is alongside the existing instances array; individual
+instances continue listening on their distinct UDP ports. XDP is omitted
+by default. A running instance configuration edit updates the selected
+port set automatically. Use mode driver for native I226/igc XDP, or generic
+for software XDP testing.
+
+For the single-instance CLI, optional flags are:
+--xdp-interfaces enp1s0,enp2s0 --xdp-object /usr/lib/mqvpn/xdp_mqvpn.o
+--xdp-mode driver. Enabling XDP can conflict with a program already attached
+to a NIC; use dedicated test interfaces first. Replacing the object/mode
+on a live NIC requires daemon restart.
+
+See [multi-instance XDP details](docs/xdp-multi-instance.md).
+
 ## Server CLI configuration and hot reload
 
 The server supports both single-instance flags and a versioned JSON
@@ -281,7 +326,7 @@ Traffic is forwarded without inner multicast/packet rate policies.
 ## Current limitations
 
 - 1–2.5 Gbps Intel N200/I226 performance target is **not** measured.
-- AF_XDP Zero-Copy is not wired into Go; experimental XDP code exists.
+- AF_XDP Zero-Copy is not wired into Go; optional multi-port XDP control plane remains XDP_PASS unless an XSK consumer is registered.
 - QUIC DATAGRAM cannot transport Ethernet frames exceeding path PMTU;
   default maximum frame=1160; default Linux TUN MTU in examples=1100.
   IPv6 requires MTU >=1280 and sufficient QUIC underlay PMTU.
