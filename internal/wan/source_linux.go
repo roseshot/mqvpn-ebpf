@@ -7,9 +7,9 @@ import (
 	"net"
 )
 
-// ResolveSource chooses exactly one unicast address on the requested device,
-// or validates that the explicitly supplied IP belongs to it. It never
-// silently chooses an arbitrary interface if no source address is supplied.
+// ResolveSource chooses exactly one unicast address on an explicit device
+// or follows the kernel's route to the remote peer when no WAN selector is
+// provided. This does not install or modify routes.
 func ResolveSource(sourceIP, interfaceName string, peer *net.UDPAddr) (net.IP, error) {
 	if peer == nil || peer.IP == nil {
 		return nil, fmt.Errorf("resolved peer IP is required")
@@ -26,10 +26,18 @@ func ResolveSource(sourceIP, interfaceName string, peer *net.UDPAddr) (net.IP, e
 		}
 	}
 	if interfaceName == "" {
-		if explicit == nil {
-			return nil, fmt.Errorf("specify --source-ip or --source-interface")
+		if explicit != nil {return explicit,nil}
+		// Connected UDP sockets perform a route/source lookup without sending
+		// a packet. Unlike a static default-route guess, this respects policy
+		// routes and a pinned destination IP chosen by the client.
+		probe,err:=net.DialUDP("udp",nil,peer)
+		if err!=nil{return nil,fmt.Errorf("resolve WAN source via kernel route to %s: %w",peer.IP,err)}
+		defer probe.Close()
+		chosen:=probe.LocalAddr().(*net.UDPAddr).IP
+		if chosen==nil||chosen.IsUnspecified()||chosen.IsMulticast(){
+			return nil,fmt.Errorf("kernel did not select a unicast WAN source for %s",peer.IP)
 		}
-		return explicit, nil
+		return chosen,nil
 	}
 	iface, err := net.InterfaceByName(interfaceName)
 	if err != nil {

@@ -4,10 +4,10 @@ Go, `CGO_ENABLED=0`, Linux: **MASQUE CONNECT-ETHERNET** over encrypted
 HTTP/3 DATAGRAM + MPQUIC. One Server daemon exposes **ONE UDP listener**
 to many independent, isolated route-based P2MP VPN LANs.
 
-**Configuration format: YAML only.** Server and Peer configuration must be
-`.yaml` or `.yml`. The server has no JSON loader, no single-instance CLI
-fallback, and no combined `mqvpn server|client` executable. Build the
-independent `mqvpn-server` and `mqvpn-client` commands.
+**Configuration format: YAML only.** Server, Client (optional daemon file),
+and Peer configuration use `.yaml` or `.yml`. The server has no JSON loader
+or single-instance CLI fallback. Build the independent `mqvpn-server` and
+`mqvpn-client` commands. Client CLI flags remain available for overrides.
 
 ## Shared UDP listener and per-instance TLS SNI
 
@@ -69,60 +69,65 @@ mqvpn-client \
   --cert /etc/mqvpn/b-client.crt --key /etc/mqvpn/b-client.key
 ~~~
 
-### Client connection IP versus authenticated tenant domain
+## Simple Client daemon configuration
 
-Clients can use a DNS name or an explicit server IP without changing the
-one-port Server configuration. **TLS SNI and HTTP/3 authority always
-refer to the selected Instance DNS name**, even when UDP dials a literal
-IP. TLS certificate chain and DNS SAN verification remain enabled.
+A Client needs just five YAML values. The standard MASQUE path, UDP/TCP
+ports, TUN name (`mq0`), WAN source selection, MTU/frame budget, transport
+fallback and bundled TCX eBPF policy are all automatic.
 
-**DNS endpoint** (normal DNS resolution):
-
-~~~bash
-mqvpn-client \
-  --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
-  --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --tun mq0 --tun-address 10.77.0.2/24 --ca /etc/mqvpn/a-ca.crt \
-  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+~~~yaml
+# /etc/mqvpn/client.yaml
+server: customer-a.vpn.example.com
+address: 10.77.0.2/24
+ca: /etc/mqvpn/a-ca.crt
+cert: /etc/mqvpn/a-client.crt
+key: /etc/mqvpn/a-client.key
 ~~~
 
-**Pinned IP + tenant domain** (no DNS lookup for the remote endpoint):
-
 ~~~bash
-mqvpn-client \
-  --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
-  --connect-ip 198.51.100.10 \
-  --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --tun mq0 --tun-address 10.77.0.2/24 --ca /etc/mqvpn/a-ca.crt \
-  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+mqvpn-client --config /etc/mqvpn/client.yaml
 ~~~
 
-**Literal IP URL + explicit tenant domain**:
+For one-off CLI usage, the equivalent short form is:
 
 ~~~bash
-mqvpn-client \
-  --url https://198.51.100.10:443/.well-known/masque/ethernet/ \
-  --server-name customer-a.vpn.example.com \
-  --source-ip 192.0.2.10 --source-interface enp1s0 \
-  --tun mq0 --tun-address 10.77.0.2/24 --ca /etc/mqvpn/a-ca.crt \
-  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+mqvpn-client --server customer-a.vpn.example.com --tun-address 10.77.0.2/24 \
+  --ca /etc/mqvpn/a-ca.crt --cert /etc/mqvpn/a-client.crt \
+  --key /etc/mqvpn/a-client.key
 ~~~
 
-IPv6 literals are also accepted (bracket the IPv6 address in the URL).
-IP-only connections without an authenticated tenant DNS name are rejected:
-all VPN instances use the same UDP port, so SNI is needed to select the
-correct instance and client CA. The explicit IP chooses only the QUIC UDP
-destination; it does not override TLS identity or VPN TUN routes.
+The Client chooses the primary WAN source from the kernel route to the
+resolved remote IP, without adding routes. On unusual policy routing/VRF,
+set `source_interface` and optionally `source_ip` in YAML, or use
+`--source-interface` / `--source-ip` explicitly. Secondary WAN paths
+still require `wan2_interface` or `wan2_ip`.
 
-On separate client hosts, local `mq0` names may be the same. If both
-VPN instances are deployed on one client Linux host, use separate local
-TUNs and network routing domains as appropriate.
+`server` accepts `domain.example.com`, `domain.example.com:8443`, or
+an HTTPS URL with a custom path. DNS identity remains mandatory for mTLS
+and tenant SNI. To connect to a pinned endpoint, use `connect_ip` while
+keeping `server` as the authenticated tenant domain:
 
-**TCP Fallback is optional** and uses TCP/443 when enabled, while
-HTTP/3/MPQUIC remains on UDP/443. Both protocol listeners can use
-the same numeric port independently. Binding 443 normally requires root
-or CAP_NET_BIND_SERVICE. Allow TCP/443 ingress only when TCP fallback
-is enabled.
+~~~yaml
+server: customer-a.vpn.example.com
+connect_ip: 198.51.100.10
+address: 10.77.0.2/24
+ca: /etc/mqvpn/a-ca.crt
+cert: /etc/mqvpn/a-client.crt
+key: /etc/mqvpn/a-client.key
+~~~
+
+Legacy `--url`, `--server-name`, `--connect-ip` and all advanced
+flags remain supported. An IP-literal URL still requires an explicit
+tenant `server_name`; certificate/hostname validation is unchanged.
+CLI flags override values from `--config`. See
+[Client configuration reference](docs/client-config.md).
+
+On separate client hosts, local `mq0` names may be the same. Multiple
+VPN instances on one host still need separate TUNs/routing domains.
+
+**TCP fallback** is attempted on the initial QUIC timeout by default
+when the server has enabled TCP fallback; forced TCP uses the primary WAN
+only. The transport never downgrades on authentication failures.
 
 ## Overlapping subnets and host routing
 
@@ -233,13 +238,15 @@ instances:
     client_ca: /etc/mqvpn/tls/a-ca.crt
 ~~~
 
-Client uses the NIC actually owning the selected `--source-ip` or
-`--source-interface` address; both WAN sources are inspected before
-opening the TUN. TCP fallback uses the primary TCP WAN source. If a
-required WAN interface cannot be identified, automatic sizing fails
-rather than choosing an arbitrary MTU. Server polling/reload detects
-link-MTU changes and restarts affected TUN sessions, but the Client
-does **not** dynamically resize an established tunnel.
+Client automatically discovers the primary WAN source through the
+kernel's route to the server; explicit `source_ip`/`source_interface`
+selectors override this for multi-WAN or policy routing deployments.
+Both WAN source link MTUs are inspected before opening the TUN.
+TCP fallback uses the primary WAN. If the selected WAN interface
+cannot be identified, automatic sizing fails rather than guessing.
+Server polling/reload detects link-MTU changes and restarts affected
+TUN sessions, but the Client does **not** dynamically resize an
+established tunnel.
 
 `max_frame` is derived as `TUN MTU + 14` (synthetic Ethernet), not
 a fixed 1160-byte allowance. Manual `mtu` and `max_frame` remain
@@ -348,12 +355,7 @@ The host must permit TCP/443 ingress as well as UDP/443.
 Client (automatic by default):
 
 ~~~bash
-mqvpn-client \
-  --url https://customer-a.vpn.example.com/.well-known/masque/ethernet/ \
-  --transport auto --udp-dial-timeout 5s \
-  --tun mq0 --tun-address 10.77.0.2/24 --source-interface enp1s0 \
-  --ca /etc/mqvpn/a-ca.crt \
-  --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
+mqvpn-client --config /etc/mqvpn/client.yaml
 ~~~
 
 An independent `--tcp-port` flag defaults to 443 even if the QUIC URL

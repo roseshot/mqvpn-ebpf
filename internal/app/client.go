@@ -22,6 +22,8 @@ import (
 
 func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
+	configPath := fs.String("config", "", "optional concise client YAML configuration")
+	server := fs.String("server", "", "tenant DNS name or HTTPS endpoint (defaults to MASQUE path)")
 	urlFlag := fs.String("url", "", "https domain or IP URL of CONNECT-ETHERNET endpoint")
 	connectIP := fs.String("connect-ip", "", "connect to server IP without DNS resolution")
 	serverName := fs.String("server-name", "", "authenticated tenant DNS name used for TLS SNI and HTTP/3 authority")
@@ -44,14 +46,63 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	if err := fs.Parse(args); err != nil { return err }
+	explicit := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *configPath!="" {
+		file,err:=loadClientFile(*configPath)
+		if err!=nil{return err}
+		// Explicit CLI flags always override YAML. Unspecified settings
+		// retain their existing defaults, including TCP and TCX policies.
+		setString:=func(name string, dst *string, value string) {
+			if !explicit[name] && value!="" {*dst=value}
+		}
+		setInt:=func(name string, dst *int, value int) {
+			if !explicit[name] && value!=0 {*dst=value}
+		}
+		setString("server",server,file.Server)
+		setString("connect-ip",connectIP,file.ConnectIP)
+		setString("server-name",serverName,file.ServerName)
+		setString("source-ip",wan1,file.SourceIP)
+		setString("source-interface",wan1Iface,file.SourceInterface)
+		setString("wan2-ip",wan2,file.WAN2IP)
+		setString("wan2-interface",wan2Iface,file.WAN2Interface)
+		setString("tun",tunName,file.TUN)
+		setString("tun-address",tunAddress,file.Address)
+		setInt("tun-mtu",tunMTU,file.MTU)
+		setInt("max-frame",maxFrame,file.MaxFrame)
+		setString("ca",caFile,file.CA)
+		setString("cert",certFile,file.Cert)
+		setString("key",keyFile,file.Key)
+		setString("transport",transportMode,file.Transport)
+		setInt("tcp-port",tcpPort,file.TCPPort)
+		if !explicit["udp-dial-timeout"] && file.UDPDialTimeout!="" {
+			timeout,err:=time.ParseDuration(file.UDPDialTimeout)
+			if err!=nil{return fmt.Errorf("client udp_dial_timeout: %w",err)}
+			*udpTimeout=timeout
+		}
+		if file.TC!=nil {
+			setString("tc-mode",tcMode,file.TC.Mode)
+			setString("tc-object",tcObject,file.TC.Object)
+			setString("mss-clamp",mssClamp,file.TC.MSSClamp)
+			if !explicit["tc-stats"] && file.TC.Stats!=nil {*tcStats=*file.TC.Stats}
+		}
+		if !explicit["url"] && file.URL!="" {*urlFlag=file.URL}
+		// Legacy explicit TC fields (in YAML or CLI) retain fail-closed
+		// semantics unless mode is explicitly specified.
+		if file.TC!=nil && file.TC.Mode!="" {explicit["tc-mode"]=true}
+		if file.TC!=nil && (file.TC.Object!="" || file.TC.MSSClamp!="" || file.TC.Stats!=nil) {
+			explicit["mss-clamp"]=true
+		}
+	}
+	if fs.NArg()!=0{return errors.New("unexpected positional client arguments")}
+	if explicit["url"]&&explicit["server"] {return errors.New("--server and --url are mutually exclusive")}
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
 	if err:=mtu.ValidateRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
 	// Legacy explicit TC flags remain strict unless --tc-mode is supplied.
-	legacyTC,explicitMode:=false,false
-	fs.Visit(func(f *flag.Flag){
-		if f.Name=="tc-mode" {explicitMode=true}
-		if f.Name=="tc-object"||f.Name=="mss-clamp"||f.Name=="tc-stats" {legacyTC=true}
-	})
+	legacyTC,explicitMode:=false,explicit["tc-mode"]
+	for _,name:=range []string{"tc-object","mss-clamp","tc-stats"}{
+		if explicit[name] {legacyTC=true}
+	}
 	mode:=*tcMode
 	if !explicitMode&&legacyTC {mode="required"}
 	tcConfig,err:=(tcebpf.Config{Mode:mode,Object:*tcObject,MSSClamp:*mssClamp,Stats:*tcStats}).Normalize()
@@ -61,10 +112,17 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	if *udpTimeout<=0{return errors.New("--udp-dial-timeout must be positive")}
 	if *tcpPort<1||*tcpPort>65535{return fmt.Errorf("invalid --tcp-port %d",*tcpPort)}
-	if *wan1 == "" && *wan1Iface == "" { return errors.New("primary WAN requires --source-ip and/or --source-interface") }
+	// No WAN selector means follow the kernel's route to the server.
+	// Secondary WAN paths still require explicit selection.
 	if *wan2 != "" && *wan1 == *wan2 { return errors.New("WAN source IPs must be different") }
 	if *wan2Iface != "" && *wan2Iface == *wan1Iface { return errors.New("primary and secondary WAN interfaces must be different") }
-	endpoint, err := planClientEndpoint(*urlFlag, *connectIP, *serverName)
+	target:=*urlFlag
+	if target=="" || explicit["server"] {
+		var err error
+		target,err=expandClientServer(*server)
+		if err!=nil{return err}
+	}
+	endpoint, err := planClientEndpoint(target, *connectIP, *serverName)
 	if err != nil { return err }
 	logger.Info("VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName,"transport",*transportMode)
 	tcpOptions:=clientTCPOptions{

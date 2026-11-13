@@ -24,8 +24,9 @@ func TestResolveSource(t *testing.T) {
 	if _, err := ResolveSource("::1", "", peer); err == nil {
 		t.Fatal("different IP family must fail")
 	}
-	if _, err := ResolveSource("", "", peer); err == nil {
-		t.Fatal("missing source spec must fail")
+	auto,err:=ResolveSource("","",peer)
+	if err!=nil||!auto.Equal(net.IPv4(127,0,0,1)) {
+		t.Fatalf("auto WAN source must follow loopback kernel route: %v %v",auto,err)
 	}
 	if _, err := ResolveSource("", "nonexistent-mqvpn-interface", peer); err == nil {
 		t.Fatal("unknown interface must fail")

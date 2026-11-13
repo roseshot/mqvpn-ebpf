@@ -1,0 +1,24 @@
+# Required Client settings: tenant DNS identity, TUN host address and mTLS files.
+# The default MASQUE path, TUN mq0, WAN source, MTU, TCP fallback and
+# bundled eBPF are chosen automatically. No system eBPF .o is needed.
+server: customer-a.vpn.example.com
+address: 10.77.0.2/24
+ca: /etc/mqvpn/a-ca.crt
+cert: /etc/mqvpn/a-client.crt
+key: /etc/mqvpn/a-client.key
+
+# Advanced optional overrides (uncomment only as required):
+# connect_ip: 198.51.100.10        # pin remote UDP/TCP destination
+# source_interface: enp1s0         # select primary WAN
+# source_ip: 192.0.2.10            # select specific primary WAN IP
+# wan2_interface: wwan0            # MPQUIC secondary WAN (explicit)
+# tun: mq0
+# mtu: 1360
+# max_frame: 1374
+# transport: auto                  # auto | quic | tcp
+# udp_dial_timeout: 5s
+# tcp_port: 443
+# tc:
+#   mode: auto                     # off | auto | required
+#   mss_clamp: auto
+#   stats: true
