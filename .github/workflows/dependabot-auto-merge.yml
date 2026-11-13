@@ -1,0 +1,31 @@
+# Immediately merge all Dependabot PRs. No version, ecosystem, or CI filters.
+# pull_request_target uses the trusted default-branch workflow; never checks
+# out or runs code from the untrusted Dependabot PR with a write token.
+# This is intentionally an unconditional merge policy. GitHub repository
+# rules and token permissions can still reject a merge.
+name: Dependabot unconditional merge
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: >-
+      github.repository == 'roseshot/mqvpn-ebpf' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge Dependabot PR without version or CI exclusions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # No --auto: the repository currently has allow_auto_merge=false.
+          # Direct squash merge is attempted when Dependabot opens/updates a PR.
+          gh pr merge "$PR_NUMBER" --repo "$GH_REPO" --squash
