@@ -1,17 +1,14 @@
 {
-  "multicast_pps": 20,
   "peers": [
     {
       "id": "site-a",
       "certificate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "routes": ["10.77.0.2/32", "192.168.20.0/24"],
-      "multicast_groups": ["224.0.0.251"]
+      "routes": ["10.77.0.2/32", "192.168.20.0/24"]
     },
     {
       "id": "site-b",
       "certificate_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "routes": ["10.77.0.3/32", "192.168.30.0/24"],
-      "multicast_groups": ["224.0.0.251"]
+      "routes": ["10.77.0.3/32", "192.168.30.0/24"]
     }
   ]
 }
