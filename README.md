@@ -402,6 +402,19 @@ Install `clang`, `llvm`, `libbpf-dev` and `linux-libc-dev` to run
 `make bpf`; production Go binaries remain CGO-free.
 See [XDP control plane](docs/xdp-multi-instance.md).
 
+## Pure Go runtime and development tools
+
+Server and Client use Go libraries and Linux socket/ioctl/Netlink APIs:
+no subprocess-based network setup and no production `os/exec`. TUN
+validation, TUN creation, Netlink IP/MTU/UP, WAN source selection and
+UDP/TCP socket binding are separate packages/files. The Go architecture
+test checks this restriction in production source.
+
+**Development commands are allowed.** `scripts/gen-dev-certs.sh`
+still uses OpenSSL for test-only certificates, and `make bpf` still uses
+Clang/LLVM to build the BPF ELF; neither is invoked by the running
+VPN daemon. See [runtime architecture](docs/runtime-architecture.md).
+
 ## Pull-request CI
 
 The GitHub Actions `Go` workflow runs on PRs targeting `main`, direct
