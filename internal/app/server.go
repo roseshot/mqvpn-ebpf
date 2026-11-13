@@ -33,7 +33,7 @@ func RunServer(ctx context.Context,args []string,logger *slog.Logger)error {
 		}
 	}
 	fs:=flag.NewFlagSet("server",flag.ContinueOnError)
-	configFile:=fs.String("config","","JSON multi-instance configuration file")
+	configFile:=fs.String("config","","YAML multi-instance configuration file (.yaml/.yml; .json legacy)")
 	reloadInterval:=fs.Duration("reload-interval",2*time.Second,"file watch interval in config mode; 0 disables automatic reload")
 	listen:=fs.String("listen",":4433","UDP listen address for single-instance mode")
 	tunName:=fs.String("tun","mq0","existing IP-addressed TUN for single-instance mode")
@@ -77,14 +77,14 @@ func RunServer(ctx context.Context,args []string,logger *slog.Logger)error {
 	},0,logger)
 }
 
-// validate checks the JSON schema, peer directory, and TLS files without
+// validate checks the YAML schema, peer directory, and TLS files without
 // opening TUN devices or binding sockets, and without changing the daemon.
 func validateServerCLI(args []string,logger *slog.Logger)error{
 	if logger==nil{logger=slog.Default()}
 	fs:=flag.NewFlagSet("validate",flag.ContinueOnError)
 	path:=fs.String("config","","configuration file to validate")
 	if err:=fs.Parse(args);err!=nil{return err}
-	if *path==""||fs.NArg()!=0{return errors.New("usage: mqvpn-server validate --config /path/to/server.json")}
+	if *path==""||fs.NArg()!=0{return errors.New("usage: mqvpn-server validate --config /path/to/server.yaml")}
 	prepared,err:=prepareConfigFile(*path)
 	if err!=nil{return err}
 	logger.Info("server configuration valid","config",*path,"instances",len(prepared.instances))
