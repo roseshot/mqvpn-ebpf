@@ -3,23 +3,19 @@
 package tun
 
 import (
-	"strings"
-	"testing"
+  "strings"
+  "testing"
 )
 
-func TestValidate(t *testing.T) {
-	for _, tt := range []struct{ name,cidr string; mtu,max int; msg string }{
-		{"mq0", "10.77.0.1/24", 1100, 1160, ""},
-		{"mq0", "fd42::1/64", 1280, 1400, ""},
-		{"", "10.77.0.1/24", 1100, 1160, "name"},
-		{"mq0", "10.77.0.1", 1100, 1160, "CIDR"},
-		{"mq0", "10.77.0.1/24", 1100, 1113, "exceeds"},
-		{"mq0", "fd42::1/64", 1100, 1160, "IPv6"},
-	} {
-		err := Validate(tt.name,tt.cidr,tt.mtu,tt.max)
-		if tt.msg == "" && err != nil { t.Fatalf("unexpected: %v",err) }
-		if tt.msg != "" && (err == nil || !strings.Contains(err.Error(),tt.msg)) {
-			t.Fatalf("want %s got %v",tt.msg,err)
-		}
-	}
+func TestValidateName(t *testing.T) {
+  for _,n:=range []string{"mq0","tun-main","tun.3"}{
+    if err:=validateName(n);err!=nil{t.Fatal(n,err)}
+  }
+  for _,n:=range []string{"","bad name","abcdefghijklmnop","bad/name"}{
+    if err:=validateName(n);err==nil{t.Fatalf("%q accepted",n)}
+  }
+}
+func TestMissingTUNNotCreated(t *testing.T) {
+  _,err:=Open("mqvp-unused-0")
+  if err==nil||!strings.Contains(err.Error(),"must already exist"){t.Fatalf("got %v",err)}
 }

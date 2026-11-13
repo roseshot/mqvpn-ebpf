@@ -34,8 +34,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tunName := fs.String("tun", "mq0", "single L3 TUN interface, IP-addressed and route-based")
 	groupCSV := fs.String("multicast-groups", "", "explicit IP multicast destinations, comma-separated, e.g. 224.0.0.251")
 	multicastPPS := fs.Int("multicast-pps", 20, "per-client multicast pps upper bound")
-	tunnelIP := fs.String("tunnel-ip", "", "TAP interface CIDR, e.g. 10.77.0.2/30 (required)")
-	tunnelMTU := fs.Int("tunnel-mtu", 1100, "TAP L3 MTU; default is safe for IPv4 QUIC DATAGRAM test")
 	caFile := fs.String("ca", "", "CA verifying the remote server")
 	certFile := fs.String("cert", "", "client TLS certificate PEM")
 	keyFile := fs.String("key", "", "client TLS key PEM")
@@ -58,7 +56,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	serverAddr, err := net.ResolveUDPAddr("udp", u.Host)
 	if err != nil { return fmt.Errorf("resolve QUIC peer: %w", err) }
-	if err := tun.Configure(*tunName, *tunnelIP, *tunnelMTU, *maxFrame); err != nil { return fmt.Errorf("configure L3 TUN interface: %w", err) }
 	base, selectedIP, err := wan.Listen(ctx, *wan1, *wan1Iface, serverAddr)
 	if err != nil { return err }
 	logger.Info("primary WAN bound", "source_ip", selectedIP, "interface", *wan1Iface, "local", base.LocalAddr())
@@ -137,7 +134,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil { return err }
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
-	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName, "cidr", *tunnelIP, "groups", *groupCSV)
+	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName, "groups", *groupCSV)
 	err = p2mp.ClientPump(ctx, dev, stream, *maxFrame, groups, *multicastPPS, logger)
 	close(done)
 	return err
