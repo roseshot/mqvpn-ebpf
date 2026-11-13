@@ -18,6 +18,10 @@ key: /etc/mqvpn/client.key
 Run `mqvpn-client --config /etc/mqvpn/client.yaml`.
 `server` accepts a hostname, hostname:port or HTTPS URL; a missing path
 defaults to `/.well-known/masque/ethernet/` and port to 443.
+Use `path: /corp/masque/connect/` (or `--path /corp/masque/connect/`)
+when the Server instance uses a custom `path`. This overrides a URL's
+embedded path; paths must be canonical absolute paths without query,
+fragment, percent escapes or dot segments.
 
 The optional `address` is the **inner TUN host address with prefix**,
 not the WAN source address. When omitted or set to `auto`, Client requests
@@ -49,6 +53,8 @@ mTLS files and are never silently created or skipped.
 | Key | Purpose |
 | --- | --- |
 | `address` | Optional static TUN CIDR; omit or `auto` to request Server lease |
+| `path` | Optional MASQUE CONNECT path; default `/.well-known/masque/ethernet/` |
+| `accept_routes` | Apply authenticated Server-pushed routes (default true; false disables) |
 | `tun`, `mtu`, `max_frame` | TUN name and MTU override |
 | `connect_ip` | Pin remote IP while retaining `server` TLS DNS identity |
 | `server_name` | Explicit tenant DNS identity (IP URL compatibility) |
@@ -65,6 +71,12 @@ used as the server host, an explicit authenticated DNS `server_name`
 is mandatory; the daemon never disables TLS certificate verification.
 
 The daemon does not install firewall rules, policy routes, VRFs or
-forwarding rules. On hosts with multiple default routes or unusual
+forwarding rules except for route entries explicitly accepted from
+`push_routes` (and a protective host route for the actual Server
+public IP). Those managed routes are removed on session termination,
+while the original default route is left intact. Full-tunnel /0 pushes
+become two /1 entries to avoid overriding the host default.
+For dual-WAN MPQUIC, a push covering the Server public IP fails closed
+unless external source-specific policy routing provides isolation. On hosts with multiple default routes or unusual
 routing, explicitly set `source_interface` and if needed `source_ip`.
 TCP fallback uses the primary WAN only.

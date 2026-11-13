@@ -17,6 +17,8 @@ import (
 
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 )
 
 // RunServer requires one YAML config with a shared UDP listener.
@@ -169,6 +171,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	defer instance.hub.Detach(session)
 	if assigned:=session.TunnelAddress();assigned!=""{w.Header().Set(tunnelAddressHeader,assigned)}
+	if len(instance.prepared.spec.PushRoutes)>0 {
+		w.Header().Set(routepush.Header,strings.Join(instance.prepared.spec.PushRoutes,","))
+	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
 	instance.logger.Info("peer connected", "site", rule.ID, "remote", r.RemoteAddr)

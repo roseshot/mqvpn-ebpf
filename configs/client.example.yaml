@@ -8,6 +8,8 @@ cert: /etc/mqvpn/a-client.crt
 key: /etc/mqvpn/a-client.key
 
 # Advanced optional overrides (uncomment only as required):
+# path: /corp/masque/connect/      # default /.well-known/masque/ethernet/
+# accept_routes: false            # default true; Server-pushed routes
 # connect_ip: 198.51.100.10        # pin remote UDP/TCP destination
 # source_interface: enp1s0         # select primary WAN
 # source_ip: 192.0.2.10            # select specific primary WAN IP

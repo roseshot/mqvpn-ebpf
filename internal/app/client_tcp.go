@@ -106,6 +106,9 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	}
 	budget,err:=mtu.Plan(o.tunName,effectiveAddress,o.tunMTU,o.maxFrame,underlays)
 	if err!=nil{return err}
+	guard,err:=routepush.ProtectServer(server.IP,ip,o.wanInterface,o.tunName,pushedRoutes,false)
+	if err!=nil{return fmt.Errorf("protect TCP VPN server underlay route: %w",err)}
+	defer func(){if err:=guard.Close();err!=nil{logger.Warn("cleanup pushed TCP routes","error",err)}}()
 	logger.Info("effective TCP fallback TUN MTU","mtu",budget.TUNMTU,
 		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
@@ -114,6 +117,11 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if dynamicAddressRequested(o.tunAddress){openTUN=tun.OpenRouted}
 	device,err:=openTUN(o.tunName,effectiveAddress,budget.TUNMTU)
 	if err!=nil{return err}
+	if err:=guard.Install(o.tunName,pushedRoutes);err!=nil{
+		_ = device.Close()
+		return fmt.Errorf("apply TCP authenticated Server routes: %w",err)
+	}
+	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed over TCP","routes",routepush.Encode(pushedRoutes),"server_ip",server.IP)}
 	tcAttachment,err:=attachConfiguredTC(o.tunName,o.tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = device.Close();return fmt.Errorf("attach TCP TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)

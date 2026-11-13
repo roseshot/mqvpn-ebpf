@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
@@ -29,6 +30,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	tunName:=fs.String("tun","","Linux TUN interface name (created or attached by daemon)")
 	address:=fs.String("address","","TUN local host IPv4/IPv6 CIDR (required)")
 	tunnelPool:=fs.String("tunnel-pool","","optional per-instance connected-prefix dynamic Tunnel IP pool")
+	pushRoutes:=fs.String("push-routes","","optional comma-separated CIDRs to push to authenticated Clients")
 	mtu:=fs.Int("mtu",0,"TUN MTU (0 or omitted = automatic based on WAN, capped at 1400)")
 	peers:=fs.String("peers","","peer destination mapping YAML path")
 	cert:=fs.String("cert","","TLS server certificate path")
@@ -79,6 +81,10 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 		if updates["tun"]{inst.TUN=*tunName}
 		if updates["address"]{inst.Address=*address}
 		if updates["tunnel-pool"]{inst.TunnelPool=*tunnelPool}
+		if updates["push-routes"] {
+			inst.PushRoutes=nil
+			if *pushRoutes!=""{inst.PushRoutes=strings.Split(*pushRoutes,",")}
+		}
 		if updates["mtu"]{inst.MTU=*mtu}
 		if updates["peers"]{inst.Peers=*peers}
 		if updates["cert"]{inst.Cert=*cert}

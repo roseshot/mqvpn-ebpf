@@ -9,6 +9,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
+	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
@@ -25,6 +26,7 @@ type ServerInstance struct {
 	TUN        string `yaml:"tun"`
 	Address    string `yaml:"address"`
 	TunnelPool string `yaml:"tunnel_pool,omitempty"`
+	PushRoutes []string `yaml:"push_routes,omitempty"`
 	MTU        int    `yaml:"mtu,omitempty"`
 	Peers      string `yaml:"peers"`
 	Path       string `yaml:"path,omitempty"`
@@ -100,6 +102,12 @@ func (c *ServerConfig) Validate() error {
 		if err:=mtu.ValidateRequest(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
 			return fmt.Errorf("instance %s: %w",inst.Name,err)
 		}
+		routes,err:=routepush.Parse(inst.PushRoutes)
+		if err!=nil{return fmt.Errorf("instance %s push_routes: %w",inst.Name,err)}
+		if len(routes)>0 {
+			inst.PushRoutes=make([]string,len(routes))
+			for i,p:=range routes {inst.PushRoutes[i]=p.String()}
+		}
 		if inst.TC==nil {
 			defaultTC:=tcebpf.DefaultConfig()
 			inst.TC=&defaultTC
@@ -110,7 +118,7 @@ func (c *ServerConfig) Validate() error {
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
 		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
-		if !strings.HasPrefix(inst.Path, "/") { return fmt.Errorf("instance %s path must start with /", inst.Name) }
+		if err:=validateMasquePath(inst.Path);err!=nil{return fmt.Errorf("instance %s MASQUE path: %w",inst.Name,err)}
 		if inst.MaxFrame != 0 && (inst.MaxFrame < 64 || inst.MaxFrame > 65535) { return fmt.Errorf("instance %s invalid max_frame", inst.Name) }
 		if names[inst.Name] || tuns[inst.TUN] || sni[inst.ServerName] {
 			return fmt.Errorf("duplicate instance name, TUN or TLS server_name in %s", inst.Name)

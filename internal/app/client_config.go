@@ -13,6 +13,7 @@ import (
 // an authenticated server-managed Tunnel IP lease; static IPs still work.
 type clientFileConfig struct {
 	Server string `yaml:"server,omitempty"`
+	Path string `yaml:"path,omitempty"`
 	URL string `yaml:"url,omitempty"` // legacy full endpoint, if needed
 	Address string `yaml:"address,omitempty"`
 	CA string `yaml:"ca,omitempty"`
@@ -32,6 +33,7 @@ type clientFileConfig struct {
 	UDPDialTimeout string `yaml:"udp_dial_timeout,omitempty"`
 	TCPPort int `yaml:"tcp_port,omitempty"`
 	TC *clientFileTC `yaml:"tc,omitempty"`
+	AcceptRoutes *bool `yaml:"accept_routes,omitempty"`
 }
 
 type clientFileTC struct {
@@ -62,5 +64,22 @@ func expandClientServer(server string)(string,error){
 		return "",fmt.Errorf("invalid server %q: expected DNS host[:port] or https URL",server)
 	}
 	if u.Path=="" {u.Path=defaultPath}
+	return u.String(),nil
+}
+
+// applyClientMasquePath allows a separate YAML/CLI path to override the
+// default or a path embedded in an HTTPS server URL. Both QUIC and TCP use
+// the resulting endpoint.requestURL, so they can never disagree.
+func applyClientMasquePath(target,override string)(string,error){
+	u,err:=url.Parse(target)
+	if err!=nil {return "",fmt.Errorf("invalid Client endpoint: %w",err)}
+	if override!="" {
+		if err:=validateMasquePath(override);err!=nil{return "",err}
+		u.Path=override
+		u.RawPath=""
+	} else if u.Path=="" {
+		u.Path=defaultPath
+	}
+	if err:=validateMasquePath(u.Path);err!=nil{return "",err}
 	return u.String(),nil
 }

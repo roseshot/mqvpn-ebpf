@@ -97,13 +97,17 @@ mqvpn-client --server customer-a.vpn.example.com --tun-address 10.77.0.2/24 \
 ~~~
 
 The Client chooses the primary WAN source from the kernel route to the
-resolved remote IP, without adding routes. On unusual policy routing/VRF,
+resolved remote IP before the TUN is created. It only adds routes when
+accepting Server-pushed routes, as described below. On unusual policy routing/VRF,
 set `source_interface` and optionally `source_ip` in YAML, or use
 `--source-interface` / `--source-ip` explicitly. Secondary WAN paths
 still require `wan2_interface` or `wan2_ip`.
 
 `server` accepts `domain.example.com`, `domain.example.com:8443`, or
-an HTTPS URL with a custom path. DNS identity remains mandatory for mTLS
+an HTTPS URL with a custom path. `path: /corp/masque/connect/` or
+`--path /corp/masque/connect/` can override the endpoint path independently.
+Server instances use their own optional `path` field. Both sides default
+to `/.well-known/masque/ethernet/` when not configured. DNS identity remains mandatory for mTLS
 and tenant SNI. To connect to a pinned endpoint, use `connect_ip` while
 keeping `server` as the authenticated tenant domain:
 
@@ -189,6 +193,49 @@ Existing static clients retain their usual /24 address behavior and
 may still treat .255 as a broadcast; use dynamic/routed addressing on
 both endpoints for full pool reuse.
 See [Client configuration](docs/client-config.md).
+
+## Server-pushed routes and underlay protection
+
+An instance can advertise routes to each authenticated Client over either
+HTTP/3 CONNECT or the TCP Upgrade fallback. This is optional; when the
+list is omitted, the daemon preserves the old behavior.
+
+~~~yaml
+# server.instances.yaml: within an instance
+path: /corp/masque/connect/   # optional; default /.well-known/masque/ethernet/
+push_routes:
+  - 192.168.20.0/24
+  - 10.50.0.0/16
+  # - 0.0.0.0/0              # opt-in full-tunnel IPv4
+  # - ::/0                   # opt-in full-tunnel IPv6
+~~~
+
+~~~yaml
+# client.yaml
+server: customer-a.vpn.example.com
+path: /corp/masque/connect/   # must match Server instance
+# accept_routes: false        # optional explicit opt-out; default true
+~~~
+
+The Server sends `Mqvpn-Routes` only after mTLS Peer authorization.
+Client parses and validates the advertised CIDRs before modifying routes.
+For a matching Client session it first inserts a host route to the
+**actual resolved VPN Server public IP** via the original physical WAN,
+then creates the TUN and installs only the pushed routes. A full-tunnel
+IPv4 `/0` is installed as `0.0.0.0/1` and `128.0.0.0/1`, like
+OpenVPN's def1 strategy, so the original default remains in place.
+IPv6 `::/0` similarly becomes `::/1` and `8000::/1`.
+
+On disconnect or failure, the Client removes only routes it installed,
+without replacing existing administrator-owned routes. Failures apply
+rollback. Routes require `CAP_NET_ADMIN`. Dual-WAN MPQUIC rejects pushed
+routes that cover the Server's own public IP (such as `/0`), because a
+single unqualified host route cannot protect two WAN interfaces safely
+without policy routing; split-tunnel pushes that don't cover the
+Server remain supported. The VPN does not alter DNS, firewall, VRF,
+source-policy rules or persistent system settings. The route push applies
+at CONNECT session establishment; server changes require reconnect
+to reach an existing Client.
 
 ## Overlapping subnets and host routing
 

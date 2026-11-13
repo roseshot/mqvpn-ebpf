@@ -149,3 +149,38 @@ func TestServerTCConfigAndLegacyObjectSemantics(t *testing.T){
 	if err:=cfg.Validate();err!=nil{t.Fatalf("required mode must accept embedded ELF without object: %v",err)}
 	if cfg.Instances[0].TC.Object!="" {t.Fatal("explicit required mode unexpectedly requires external ELF")}
 }
+
+func TestInstancePushRoutesValidatedAndCanonical(t *testing.T){
+	cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("a","a.example.test","mq0")}}
+	cfg.Instances[0].PushRoutes=[]string{"192.168.99.6/24","0.0.0.0/0","2001:db8:2::1/64"}
+	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
+	got:=cfg.Instances[0].PushRoutes
+	if len(got)!=3 || got[0]!="192.168.99.0/24" || got[1]!="0.0.0.0/0" || got[2]!="2001:db8:2::/64" {t.Fatalf("routes not normalized: %v",got)}
+	for _,bad:=range [][]string{
+		{"bad"},
+		{"10.77.0.0/24","10.77.0.13/24"},
+		{"224.0.0.0/4"},
+		{"127.0.0.0/8"},
+	}{
+		c:=ServerConfig{Instances:[]ServerInstance{sampleInstance("a","a.example.test","mq0")}}
+		c.Instances[0].PushRoutes=bad
+		if err:=c.Validate();err==nil{t.Fatalf("unsafe push_routes accepted: %v",bad)}
+	}
+}
+
+func TestServerMasquePathDefaultAndCustom(t *testing.T){
+	inst:=sampleInstance("a","a.example.test","mq0")
+	cfg:=ServerConfig{Instances:[]ServerInstance{inst}}
+	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
+	if cfg.Instances[0].Path!=defaultPath{t.Fatalf("server default path changed: %q",cfg.Instances[0].Path)}
+	for _,good:=range []string{"/corp/connect/","/vpn","/tenant-a/masque/ethernet/"}{
+		inst.Path=good
+		cfg=ServerConfig{Instances:[]ServerInstance{inst}}
+		if err:=cfg.Validate();err!=nil||cfg.Instances[0].Path!=good{t.Fatalf("custom path %q rejected: %v",good,err)}
+	}
+	for _,bad:=range []string{"vpn","//tenant","/tenant//path","/tenant/../path","/tenant?query=1","/tenant#fragment","/tenant%2fpath"}{
+		inst.Path=bad
+		cfg=ServerConfig{Instances:[]ServerInstance{inst}}
+		if err:=cfg.Validate();err==nil{t.Fatalf("unsafe path %q accepted",bad)}
+	}
+}

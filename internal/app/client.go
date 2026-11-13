@@ -24,6 +24,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
 	configPath := fs.String("config", "", "optional concise client YAML configuration")
 	server := fs.String("server", "", "tenant DNS name or HTTPS endpoint (defaults to MASQUE path)")
+	pathFlag := fs.String("path", "", "optional MASQUE CONNECT path (default /.well-known/masque/ethernet/)")
 	urlFlag := fs.String("url", "", "https domain or IP URL of CONNECT-ETHERNET endpoint")
 	connectIP := fs.String("connect-ip", "", "connect to server IP without DNS resolution")
 	serverName := fs.String("server-name", "", "authenticated tenant DNS name used for TLS SNI and HTTP/3 authority")
@@ -60,6 +61,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			if !explicit[name] && value!=0 {*dst=value}
 		}
 		setString("server",server,file.Server)
+		setString("path",pathFlag,file.Path)
 		setString("connect-ip",connectIP,file.ConnectIP)
 		setString("server-name",serverName,file.ServerName)
 		setString("source-ip",wan1,file.SourceIP)
@@ -122,6 +124,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		target,err=expandClientServer(*server)
 		if err!=nil{return err}
 	}
+	target,err=applyClientMasquePath(target,*pathFlag)
+	if err!=nil{return fmt.Errorf("Client MASQUE path: %w",err)}
 	endpoint, err := planClientEndpoint(target, *connectIP, *serverName)
 	if err != nil { return err }
 	logger.Info("VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName,"transport",*transportMode)
@@ -249,12 +253,20 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	budget,err:=mtu.Plan(*tunName,effectiveAddress,*tunMTU,*maxFrame,underlays)
 	if err!=nil{return err}
+	guard,err:=routepush.ProtectServer(serverAddr.IP,selectedIP,*wan1Iface,*tunName,pushedRoutes,second!=nil)
+	if err!=nil{return fmt.Errorf("protect VPN server underlay route: %w",err)}
+	defer func(){if err:=guard.Close();err!=nil{logger.Warn("cleanup pushed routes","error",err)}}()
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
 	openTUN:=tun.Open
 	if dynamicAddressRequested(*tunAddress){openTUN=tun.OpenRouted}
 	dev, err := openTUN(*tunName,effectiveAddress,budget.TUNMTU)
 	if err != nil { return err }
+	if err:=guard.Install(*tunName,pushedRoutes);err!=nil {
+		_ = dev.Close()
+		return fmt.Errorf("apply authenticated Server routes: %w",err)
+	}
+	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed","routes",routepush.Encode(pushedRoutes),"server_ip",serverAddr.IP)}
 	tcAttachment,err:=attachConfiguredTC(*tunName,tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)

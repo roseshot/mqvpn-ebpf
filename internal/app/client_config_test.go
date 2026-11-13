@@ -82,3 +82,24 @@ func TestClientConfigCanRequestDynamicAddress(t *testing.T){
 	if err!=nil{t.Fatal(err)}
 	if !dynamicAddressRequested(cfg.Address) {t.Fatal("omitted client address must negotiate with the server")}
 }
+
+func TestClientRoutePushConsentConfiguration(t *testing.T){
+	path:=writeClientTestYAML(t,"server: vpn.example.com\naccept_routes: false\n")
+	cfg,err:=loadClientFile(path)
+	if err!=nil||cfg.AcceptRoutes==nil||*cfg.AcceptRoutes{t.Fatalf("Client opt-out not parsed: %+v %v",cfg,err)}
+}
+
+func TestClientYAMLMasquePathAndCLIOverride(t *testing.T) {
+	path:=writeClientTestYAML(t,"server: vpn.example.com\npath: /corp/connect/\n")
+	cfg,err:=loadClientFile(path)
+	if err!=nil || cfg.Path!="/corp/connect/"{t.Fatalf("client YAML path not parsed: %+v %v",cfg,err)}
+	target,err:=expandClientServer(cfg.Server)
+	if err!=nil{t.Fatal(err)}
+	target,err=applyClientMasquePath(target,cfg.Path)
+	if err!=nil || !strings.HasSuffix(target,"/corp/connect/"){t.Fatalf("YAML path override missing: %s %v",target,err)}
+	target,err=applyClientMasquePath(target,"/cli/override/")
+	if err!=nil || !strings.HasSuffix(target,"/cli/override/"){t.Fatalf("CLI path override missing: %s %v",target,err)}
+	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
+	err=RunClient(context.Background(),[]string{"--config",path,"--path","/invalid/../path"},logger)
+	if err==nil || !strings.Contains(err.Error(),"MASQUE"){t.Fatalf("invalid --path must fail before network: %v",err)}
+}

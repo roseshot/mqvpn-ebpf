@@ -14,6 +14,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/capsule"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
+	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 )
 
 // authorizeTCPRequest uses the SAME tenant SNI, current client CA, and peer
@@ -102,6 +103,9 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter,r *http.Request){
 	defer inst.hub.Detach(session)
 	responseHeaders:="HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: connect-ethernet\r\nCapsule-Protocol: ?1\r\n"
 	if assigned:=session.TunnelAddress();assigned!=""{responseHeaders+=tunnelAddressHeader+": "+assigned+"\r\n"}
+	if len(inst.prepared.spec.PushRoutes)>0 {
+		responseHeaders+=routepush.Header+": "+strings.Join(inst.prepared.spec.PushRoutes,",")+"\r\n"
+	}
 	_,err=rw.Writer.WriteString(responseHeaders+"\r\n")
 	if err!=nil{return}
 	if err=rw.Writer.Flush();err!=nil{return}
