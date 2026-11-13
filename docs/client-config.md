@@ -9,7 +9,7 @@ YAML values; old CLI deployments continue to work.
 
 ~~~yaml
 server: tenant.vpn.example.com
-address: 10.77.0.2/24
+# address: auto   # omitted = request a dynamic Tunnel IP from Server
 ca: /etc/mqvpn/ca.pem
 cert: /etc/mqvpn/client.pem
 key: /etc/mqvpn/client.key
@@ -19,14 +19,19 @@ Run `mqvpn-client --config /etc/mqvpn/client.yaml`.
 `server` accepts a hostname, hostname:port or HTTPS URL; a missing path
 defaults to `/.well-known/masque/ethernet/` and port to 443.
 
-The `address` is the **inner TUN host address with prefix**, not the
-WAN source address. It must be explicitly assigned; the daemon never
-infers it from peer routes. The `ca`, `cert` and `key` are required
+The optional `address` is the **inner TUN host address with prefix**,
+not the WAN source address. When omitted or set to `auto`, Client requests
+a Server-assigned Tunnel IP only after successful mTLS CONNECT. The Server
+must configure `tunnel_pool` and authorize this Peer with
+`dynamic_tunnel_ip: true`. Older Servers cannot supply the response,
+so the Client fails clearly before opening the TUN. An explicit static
+CIDR continues to work without address negotiation. The `ca`, `cert` and `key` are required
 mTLS files and are never silently created or skipped.
 
 ## Default behavior
 
-- TUN device: `mq0`.
+- TUN device: `mq0`. Tunnel IP: authenticated Server lease by default;
+  or a static CIDR from `address`.
 - Primary WAN: chosen from the kernel route to the server's resolved IP
   (connected UDP probe; no packets sent and no Linux routes changed).
 - MTU: automatic from selected WAN link; `max_frame = MTU + 14`.
@@ -39,6 +44,7 @@ mTLS files and are never silently created or skipped.
 
 | Key | Purpose |
 | --- | --- |
+| `address` | Optional static TUN CIDR; omit or `auto` to request Server lease |
 | `tun`, `mtu`, `max_frame` | TUN name and MTU override |
 | `connect_ip` | Pin remote IP while retaining `server` TLS DNS identity |
 | `server_name` | Explicit tenant DNS identity (IP URL compatibility) |

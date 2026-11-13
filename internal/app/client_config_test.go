@@ -75,3 +75,10 @@ func TestClientYAMLTCPAndTCPolicy(t *testing.T){
 	cfg,err:=loadClientFile(path)
 	if err!=nil||cfg.TC==nil||cfg.TC.Mode!="off"||cfg.TC.Stats==nil||*cfg.TC.Stats {t.Fatalf("TC YAML options lost: %+v %v",cfg,err)}
 }
+
+func TestClientConfigCanRequestDynamicAddress(t *testing.T){
+	path:=writeClientTestYAML(t,"server: tenant.vpn.example.com\nca: /etc/ca.crt\ncert: /etc/client.crt\nkey: /etc/client.key\n")
+	cfg,err:=loadClientFile(path)
+	if err!=nil{t.Fatal(err)}
+	if !dynamicAddressRequested(cfg.Address) {t.Fatal("omitted client address must negotiate with the server")}
+}

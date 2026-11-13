@@ -8,9 +8,9 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
-// clientFileConfig is the concise daemon configuration. Only server, address,
-// ca, cert and key are required in a standalone YAML file. Everything else is
-// optional and the long-standing command-line flags remain available.
+// clientFileConfig is the concise daemon configuration. The server and mTLS
+// identity files are required. Omitting address (or choosing "auto") requests
+// an authenticated server-managed Tunnel IP lease; static IPs still work.
 type clientFileConfig struct {
 	Server string `yaml:"server,omitempty"`
 	URL string `yaml:"url,omitempty"` // legacy full endpoint, if needed

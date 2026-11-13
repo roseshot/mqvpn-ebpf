@@ -82,6 +82,8 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter,r *http.Request){
 		http.Error(w,"unknown CONNECT-ETHERNET path",http.StatusNotFound)
 		return
 	}
+	requestDynamic,err:=wantsTunnelIP(r.Header.Get(tunnelAddressHeader))
+	if err!=nil{http.Error(w,err.Error(),http.StatusBadRequest);return}
 	hijacker,ok:=w.(http.Hijacker)
 	if !ok{http.Error(w,"HTTP/1.1 Upgrade unsupported",http.StatusInternalServerError);return}
 	conn,rw,err:=hijacker.Hijack()
@@ -91,14 +93,16 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter,r *http.Request){
 	if err!=nil{return}
 	ready:=make(chan struct{})
 	delayed:=&delayedCapsule{stream:stream,ready:ready,ctx:r.Context()}
-	session,err:=inst.hub.Attach(r.Context(),rule,delayed)
+	session,err:=inst.hub.AttachWithTunnelIP(r.Context(),rule,delayed,requestDynamic)
 	if err!=nil{
 		_,_=rw.Writer.WriteString("HTTP/1.1 409 Conflict\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
 		_ = rw.Writer.Flush()
 		return
 	}
 	defer inst.hub.Detach(session)
-	_,err=rw.Writer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: connect-ethernet\r\nCapsule-Protocol: ?1\r\n\r\n")
+	responseHeaders:="HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: connect-ethernet\r\nCapsule-Protocol: ?1\r\n"
+	if assigned:=session.TunnelAddress();assigned!=""{responseHeaders+=tunnelAddressHeader+": "+assigned+"\r\n"}
+	_,err=rw.Writer.WriteString(responseHeaders+"\r\n")
 	if err!=nil{return}
 	if err=rw.Writer.Flush();err!=nil{return}
 	close(ready)

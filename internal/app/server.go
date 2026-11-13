@@ -163,9 +163,12 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	streamer, ok := w.(http3.HTTPStreamer)
 	if !ok { http.Error(w, "HTTP/3 stream unavailable", http.StatusInternalServerError); return }
 	// Attach before sending HTTP 200 so duplicate sessions can get HTTP 409.
-	session, err := instance.hub.Attach(r.Context(), rule, streamer.HTTPStream())
-	if err != nil { http.Error(w, "site session already connected", http.StatusConflict); return }
+	requestDynamic,err:=wantsTunnelIP(r.Header.Get(tunnelAddressHeader))
+	if err!=nil{http.Error(w,err.Error(),http.StatusBadRequest);return}
+	session, err := instance.hub.AttachWithTunnelIP(r.Context(), rule, streamer.HTTPStream(),requestDynamic)
+	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	defer instance.hub.Detach(session)
+	if assigned:=session.TunnelAddress();assigned!=""{w.Header().Set(tunnelAddressHeader,assigned)}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
 	instance.logger.Info("peer connected", "site", rule.ID, "remote", r.RemoteAddr)

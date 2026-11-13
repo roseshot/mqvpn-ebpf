@@ -24,6 +24,7 @@ type ServerInstance struct {
 	ServerName string `yaml:"server_name"`
 	TUN        string `yaml:"tun"`
 	Address    string `yaml:"address"`
+	TunnelPool string `yaml:"tunnel_pool,omitempty"`
 	MTU        int    `yaml:"mtu,omitempty"`
 	Peers      string `yaml:"peers"`
 	Path       string `yaml:"path,omitempty"`

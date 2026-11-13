@@ -31,6 +31,7 @@ import (
 type preparedInstance struct {
 	spec ServerInstance
 	peers *p2mp.Config
+	pool *p2mp.TunnelPool
 	tlsConfig *tls.Config
 	peerHash [32]byte
 	staticHash [32]byte
@@ -102,6 +103,13 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		}
 		peers, err := p2mp.Parse(file)
 		if err != nil { return preparedServer{}, fmt.Errorf("instance %s peers: %w", spec.Name, err) }
+		pool,err:=p2mp.NewTunnelPool(spec.TunnelPool,spec.Address,peers)
+		if err!=nil {return preparedServer{},fmt.Errorf("instance %s dynamic tunnel IP: %w",spec.Name,err)}
+		if pool==nil {
+			for _,peer:=range peers.Peers {
+				if peer.DynamicTunnelIP {return preparedServer{},fmt.Errorf("instance %s peer %s requires tunnel_pool",spec.Name,peer.ID)}
+			}
+		}
 		cert, err := keyPair(spec.Cert, spec.Key)
 		if err != nil { return preparedServer{}, fmt.Errorf("instance %s: %w", spec.Name, err) }
 		ca, err := certPool(spec.ClientCA)
@@ -140,7 +148,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		var static [32]byte
 		copy(static[:], hash.Sum(nil))
 		next.instances[spec.Name] = preparedInstance{
-			spec: spec, peers: peers, tlsConfig: perInstanceTLS,
+			spec: spec, peers: peers, pool: pool, tlsConfig: perInstanceTLS,
 			peerHash: sha256.Sum256(raw), staticHash: static,
 		}
 	}
@@ -215,6 +223,7 @@ func (m *serverManager) start(p preparedInstance) error {
 	logger := m.logger.With("instance", p.spec.Name, "tun", p.spec.TUN)
 	hub, err := p2mp.New(device, p.peers, p.spec.MaxFrame, logger)
 	if err != nil { _ = device.Close(); return err }
+	if err:=hub.SetTunnelPool(p.pool);err!=nil{_ = device.Close();return fmt.Errorf("instance %s tunnel pool: %w",p.spec.Name,err)}
 	policy:=tcebpf.DefaultConfig()
 	if p.spec.TC!=nil{policy=*p.spec.TC}
 	tc,err:=attachConfiguredTC(p.spec.TUN,policy,p.spec.MTU,logger)
@@ -325,7 +334,7 @@ func (m *serverManager) apply(next preparedServer) error {
 			continue
 		}
 		if old.peerHash != newCfg.peerHash {
-			if err := old.hub.ReplaceConfig(newCfg.peers); err != nil { return err }
+			if err := old.hub.ReplaceConfigWithPool(newCfg.peers,newCfg.pool); err != nil { return err }
 			old.peerHash = newCfg.peerHash
 			old.peerConfig = newCfg.peers
 			old.logger.Info("P2MP peer map hot-reloaded", "peers", len(newCfg.peers.Peers))

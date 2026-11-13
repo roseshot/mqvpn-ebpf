@@ -139,6 +139,25 @@ func TestAutoTCMissingELFAndELFInstallationOnReload(t *testing.T) {
 	if _,err:=prepareServer(cfg);err==nil{t.Fatal("required policy must reject missing ELF")}
 }
 
+func TestServerTunnelPoolRequiresAuthorizedPeers(t *testing.T) {
+	cfg,peerPath:=testServerFiles(t)
+	cfg.Instances[0].TunnelPool="10.77.0.0/24"
+	if _,err:=prepareServer(cfg);err==nil{t.Fatal("tunnel pool without dynamic peers accepted")}
+	fp:=sha256.Sum256([]byte("test-client"))
+	file:=p2mp.FileConfig{Peers:[]p2mp.PeerConfig{{ID:"site-a",CertificateSHA256:hex.EncodeToString(fp[:]),DynamicTunnelIP:true}}}
+	raw,err:=configfile.Marshal(peerPath,file)
+	if err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(peerPath,raw,0600);err!=nil{t.Fatal(err)}
+	p,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	if p.instances["edge-a"].pool==nil{t.Fatal("validated pool not prepared")}
+	if p.instances["edge-a"].spec.TunnelPool!="10.77.0.0/24"{t.Fatal("pool config lost")}
+	cfg.Instances[0].TunnelPool=""
+	if _,err:=prepareServer(cfg);err==nil{t.Fatal("dynamic peer without pool accepted")}
+	cfg.Instances[0].TunnelPool="10.78.0.0/24"
+	if _,err:=prepareServer(cfg);err==nil{t.Fatal("off-link tunnel pool accepted")}
+}
+
 func TestTCObjectReloadUpdatesOnlyInstanceHash(t *testing.T) {
 	cfg,_:=testServerFiles(t)
 	object:=filepath.Join(t.TempDir(),"tun_tc.o")

@@ -97,7 +97,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if fs.NArg()!=0{return errors.New("unexpected positional client arguments")}
 	if explicit["url"]&&explicit["server"] {return errors.New("--server and --url are mutually exclusive")}
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
-	if err:=mtu.ValidateRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
+	if err:=validateClientAddressRequest(*tunName,*tunAddress,*tunMTU,*maxFrame);err!=nil{return err}
 	// Legacy explicit TC flags remain strict unless --tc-mode is supplied.
 	legacyTC,explicitMode:=false,explicit["tc-mode"]
 	for _,name:=range []string{"tc-object","mss-clamp","tc-stats"}{
@@ -197,6 +197,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
+	if dynamicAddressRequested(*tunAddress){request.Header.Set(tunnelAddressHeader,"auto")}
 	stream, err := h3.OpenRequestStream(ctx)
 	if err != nil { return err }
 	defer stream.Close()
@@ -210,7 +211,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if response.Header.Get("Capsule-Protocol") != "?1" {
 		return errors.New("missing successful Capsule-Protocol response")
 	}
-	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName)
+	effectiveAddress,err:=resolveClientTunnelAddress(*tunAddress,response.Header.Get(tunnelAddressHeader))
+	if err!=nil{return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w",err)}
+	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName,"tunnel_address",effectiveAddress)
 
 	if *wan2 != "" || *wan2Iface != "" {
 		if !conn.ConnectionState().SupportsMultipath {
@@ -244,18 +247,18 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			underlays=append(underlays,secondary)
 		}
 	}
-	budget,err:=mtu.Plan(*tunName,*tunAddress,*tunMTU,*maxFrame,underlays)
+	budget,err:=mtu.Plan(*tunName,effectiveAddress,*tunMTU,*maxFrame,underlays)
 	if err!=nil{return err}
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
-	dev, err := tun.Open(*tunName,*tunAddress,budget.TUNMTU)
+	dev, err := tun.Open(*tunName,effectiveAddress,budget.TUNMTU)
 	if err != nil { return err }
 	tcAttachment,err:=attachConfiguredTC(*tunName,tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
-	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",*tunAddress,"mtu",budget.TUNMTU)
+	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)
 	err = p2mp.ClientPump(ctx, dev, stream, budget.MaxFrame, logger)
 	close(done)
 	return err

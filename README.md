@@ -129,6 +129,57 @@ VPN instances on one host still need separate TUNs/routing domains.
 when the server has enabled TCP fallback; forced TCP uses the primary WAN
 only. The transport never downgrades on authentication failures.
 
+## Server-assigned Tunnel IP leases (optional)
+
+The Server can dynamically assign a client TUN IPv4/IPv6 host address from
+an instance-specific pool **only after mTLS Peer authorization**. The
+assigned CIDR is returned in the authenticated HTTP/3 CONNECT 200 or
+HTTP/1.1 Upgrade 101 `Mqvpn-Tunnel-Address` response header; Client
+configures the TUN **after** receiving and validating it.
+
+Configure `tunnel_pool` to match the instance's TUN connected prefix:
+
+~~~yaml
+instances:
+  - name: customer-a
+    server_name: customer-a.vpn.example.com
+    tun: mq0
+    address: 10.77.0.1/24
+    tunnel_pool: 10.77.0.0/24
+    peers: /etc/mqvpn/peers-a.yaml
+    cert: /etc/mqvpn/tls/a.crt
+    key: /etc/mqvpn/tls/a.key
+    client_ca: /etc/mqvpn/tls/ca.crt
+~~~
+
+In the instance's peer YAML, allow individual authenticated sites to
+request a lease (other Peers remain static):
+
+~~~yaml
+peers:
+  - id: site-a
+    certificate_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    dynamic_tunnel_ip: true
+    routes: [192.168.20.0/24] # optional LAN; no overlap with tunnel_pool
+~~~
+
+For the matching Client, omit `address` (or use `address: auto`) in
+`client.yaml`. Its remaining required values are `server`, `ca`,
+`cert`, and `key`. To retain a static address, provide
+`address: 10.77.0.2/24` as before; no negotiation happens.
+
+The pool excludes the Server's TUN IP, IPv4 network and broadcast
+addresses, and reserves existing static host (/32 or /128) Peer destinations.
+Broader overlapping static routes are rejected. Dynamic allocations remain
+unique across concurrent sessions. A lease is released on disconnect
+or Peer revocation. Leases are **session-scoped**, not persisted across
+reconnect/restart and not an address reservation service. Each VPN
+instance allocates independently, including when tenant subnets overlap.
+Dynamic peers without a pool and clients requesting a lease from an
+unauthorized Server are rejected. There is no DHCP, kernel route
+installation, firewall policy or inner-source anti-spoofing added.
+See [Client configuration](docs/client-config.md).
+
 ## Overlapping subnets and host routing
 
 `customer-a` and `customer-b` may both use `10.77.0.0/24` tunnel
@@ -166,9 +217,10 @@ the daemon imposes no inner traffic ACLs, mDNS filters or PPS limits.
 Both Server and Client now create the named Linux L3 TUN on startup (or
 attach to an existing TUN) and configure its **explicit host IP/CIDR**.
 The Server YAML instance requires `address`, e.g.
-`address: 10.77.0.1/24`; `mtu` defaults to WAN-aware automatic sizing capped at 1400. The Client
-requires `--tun-address 10.77.0.2/24` and accepts
-`--tun-mtu` (optional override). No TUN IP is inferred from a Peer route map.
+`address: 10.77.0.1/24`; `mtu` defaults to WAN-aware automatic sizing capped at 1400. The Client accepts an explicit `--tun-address 10.77.0.2/24`
+(static) or requests an authenticated Server lease by default when its
+address is omitted. `--tun-mtu` remains an optional override. No TUN
+IP is inferred from a Peer route map.
 
 The setup order is: **TUNSETIFF → set MTU → assign IP/CIDR with
 normal Linux address flags → set UP → verify address, MTU and UP**.

@@ -17,6 +17,7 @@ type PeerConfig struct {
 	ID string `yaml:"id"`
 	CertificateSHA256 string `yaml:"certificate_sha256"`
 	Routes []string `yaml:"routes"`
+	DynamicTunnelIP bool `yaml:"dynamic_tunnel_ip,omitempty"`
 }
 
 type FileConfig struct {
@@ -27,6 +28,7 @@ type Rule struct {
 	ID string
 	Fingerprint [32]byte
 	Routes []netip.Prefix
+	DynamicTunnelIP bool
 }
 
 type Config struct {
@@ -55,8 +57,8 @@ func Parse(f FileConfig)(*Config,error){
 		copy(digest[:],raw)
 		if digests[digest]{return nil,fmt.Errorf("duplicate client certificate fingerprint for %s",p.ID)}
 		digests[digest]=true
-		if len(p.Routes)==0{return nil,fmt.Errorf("peer %s has no destination prefixes",p.ID)}
-		r:=&Rule{ID:p.ID,Fingerprint:digest}
+		if len(p.Routes)==0 && !p.DynamicTunnelIP{return nil,fmt.Errorf("peer %s has no destination prefixes",p.ID)}
+		r:=&Rule{ID:p.ID,Fingerprint:digest,DynamicTunnelIP:p.DynamicTunnelIP}
 		for _,cidr:=range p.Routes{
 			prefix,err:=netip.ParsePrefix(cidr)
 			if err!=nil||!prefix.IsValid()||prefix.Addr().IsMulticast(){

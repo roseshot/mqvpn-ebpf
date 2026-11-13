@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 
@@ -25,8 +26,13 @@ type Session struct{
 	done chan struct{}
 	ctx context.Context
 	cancel context.CancelFunc
+	tunnelAddress netip.Prefix
 }
 func(s *Session)ID()string{return s.rule.ID}
+func(s *Session)TunnelAddress() string {
+	if !s.tunnelAddress.IsValid() {return ""}
+	return s.tunnelAddress.String()
+}
 
 type Hub struct{
 	device io.ReadWriteCloser
@@ -35,6 +41,7 @@ type Hub struct{
 	log *slog.Logger
 	mu sync.RWMutex
 	peers map[string]*Session
+	tunnelPool *TunnelPool
 	closed bool
 	writer sync.Mutex
 	txFrames atomic.Uint64
@@ -59,7 +66,22 @@ func(h *Hub)Authorize(certDER []byte)(*Rule,error){
 	return rule,nil
 }
 
+func(h *Hub)SetTunnelPool(pool *TunnelPool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.peers)>0 {return errors.New("cannot replace tunnel pool with active sessions")}
+	h.tunnelPool=pool
+	return nil
+}
+
 func(h *Hub)Attach(ctx context.Context,rule *Rule,stream Stream)(*Session,error){
+	return h.AttachWithTunnelIP(ctx,rule,stream,false)
+}
+
+// AttachWithTunnelIP allocates only after certificate authorization. The
+// requested mode must match the authorized peer policy; old clients cannot
+// accidentally enter dynamic mode or receive a different static address.
+func(h *Hub)AttachWithTunnelIP(ctx context.Context,rule *Rule,stream Stream,requestDynamic bool)(*Session,error){
 	if rule==nil||stream==nil{return nil,errors.New("peer and stream required")}
 	h.mu.Lock()
 	if h.closed { h.mu.Unlock(); return nil, errors.New("VPN instance is stopping") }
@@ -67,12 +89,25 @@ func(h *Hub)Attach(ctx context.Context,rule *Rule,stream Stream)(*Session,error)
 	// Verify it against the live config while holding the same lock as reload.
 	valid:=false
 	for _,current:=range h.cfg.Peers{
-		if current.ID==rule.ID && current.Fingerprint==rule.Fingerprint {valid=true;break}
+		if current.ID==rule.ID && current.Fingerprint==rule.Fingerprint && current.DynamicTunnelIP==rule.DynamicTunnelIP {valid=true;break}
 	}
 	if !valid{h.mu.Unlock();return nil,fmt.Errorf("peer %s authentication changed during reload",rule.ID)}
 	if _,exists:=h.peers[rule.ID];exists{h.mu.Unlock();return nil,fmt.Errorf("peer %s already connected",rule.ID)}
+	var lease netip.Prefix
+	if requestDynamic {
+		if !rule.DynamicTunnelIP || h.tunnelPool==nil {
+			h.mu.Unlock()
+			return nil,fmt.Errorf("peer %s not authorized for dynamic tunnel IP",rule.ID)
+		}
+		var err error
+		lease,err=h.tunnelPool.allocate(h.peers)
+		if err!=nil{h.mu.Unlock();return nil,fmt.Errorf("peer %s tunnel pool: %w",rule.ID,err)}
+	} else if rule.DynamicTunnelIP {
+		h.mu.Unlock()
+		return nil,fmt.Errorf("peer %s must request a dynamic tunnel IP",rule.ID)
+	}
 	sessionCtx,sessionCancel:=context.WithCancel(ctx)
-	s:=&Session{rule:rule,stream:stream,tx:make(chan []byte,256),done:make(chan struct{}),ctx:sessionCtx,cancel:sessionCancel}
+	s:=&Session{rule:rule,stream:stream,tx:make(chan []byte,256),done:make(chan struct{}),ctx:sessionCtx,cancel:sessionCancel,tunnelAddress:lease}
 	h.peers[rule.ID]=s
 	h.mu.Unlock()
 	go func(){
@@ -161,6 +196,15 @@ func(h *Hub)egress(packet []byte){
 		return
 	}
 	h.mu.RLock()
+	// Assigned host addresses take precedence over static LAN routes.
+	// The pool validator rejects overlapping peer route prefixes.
+	for _,leased:=range h.peers {
+		if leased.tunnelAddress.IsValid() && leased.tunnelAddress.Addr()==dst {
+			h.mu.RUnlock()
+			h.send(leased,packet)
+			return
+		}
+	}
 	rule:=h.cfg.Destination(dst)
 	if rule==nil{
 		h.mu.RUnlock()
@@ -211,14 +255,35 @@ func(h *Hub)Counters()(tx,rx,drops uint64){
 // rotated certificate cancels its old session. No Linux routes, addresses,
 // multicast memberships, or TUN state are changed here.
 func (h *Hub) ReplaceConfig(next *Config) error {
+	return h.replaceConfig(next,nil,false)
+}
+
+// ReplaceConfigWithPool refreshes static host reservations atomically with
+// peer routes. If a new reservation collides with an active lease, reload
+// is rejected without evicting or silently reassigning a connected peer.
+func (h *Hub) ReplaceConfigWithPool(next *Config, pool *TunnelPool) error {
+	return h.replaceConfig(next,pool,true)
+}
+
+func (h *Hub) replaceConfig(next *Config,pool *TunnelPool,updatePool bool) error {
 	if next==nil || len(next.Peers)==0 {return errors.New("replacement peers configuration is empty")}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	accepted:=make(map[string][32]byte,len(next.Peers))
-	for _,rule:=range next.Peers{accepted[rule.ID]=rule.Fingerprint}
+	if updatePool {
+		for _,session:=range h.peers {
+			if !session.tunnelAddress.IsValid(){continue}
+			addr:=session.tunnelAddress.Addr()
+			if pool==nil || !pool.usable(addr) {
+				return fmt.Errorf("cannot reload peer routes: active tunnel lease %s would collide with new pool reservations",addr)
+			}
+		}
+		h.tunnelPool=pool
+	}
+	accepted:=make(map[string]*Rule,len(next.Peers))
+	for _,rule:=range next.Peers{accepted[rule.ID]=rule}
 	for id,s:=range h.peers {
-		fingerprint,ok:=accepted[id]
-		if !ok || fingerprint!=s.rule.Fingerprint {
+		rule,ok:=accepted[id]
+		if !ok || rule.Fingerprint!=s.rule.Fingerprint || rule.DynamicTunnelIP!=s.rule.DynamicTunnelIP {
 			delete(h.peers,id)
 			s.cancel()
 			close(s.done)

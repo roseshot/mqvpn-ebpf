@@ -10,3 +10,13 @@ peers:
     routes:
       - 10.77.0.3/32
       - 192.168.30.0/24
+
+# Dynamic client Tunnel IP example (inside a server instance configured with
+# tunnel_pool: 10.77.0.0/24):
+# peers:
+#   - id: dynamic-client
+#     certificate_sha256: "PUT_CLIENT_CERT_SHA256_HERE"
+#     dynamic_tunnel_ip: true
+#     routes: [192.168.20.0/24]  # optional LAN behind the peer, not in pool
+# A dynamic-only peer may omit routes. The server forwards its leased /32 or
+# /128 host address to the active authenticated session.

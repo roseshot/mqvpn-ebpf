@@ -124,3 +124,56 @@ func TestTCPFallbackHTTPAndAuthRejection(t *testing.T){
 		if rr.Code!=tc.want{t.Fatalf("wrong error: got %d want %d",rr.Code,tc.want)}
 	}
 }
+
+
+// Dynamic leases are delivered by the authenticated TCP/1.1 Upgrade as well
+// as HTTP/3 CONNECT; the TUN is not configured before this response.
+func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
+	cfg,_:=testServerFiles(t)
+	cfg.Instances[0].TunnelPool="10.77.0.0/24"
+	certBytes,err:=os.ReadFile(cfg.Instances[0].Cert)
+	if err!=nil{t.Fatal(err)}
+	block,_:=pem.Decode(certBytes)
+	if block==nil{t.Fatal("invalid test cert")}
+	fp:=sha256.Sum256(block.Bytes)
+	data,err:=configfile.Marshal(cfg.Instances[0].Peers,p2mp.FileConfig{Peers:[]p2mp.PeerConfig{{
+		ID:"site-a",CertificateSHA256:hex.EncodeToString(fp[:]),DynamicTunnelIP:true,
+	}}})
+	if err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(cfg.Instances[0].Peers,data,0600);err!=nil{t.Fatal(err)}
+	prepared,err:=prepareServer(cfg)
+	if err!=nil{t.Fatal(err)}
+	p:=prepared.instances["edge-a"]
+	hub,err:=p2mp.New(&tcpMockTun{out:make(chan []byte,1)},p.peers,p.spec.MaxFrame,slog.Default())
+	if err!=nil{t.Fatal(err)}
+	if err:=hub.SetTunnelPool(p.pool);err!=nil{t.Fatal(err)}
+	mgr:=newServerManager(context.Background(),slog.Default())
+	mgr.tcpListen="127.0.0.1:0"
+	mgr.mux.Publish(map[string]*liveInstance{"edge-a":{prepared:p,hub:hub,logger:slog.Default()}})
+	if err:=mgr.startTCPListener();err!=nil{t.Fatal(err)}
+	defer func(){hub.CloseSessions();_ = mgr.tcpServer.Close();_ = mgr.tcpListener.Close();<-mgr.tcpDone}()
+	cert,err:=tls.LoadX509KeyPair(cfg.Instances[0].Cert,cfg.Instances[0].Key)
+	if err!=nil{t.Fatal(err)}
+	ca,err:=certPool(cfg.Instances[0].ClientCA)
+	if err!=nil{t.Fatal(err)}
+	conn,err:=tls.DialWithDialer(&net.Dialer{Timeout:3*time.Second},"tcp",mgr.tcpListener.Addr().String(),&tls.Config{
+		MinVersion:tls.VersionTLS13,ServerName:"edge-a.example.test",
+		RootCAs:ca,Certificates:[]tls.Certificate{cert},NextProtos:[]string{"http/1.1"},
+	})
+	if err!=nil{t.Fatal(err)}
+	defer conn.Close()
+	req,err:=http.NewRequest(http.MethodGet,"https://edge-a.example.test/.well-known/masque/ethernet/",nil)
+	if err!=nil{t.Fatal(err)}
+	req.Header.Set("Connection","Upgrade")
+	req.Header.Set("Upgrade","connect-ethernet")
+	req.Header.Set("Capsule-Protocol","?1")
+	req.Header.Set(tunnelAddressHeader,"auto")
+	if err:=req.Write(conn);err!=nil{t.Fatal(err)}
+	response,err:=http.ReadResponse(bufio.NewReader(conn),req)
+	if err!=nil{t.Fatal(err)}
+	if response.StatusCode!=101 || response.Header.Get(tunnelAddressHeader)!="10.77.0.2/24" {
+		t.Fatalf("expected assigned address in TCP 101: %s / %q",response.Status,response.Header.Get(tunnelAddressHeader))
+	}
+	assigned,err:=resolveClientTunnelAddress("auto",response.Header.Get(tunnelAddressHeader))
+	if err!=nil||assigned!="10.77.0.2/24"{t.Fatalf("client rejected server lease: %s %v",assigned,err)}
+}

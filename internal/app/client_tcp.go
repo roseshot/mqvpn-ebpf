@@ -82,6 +82,7 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	request.Header.Set("Connection","Upgrade")
 	request.Header.Set("Upgrade","connect-ethernet")
 	request.Header.Set("Capsule-Protocol","?1")
+	if dynamicAddressRequested(o.tunAddress){request.Header.Set(tunnelAddressHeader,"auto")}
 	if err:=request.Write(conn);err!=nil{return fmt.Errorf("send TCP CONNECT-ETHERNET Upgrade: %w",err)}
 	_ = conn.SetReadDeadline(time.Now().Add(10*time.Second))
 	br:=bufio.NewReader(conn)
@@ -95,23 +96,25 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 		return fmt.Errorf("TCP CONNECT-ETHERNET rejected: %s",response.Status)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	effectiveAddress,err:=resolveClientTunnelAddress(o.tunAddress,response.Header.Get(tunnelAddressHeader))
+	if err!=nil{return fmt.Errorf("TCP tunnel IP negotiation: %w",err)}
 	var underlays []mtu.Underlay
 	if o.tunMTU==0 {
 		link,err:=wan.SourceUnderlay(ip,o.wanInterface)
 		if err!=nil{return fmt.Errorf("TCP fallback WAN MTU: %w",err)}
 		underlays=append(underlays,link)
 	}
-	budget,err:=mtu.Plan(o.tunName,o.tunAddress,o.tunMTU,o.maxFrame,underlays)
+	budget,err:=mtu.Plan(o.tunName,effectiveAddress,o.tunMTU,o.maxFrame,underlays)
 	if err!=nil{return err}
 	logger.Info("effective TCP fallback TUN MTU","mtu",budget.TUNMTU,
 		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
 	if err!=nil{return err}
-	device,err:=tun.Open(o.tunName,o.tunAddress,budget.TUNMTU)
+	device,err:=tun.Open(o.tunName,effectiveAddress,budget.TUNMTU)
 	if err!=nil{return err}
 	tcAttachment,err:=attachConfiguredTC(o.tunName,o.tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = device.Close();return fmt.Errorf("attach TCP TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)
-	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName)
+	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName,"tunnel_address",effectiveAddress)
 	return p2mp.ClientPump(ctx,device,stream,budget.MaxFrame,logger)
 }
