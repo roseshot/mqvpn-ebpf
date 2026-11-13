@@ -70,3 +70,25 @@ func TestClientEndpointRejectUnsafeOrAmbiguousTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestClientEndpointDefaultsToHTTPSPort443(t *testing.T) {
+	cases := []struct {
+		rawURL, connectIP, serverName, dial string
+	}{
+		{"https://tenant.example.com"+clientPath, "", "", "tenant.example.com:443"},
+		{"https://tenant.example.com"+clientPath, "198.51.100.15", "", "198.51.100.15:443"},
+		{"https://198.51.100.15"+clientPath, "", "tenant.example.com", "198.51.100.15:443"},
+		{"https://[2001:db8::15]"+clientPath, "", "tenant.example.com", "[2001:db8::15]:443"},
+	}
+	for _, tc := range cases {
+		got, err := planClientEndpoint(tc.rawURL, tc.connectIP, tc.serverName)
+		if err != nil { t.Fatalf("%s: %v", tc.rawURL, err) }
+		if got.dialAddress != tc.dial || got.serverName != "tenant.example.com" {
+			t.Fatalf("%s: unexpected endpoint %+v", tc.rawURL, got)
+		}
+		authority, err := url.Parse(got.requestURL)
+		if err != nil || authority.Port() != "443" || authority.Hostname() != "tenant.example.com" {
+			t.Fatalf("%s: incorrect CONNECT authority %+v: %v", tc.rawURL, got, err)
+		}
+	}
+}

@@ -16,13 +16,13 @@ func sampleInstance(name, serverName, tunName string) ServerInstance {
 
 func TestSharedUDPConfigAndDefaults(t *testing.T) {
 	cfg := ServerConfig{
-		Listen: "0.0.0.0:4433",
 		Instances: []ServerInstance{
 			sampleInstance("a", "a.example.test", "mq0"),
 			sampleInstance("b", "b.example.test", "mq1"),
 		},
 	}
 	if err := cfg.Validate(); err != nil { t.Fatal(err) }
+	if cfg.Listen != defaultServerListen { t.Fatalf("expected UDP/443, got %q", cfg.Listen) }
 	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 1160 {
 		t.Fatal("default path/frame missing")
 	}
@@ -39,10 +39,9 @@ func TestDuplicateSNIAndTUNRejected(t *testing.T) {
 		if err := cfg.Validate(); err == nil { t.Fatalf("accepted conflicting instance %+v", second) }
 	}
 }
-func TestMissingSharedPortOrSNIRejected(t *testing.T) {
+func TestMissingSNIRejected(t *testing.T) {
 	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("a", "a.example.test", "mq0")}}
-	if err := cfg.Validate(); err == nil { t.Fatal("missing shared listen accepted") }
-	cfg.Listen = "0.0.0.0:4433"
+	if err := cfg.Validate(); err != nil || cfg.Listen != defaultServerListen { t.Fatalf("default listen: %q, %v", cfg.Listen, err) }
 	cfg.Instances[0].ServerName = ""
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "server_name") { t.Fatal(err) }
 	for _, s := range []string{"10.77.0.1", "*.vpn.test", "a", "a..test", "-a.test", "a.test."} {
@@ -59,4 +58,10 @@ func TestLegacyPerInstanceListenerAndJSONRejected(t *testing.T) {
 		if err := os.WriteFile(path, []byte(text), 0600); err != nil { t.Fatal(err) }
 		if _, err := loadServerConfig(path); err == nil { t.Fatalf("legacy file accepted %q", path) }
 	}
+}
+
+func TestExplicitSharedUDPPortPreserved(t *testing.T) {
+	cfg := ServerConfig{Listen: "127.0.0.1:54433", Instances: []ServerInstance{sampleInstance("a","a.example.test","mq0")}}
+	if err := cfg.Validate(); err != nil { t.Fatal(err) }
+	if cfg.Listen != "127.0.0.1:54433" { t.Fatalf("explicit port changed to %q",cfg.Listen) }
 }

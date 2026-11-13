@@ -17,7 +17,9 @@ Each instance has:
 - its own TLS certificate, verified client CA and Peer destination map;
 - its own P2MP sessions, so overlaps between instances are allowed.
 
-All instances share the **top-level `listen: "0.0.0.0:4433"`**. The server
+All instances use **UDP/443 by default**. The optional top-level
+`listen: "0.0.0.0:443"` overrides the bind address and port; omitting
+`listen` binds to `0.0.0.0:443`. The server
 accepts QUIC handshakes on this one UDP socket. TLS SNI determines which
 instance certificate and client CA are used; the same SNI also selects
 which P2MP hub handles the CONNECT-ETHERNET request. HTTP/3 authority must
@@ -26,7 +28,7 @@ tenant that could accidentally receive another VPN's traffic.
 
 ~~~yaml
 # /etc/mqvpn/server.yaml
-listen: "0.0.0.0:4433"
+# listen is optional (default 0.0.0.0:443, UDP)
 instances:
   - name: customer-a
     server_name: customer-a.vpn.example.com
@@ -52,13 +54,13 @@ Clients target different hostnames but the **same UDP port**:
 
 ~~~bash
 mqvpn-client \
-  --url https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
   --tun mq0 --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 
 mqvpn-client \
-  --url https://customer-b.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --url https://customer-b.vpn.example.com:443/.well-known/masque/ethernet/ \
   --tun mq0 --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/b-ca.crt \
   --cert /etc/mqvpn/b-client.crt --key /etc/mqvpn/b-client.key
@@ -75,7 +77,7 @@ IP. TLS certificate chain and DNS SAN verification remain enabled.
 
 ~~~bash
 mqvpn-client \
-  --url https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
   --tun mq0 --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
@@ -85,7 +87,7 @@ mqvpn-client \
 
 ~~~bash
 mqvpn-client \
-  --url https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/ \
+  --url https://customer-a.vpn.example.com:443/.well-known/masque/ethernet/ \
   --connect-ip 198.51.100.10 \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
   --tun mq0 --ca /etc/mqvpn/a-ca.crt \
@@ -96,7 +98,7 @@ mqvpn-client \
 
 ~~~bash
 mqvpn-client \
-  --url https://198.51.100.10:4433/.well-known/masque/ethernet/ \
+  --url https://198.51.100.10:443/.well-known/masque/ethernet/ \
   --server-name customer-a.vpn.example.com \
   --source-ip 192.0.2.10 --source-interface enp1s0 \
   --tun mq0 --ca /etc/mqvpn/a-ca.crt \
@@ -112,6 +114,13 @@ destination; it does not override TLS identity or VPN TUN routes.
 On separate client hosts, local `mq0` names may be the same. If both
 VPN instances are deployed on one client Linux host, use separate local
 TUNs and network routing domains as appropriate.
+
+**TCP Fallback is not implemented yet.** When implemented, its intended
+default will be TCP/443 while the existing HTTP/3/MPQUIC listener remains
+on UDP/443; TCP and UDP can use the same numeric port independently.
+Binding port 443 normally requires root or CAP_NET_BIND_SERVICE. Configure
+firewall ingress for UDP/443 now; TCP/443 is only needed after the
+fallback transport exists.
 
 ## Overlapping subnets and host routing
 

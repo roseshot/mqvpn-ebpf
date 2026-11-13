@@ -11,6 +11,10 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
 )
 
+// defaultServerListen is the shared QUIC/UDP bind when YAML omits listen.
+// Future TCP fallback may use TCP/443 independently; TCP is not yet implemented.
+const defaultServerListen = "0.0.0.0:443"
+
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
 // All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
 type ServerInstance struct {
@@ -26,7 +30,7 @@ type ServerInstance struct {
 }
 
 type ServerConfig struct {
-	Listen    string           `yaml:"listen"`
+	Listen    string           `yaml:"listen,omitempty"`
 	XDP       *xdp.Config      `yaml:"xdp,omitempty"`
 	Instances []ServerInstance `yaml:"instances"`
 }
@@ -39,7 +43,7 @@ func loadServerConfig(path string) (ServerConfig, error) {
 }
 
 func (c *ServerConfig) Validate() error {
-	if c.Listen == "" { return errors.New("shared listen UDP address is required") }
+	if c.Listen == "" { c.Listen = defaultServerListen }
 	_, port, err := net.SplitHostPort(c.Listen)
 	if err != nil { return fmt.Errorf("invalid shared listen %q: %w", c.Listen, err) }
 	n, err := strconv.Atoi(port)

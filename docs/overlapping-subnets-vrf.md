@@ -40,7 +40,7 @@ are administrator-controlled.
 Use distinct `server_name` values for the shared HTTPS UDP port:
 
 ~~~yaml
-listen: "0.0.0.0:4433"
+# listen is optional; default UDP/443
 instances:
   - name: customer-a
     server_name: customer-a.vpn.example.com

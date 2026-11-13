@@ -1,6 +1,6 @@
 # One UDP/QUIC listener shared by every VPN Instance.
 # DNS names below must resolve to the same host and match TLS certificate SAN.
-listen: "0.0.0.0:4433"
+# listen: "0.0.0.0:443"  # Optional: default UDP/443
 
 # Optional: pure-Go XDP controller, empty XSKMAP keeps kernel UDP operational.
 # xdp:
