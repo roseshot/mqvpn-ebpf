@@ -19,9 +19,9 @@ const (
 	tunSetIFF = 0x400454ca
 	iffTUN = 0x0001
 	iffNoPI = 0x1000
-	// Linux IFA_F_NOPREFIXROUTE. Set on every address to prevent the kernel
-	// from automatically installing a connected-prefix route in the FIB.
-	// Linux's mandatory local-address routes remain kernel-owned.
+	// Linux IFA_F_NOPREFIXROUTE. Retained only for verification when
+	// upgrading an address configured by old releases. The flag MUST NOT
+	// be set: ordinary connected-prefix routes belong to the Linux kernel.
 	noPrefixRoute = 0x200
 	DefaultMTU = 1100
 	EthernetOverhead = 14
@@ -59,9 +59,10 @@ func Validate(name,cidr string,mtu,maxFrame int)error{
 }
 
 // Open creates a Linux L3 TUN if missing, or attaches to the existing TUN.
-// It assigns only the explicitly requested IP/CIDR and MTU, then brings the
-// device UP. It does not create ip rules, routes, VRFs, namespace changes,
-// forwarding rules, firewall, multicast memberships, or XDP attachments.
+// It assigns the explicitly requested IP/CIDR and MTU, then brings the
+// device UP. Linux may create its standard connected and local address routes
+// when the address is assigned. The daemon does not explicitly write routes,
+// ip rules, VRFs, namespace changes, firewall or multicast routing.
 // New nonpersistent TUNs exist while their file descriptor remains open.
 func Open(name,cidr string,mtu int) (*os.File,error) {
 	if err:=Validate(name,cidr,mtu,0);err!=nil{return nil,err}
@@ -104,13 +105,12 @@ func setupInterface(name,cidr string,mtu int,ops linkOps)error{
 	// The ioctl above already ensures this name is attached as TUN.
 	addr,err:=netlink.ParseAddr(cidr)
 	if err!=nil{return fmt.Errorf("parse IP/CIDR: %w",err)}
-	addr.Flags|=noPrefixRoute
-	if addr.IP.To4()!=nil {
-		// There is no L2 broadcast over TUN.
-		addr.Broadcast=net.IPv4zero
-	}
+	// Use normal Linux address semantics, allowing kernel-managed
+	// connected-prefix routes and normal IPv4 address defaults.
+	// Clearing this also upgrades an existing NOPREFIXROUTE address.
+	addr.Flags &^= noPrefixRoute
 	if err:=ops.SetMTU(link,mtu);err!=nil{return fmt.Errorf("set MTU %d: %w",mtu,err)}
-	if err:=ops.ReplaceAddr(link,addr);err!=nil{return fmt.Errorf("assign address %s without prefix route: %w",cidr,err)}
+	if err:=ops.ReplaceAddr(link,addr);err!=nil{return fmt.Errorf("assign address %s: %w",cidr,err)}
 	if err:=ops.SetUp(link);err!=nil{return fmt.Errorf("bring interface UP: %w",err)}
 	// Verify the configured address, MTU and UP bit before TUN data transfer.
 	ready,err:=ops.ByName(name)
@@ -121,6 +121,9 @@ func setupInterface(name,cidr string,mtu int,ops linkOps)error{
 	if err!=nil{return fmt.Errorf("verify TUN address: %w",err)}
 	for _,a:=range assigned {
 		if a.IPNet!=nil && a.IPNet.String()==addr.IPNet.String(){
+			if a.Flags & noPrefixRoute!=0 {
+				return fmt.Errorf("TUN %q address %s still has noprefixroute after setup",name,cidr)
+			}
 			return nil
 		}
 	}

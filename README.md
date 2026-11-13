@@ -65,7 +65,8 @@ mqvpn-client \
 
 mqvpn-client \
   --url https://customer-b.vpn.example.com:443/.well-known/masque/ethernet/ \
-  --tun mq0 --source-ip 192.0.2.10 --source-interface enp1s0 \
+  --tun mq0 --tun-address 10.77.0.2/24 \
+  --source-ip 192.0.2.10 --source-interface enp1s0 \
   --ca /etc/mqvpn/b-ca.crt \
   --cert /etc/mqvpn/b-client.crt --key /etc/mqvpn/b-client.key
 ~~~
@@ -119,12 +120,11 @@ On separate client hosts, local `mq0` names may be the same. If both
 VPN instances are deployed on one client Linux host, use separate local
 TUNs and network routing domains as appropriate.
 
-**TCP Fallback is not implemented yet.** When implemented, its intended
-default will be TCP/443 while the existing HTTP/3/MPQUIC listener remains
-on UDP/443; TCP and UDP can use the same numeric port independently.
-Binding port 443 normally requires root or CAP_NET_BIND_SERVICE. Configure
-firewall ingress for UDP/443 now; TCP/443 is only needed after the
-fallback transport exists.
+**TCP Fallback is optional** and uses TCP/443 when enabled, while
+HTTP/3/MPQUIC remains on UDP/443. Both protocol listeners can use
+the same numeric port independently. Binding 443 normally requires root
+or CAP_NET_BIND_SERVICE. Allow TCP/443 ingress only when TCP fallback
+is enabled.
 
 ## Overlapping subnets and host routing
 
@@ -148,11 +148,10 @@ claim ambiguous overlapping destination prefixes.
 Linux overlapping subnets must be separated by VRF or network namespace,
 configured **outside mqvpn**. See
 [VRF route-based setup](docs/overlapping-subnets-vrf.md). The daemon **creates or attaches TUN**, assigns its configured local
-IP/CIDR and MTU, and brings it UP. It sets Linux
-`IFA_F_NOPREFIXROUTE` to suppress automatic connected-prefix route
-installation. It does **not** install routes, `ip rule`, VRFs, namespace
-assignments, forwarding, multicast routes or firewall rules. The kernel
-may still create mandatory local-address routing entries.
+IP/CIDR and MTU, and brings it UP. The kernel **automatically adds the normal connected-prefix route**
+(and local-address routes) when the daemon assigns IP/CIDR. The daemon
+does **not** explicitly add custom routes, `ip rule`, VRFs, namespace
+assignments, forwarding, multicast routes or firewall rules.
 
 This remains a Layer-3 IP VPN LAN, not an Ethernet bridge. IP broadcast /
 multicast traffic entering one instance's TUN is replicated only within
@@ -168,18 +167,19 @@ The Server YAML instance requires `address`, e.g.
 requires `--tun-address 10.77.0.2/24` and accepts
 `--tun-mtu 1100`. No TUN IP is inferred from a Peer route map.
 
-The setup order is: **TUNSETIFF → set MTU → assign IP/CIDR using
-IFA_F_NOPREFIXROUTE → set UP → verify address, MTU and UP**. This is
-implemented by Go with Linux rtnetlink, no shell commands and no CGO.
+The setup order is: **TUNSETIFF → set MTU → assign IP/CIDR with
+normal Linux address flags → set UP → verify address, MTU and UP**.
+Linux automatically maintains the associated connected-prefix route.
+This is implemented by Go with Linux rtnetlink, no shell commands and
+no CGO.
 The daemon does not invoke route, policy-rule, VRF, network-namespace,
 firewall, multicast-route or forwarding operations.
 
-The kernel still manages its local-address FIB entries. In particular,
-`IFA_F_NOPREFIXROUTE` prevents **automatic connected-prefix routes**
-from being installed when the address is assigned. To reach routed
-sites, the Linux administrator **must install appropriate routes** or
-manage network routing via their own service. The daemon does not
-do it on their behalf. Existing TUNs are not purged of other addresses;
+The kernel manages both **connected-prefix routes** and local-address
+routes when the TUN address is assigned. Other site prefixes outside
+the configured connected subnet still require administrator-managed
+routing. The daemon does not install them. Existing TUNs are not purged
+of other addresses;
 the configured IP is added/replaced. Newly created nonpersistent
 TUNs exist while the daemon holds their file descriptor.
 
@@ -194,6 +194,34 @@ IPv6 addresses require an MTU >= 1280 and `max_frame >= mtu+14`
 for the synthetic Ethernet header. A QUIC path also needs adequate
 path MTU to carry the encapsulated datagram; this is not automatic
 fragmentation or PMTU discovery by the daemon.
+
+## MTU 1360 / TCP MSS 1360
+
+`mtu: 1360` is supported **when the entire WAN path can carry the
+resulting QUIC DATAGRAM**. Set `max_frame` to at least 1374 (1360 IP
+payload + 14 synthetic Ethernet bytes), on both Client and Server:
+
+~~~yaml
+# In one Server instance, after tun / address:
+mtu: 1360
+max_frame: 1374
+~~~
+
+~~~bash
+# Add to mqvpn-client:
+--tun-mtu 1360 --max-frame 1374
+~~~
+
+**TUN MTU 1360 is not TCP MSS 1360.** Normal IPv4 TCP MSS is 1320,
+and IPv6 TCP MSS is 1300 with this MTU. To *target* TCP MSS 1360,
+the TUN MTU would need to be at least 1400 for IPv4 (max_frame 1414)
+or 1420 for IPv6 (max_frame 1434). TCP options / PMTU can reduce
+the effective value.
+
+QUIC DATAGRAM frames cannot be fragmented, so 1360 is an **opt-in**
+configuration, not a guarantee on dual-WAN paths or tunnels with a
+smaller underlay PMTU. Do not force MSS or install mangle/routing rules
+in the daemon. See [MTU and MSS sizing](docs/mtu-mss.md).
 
 ## Server CLI, YAML hot reload
 
@@ -267,7 +295,7 @@ Client (automatic by default):
 mqvpn-client \
   --url https://customer-a.vpn.example.com/.well-known/masque/ethernet/ \
   --transport auto --udp-dial-timeout 5s \
-  --tun mq0 --source-interface enp1s0 \
+  --tun mq0 --tun-address 10.77.0.2/24 --source-interface enp1s0 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~
@@ -334,9 +362,9 @@ The unconditional Dependabot auto-merge policy remains unchanged.
 - SNI-based tenant demux requires DNS, per-instance server SAN, and
   unique `server_name`. Distinct TLS identities can share one UDP port.
 - Peer session selection is static; hot reload does not implement NHRP.
-- IPv4 TUN default MTU: 1100; CONNECT-ETHERNET over QUIC DATAGRAM cannot
-  fragment oversized Ethernet frames. Standard IPv6 needs >=1280 and
-  sufficient underlay PMTU.
+- TUN default MTU remains 1100. MTU 1360 and larger frame budgets are
+  configurable, but require a sufficiently large underlay PMTU on every
+  active QUIC WAN path; standard IPv6 TUNs need MTU >=1280.
 - No HTTP/2 TCP fallback or automatic mid-session failback; no LAN L2 bridge or mDNS reflector, no full AF_XDP Zero-Copy backend,
   no measured N200/I226 throughput, no real multi-tenant E2E test yet.
 

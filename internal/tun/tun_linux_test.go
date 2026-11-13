@@ -56,6 +56,9 @@ func TestValidateAddress(t *testing.T){
 		{"10.77.0.1/24",1100,1160},
 		{"fd77::1/64",1280,1300},
 		{"198.51.100.42/32",1500,1514},
+		{"10.77.0.1/24",1360,1374}, // TUN MTU 1360: IPv4 TCP MSS ~1320
+		{"10.77.0.1/24",1400,1414}, // IPv4 MSS 1360 (without options)
+		{"fd77::1/64",1420,1434},  // IPv6 MSS 1360 (without options)
 	}{
 		if err:=ValidateAddress(tc.cidr,tc.mtu,tc.frame);err!=nil{t.Fatal(err)}
 	}
@@ -65,21 +68,30 @@ func TestValidateAddress(t *testing.T){
 		{"127.0.0.1/8",1100,1160},{"fe80::1/64",1280,1300},
 		{"10.77.0.1/24",1200,1160},{"fd77::1/64",1100,1160},
 		{"fd77::1/64",1280,1160},
+		{"10.77.0.1/24",1360,1373}, // missing one byte of Ethernet overhead
+		{"10.77.0.1/24",1400,1400},
+		{"fd77::1/64",1420,1433},
 	}{
 		if err:=ValidateAddress(tc.cidr,tc.mtu,tc.frame);err==nil{t.Fatalf("accepted %+v",tc)}
 	}
 }
-func TestSetupCreatesReadyAddressWithoutRouteOperations(t *testing.T){
+func TestSetupCreatesReadyAddressAndAllowsKernelConnectedRoute(t *testing.T){
 	for _,cidr:=range []string{"10.77.0.1/24","fd77::1/64"}{
 		mtu:=1100
 		if cidr=="fd77::1/64"{mtu=1280}
 		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
 		if err:=setupInterface("mq0",cidr,mtu,f);err!=nil{t.Fatal(err)}
-		if f.addr==nil||f.addr.Flags&noPrefixRoute==0{t.Fatalf("did not disable connected route for %s",cidr)}
+		if f.addr==nil||f.addr.Flags&noPrefixRoute!=0{t.Fatalf("connected route accidentally suppressed for %s",cidr)}
 		if got:=len(f.order);got!=6{t.Fatalf("expected six link/address/readiness calls, got %v",f.order)}
 		if f.order[1]!="mtu"||f.order[2]!="address"||f.order[3]!="up"{t.Fatalf("wrong readiness order: %v",f.order)}
 	}
 }
+func TestConfiguredAddressDoesNotDisableNormalIPv4Broadcast(t *testing.T) {
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+	if err:=setupInterface("mq0","10.77.0.1/24",1360,f);err!=nil{t.Fatal(err)}
+	if f.addr.Broadcast!=nil{t.Fatalf("IP broadcast unexpectedly forced to %s",f.addr.Broadcast)}
+}
+
 func TestSetupErrorsOnFailedConfiguration(t *testing.T){
 	for _,step:=range []string{"find","mtu","address","up","list"}{
 		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}},failOn:step}

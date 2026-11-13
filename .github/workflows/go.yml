@@ -66,3 +66,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
       - name: Compile XDP dispatcher
         run: make bpf
+
+  tun-integration:
+    name: Linux TUN connected-route integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+      - name: Enable Linux TUN and verify kernel connected route
+        run: |
+          sudo modprobe tun || true
+          test -c /dev/net/tun
+          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=mod -tags tun_integration -run '^TestIntegrationCreatesConnectedPrefixRoute$' -v ./internal/tun

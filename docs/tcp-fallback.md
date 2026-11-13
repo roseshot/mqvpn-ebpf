@@ -103,8 +103,9 @@ provided. UDP/443 and TCP/443 are independent sockets and can both bind.
 - Like other TCP-over-TCP tunnels, nested retransmissions and head-of-line
   blocking may significantly reduce latency and throughput under loss.
 - Server and Client manage only their named TUN IP/CIDR, MTU and UP
-  state, but do not install Linux routes, VRFs, policy routing, kernel
-  multicast entries or inner packet filters.
+  state. Linux creates the normal connected-prefix route automatically;
+  mqvpn does not explicitly add custom routes, VRFs, policy routing,
+  kernel multicast entries or inner packet filters.
 - No hardware N200/I226 failover benchmark or network namespace E2E tests
   have been run. CI includes unit-level TLS/HTTP Upgrade tests only.
 
