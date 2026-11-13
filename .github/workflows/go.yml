@@ -73,7 +73,9 @@ jobs:
           cache-dependency-path: go.mod
       - name: Verify TCX MSS rewrite and checksums in the kernel
         run: |
-          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=mod -tags bpf_integration -run '^TestKernelTCMSSClampAndChecksum$' -v ./internal/tcebpf
+          sudo modprobe tun || true
+          test -c /dev/net/tun
+          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=mod -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
 
   tun-integration:
     name: Linux TUN connected-route integration

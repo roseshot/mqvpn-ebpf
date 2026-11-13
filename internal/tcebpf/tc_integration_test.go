@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"fmt"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"testing"
 
 	"github.com/cilium/ebpf"
@@ -121,4 +124,25 @@ func ipv6TCPSYN(mss uint16)[]byte{
 	copy(p[40:],tcp)
 	binary.BigEndian.PutUint16(p[56:58],transportChecksum(p,40))
 	return p
+}
+
+
+// Verify that the same Go TCX attachment used in production can be
+// installed on an actual L3 TUN in the Linux kernel (not just TEST_RUN).
+func TestKernelTCXAttachToTUN(t *testing.T) {
+	name:=fmt.Sprintf("mqt%x",os.Getpid())
+	if len(name)>=16{t.Fatalf("temporary TUN name too long: %s",name)}
+	device,err:=tun.Open(name,"198.19.1.1/30",1400)
+	if err!=nil{t.Fatalf("create temporary TUN for TCX: %v",err)}
+	defer device.Close()
+	policy:=Config{Object:"../../bpf/tun_tc.o",MSSClamp:"auto",Stats:true}
+	attached,err:=Attach(name,policy,1400)
+	if err!=nil{t.Fatalf("attach ingress/egress TCX to real TUN: %v",err)}
+	if attached==nil{t.Fatal("opted-in TCX attachment unexpectedly nil")}
+	if _,err:=attached.Snapshot();err!=nil {
+		_ = attached.Close()
+		t.Fatalf("read per-CPU TC stats: %v",err)
+	}
+	if err:=attached.Close();err!=nil{t.Fatalf("detach TCX links: %v",err)}
+	if err:=attached.Close();err!=nil{t.Fatalf("idempotent detach: %v",err)}
 }
