@@ -251,7 +251,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err!=nil{return err}
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
-	dev, err := tun.Open(*tunName,effectiveAddress,budget.TUNMTU)
+	openTUN:=tun.Open
+	if dynamicAddressRequested(*tunAddress){openTUN=tun.OpenRouted}
+	dev, err := openTUN(*tunName,effectiveAddress,budget.TUNMTU)
 	if err != nil { return err }
 	tcAttachment,err:=attachConfiguredTC(*tunName,tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}

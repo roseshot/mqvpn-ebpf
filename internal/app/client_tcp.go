@@ -110,7 +110,9 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
 	if err!=nil{return err}
-	device,err:=tun.Open(o.tunName,effectiveAddress,budget.TUNMTU)
+	openTUN:=tun.Open
+	if dynamicAddressRequested(o.tunAddress){openTUN=tun.OpenRouted}
+	device,err:=openTUN(o.tunName,effectiveAddress,budget.TUNMTU)
 	if err!=nil{return err}
 	tcAttachment,err:=attachConfiguredTC(o.tunName,o.tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = device.Close();return fmt.Errorf("attach TCP TUN TC eBPF: %w",err)}

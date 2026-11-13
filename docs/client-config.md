@@ -24,8 +24,12 @@ not the WAN source address. When omitted or set to `auto`, Client requests
 a Server-assigned Tunnel IP only after successful mTLS CONNECT. The Server
 must configure `tunnel_pool` and authorize this Peer with
 `dynamic_tunnel_ip: true`. Older Servers cannot supply the response,
-so the Client fails clearly before opening the TUN. An explicit static
-CIDR continues to work without address negotiation. The `ca`, `cert` and `key` are required
+so the Client fails clearly before opening the TUN. For a dynamic lease
+the client assigns its actual local TUN address as /32 (IPv4) or /128
+(IPv6) and uses the advertised subnet as a peer unicast route. This
+makes the subnet's first and last IPv4 addresses usable as ordinary
+host destinations. An explicit static CIDR continues to work without
+address negotiation. The `ca`, `cert` and `key` are required
 mTLS files and are never silently created or skipped.
 
 ## Default behavior

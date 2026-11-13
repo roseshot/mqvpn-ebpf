@@ -34,17 +34,22 @@ mqvpn-client --url https://customer-a.vpn.example.com/.well-known/masque/etherne
 2. Open `/dev/net/tun` with `TUNSETIFF(IFF_TUN|IFF_NO_PI)`, creating
    an ephemeral TUN if it is missing, or attaching if it already exists.
 3. Set the configured MTU via Linux rtnetlink.
-4. Add or replace the **specified IP address only** using RTM_NEWADDR
-   with normal address flags, allowing Linux to create its standard
-   connected-prefix and local-address routes automatically.
+4. Add or replace the **specified IP address** using RTM_NEWADDR.
+   Static modes use the ordinary connected prefix. Pool-enabled Server
+   and dynamically assigned Client modes set a host-local IP (/32 for
+   IPv4, /128 for IPv6), plus an IFA_ADDRESS peer subnet. Linux creates
+   the corresponding unicast route without a subnet broadcast route.
 5. Set the interface UP using rtnetlink.
 6. Re-query and verify the IP address, MTU and UP bit before packet I/O.
 
 The daemon does **not** explicitly install custom routes, VRFs,
 namespace bindings, `ip rule`, firewall, forwarding entries or
-multicast routes. The **connected-prefix route** and local-address
-routes are automatically created and maintained by the kernel when
-an IP address is assigned. No migration-specific address flags are applied by the daemon.
+multicast routes. Linux automatically creates either the usual
+**connected-prefix route** (static clients/servers) or a **peer-subnet
+unicast route** (dynamic address pool mode). In routed mode the
+broadcast address attribute is disabled to ensure the subnet's first
+and last IPs can be unicast destinations. The globally reserved
+`255.255.255.255` remains excluded.
 
 The daemon also does not delete other IP addresses on a pre-existing
 interface. To reconfigure cleanly, set new `address` and restart or
@@ -92,5 +97,5 @@ enumerate physical WANs. See [WAN budget model](mtu-mss.md).
 
 WAN link MTU is **not** an Internet path PMTU measurement. QUIC
 DATAGRAMs can still be too large for the peer/actual path, so
-monitor logs and validate data at the desired size. Linux's automatic
-connected-prefix routes are still created as usual.
+monitor logs and validate data at the desired size. Linux creates either the connected-prefix or peer-subnet route
+according to the selected TUN mode.

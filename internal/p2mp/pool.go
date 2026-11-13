@@ -52,7 +52,7 @@ func NewTunnelPool(cidr,serverAddress string,peers *Config)(*TunnelPool,error){
 	if dynamicPeers==0 {return nil,errors.New("tunnel_pool has no peers marked dynamic_tunnel_ip")}
 	p:=&TunnelPool{prefix:pool,serverIP:server.Addr(),reserved:reserved}
 	var count int
-	for addr:=pool.Addr().Next(); addr.IsValid()&&pool.Contains(addr)&&count<dynamicPeers; addr=addr.Next(){
+	for addr:=pool.Addr(); addr.IsValid()&&pool.Contains(addr)&&count<dynamicPeers; addr=addr.Next(){
 		if p.usable(addr){count++}
 	}
 	if count<dynamicPeers {
@@ -61,15 +61,22 @@ func NewTunnelPool(cidr,serverAddress string,peers *Config)(*TunnelPool,error){
 	return p,nil
 }
 
-// usable skips the server, the network address and IPv4 broadcast. IPv6
-// supports /64 and larger pools without eagerly allocating a giant bitmap.
+// usable accepts all unicast addresses inside the pool, including the
+// IPv4 subnet's first and last address. These are valid destinations only
+// because dynamic clients and pool-enabled servers use point-to-point TUN
+// addressing, not a broadcast-capable connected-prefix interface.
+// Never lease the server IP, static host destinations or globally special IPs.
 func(p *TunnelPool)usable(addr netip.Addr)bool{
-	if !addr.IsValid() || !p.prefix.Contains(addr) || addr==p.serverIP || addr==p.prefix.Addr() || p.reserved[addr] {return false}
-	if addr.Is4(){
-		// IPv4 subnet-directed broadcast is the final address, except for
-		// /31-/32 which cannot provide a traditional host lease.
-		if p.prefix.Bits()>=31 {return false}
-		if !p.prefix.Contains(addr.Next()){return false}
+	if !addr.IsValid() || !p.prefix.Contains(addr) || addr==p.serverIP || p.reserved[addr] {
+		return false
+	}
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.Is4In6() {
+		return false
+	}
+	// 255.255.255.255 is the universal limited-broadcast address,
+	// regardless of whether the configured pool contains it.
+	if addr.Is4() && addr==netip.MustParseAddr("255.255.255.255") {
+		return false
 	}
 	return true
 }
@@ -80,9 +87,10 @@ func(p *TunnelPool)allocate(active map[string]*Session)(netip.Prefix,error){
 	for _,session:=range active {
 		if session.tunnelAddress.IsValid(){used[session.tunnelAddress.Addr()]=true}
 	}
-	// At most 1024 peers are accepted, so scan is bounded to available
-	// host candidates plus reserved network/server/broadcast slots.
-	for addr,tries:=p.prefix.Addr().Next(),0; addr.IsValid()&&p.prefix.Contains(addr)&&tries<len(active)+4; addr,tries=addr.Next(),tries+1 {
+	// Only the active leases, static host reservations, server address and
+	// globally reserved addresses can be skipped. Avoid iterating the full
+	// IPv6 subnet while keeping allocation bounded by the peer count.
+	for addr,tries:=p.prefix.Addr(),0; addr.IsValid()&&p.prefix.Contains(addr)&&tries<=len(active)+len(p.reserved)+8; addr,tries=addr.Next(),tries+1 {
 		if p.usable(addr)&&!used[addr] {return netip.PrefixFrom(addr,p.prefix.Bits()),nil}
 	}
 	return netip.Prefix{},fmt.Errorf("tunnel_pool %s exhausted",p.prefix)

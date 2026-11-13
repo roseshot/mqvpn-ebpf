@@ -64,3 +64,28 @@ func TestIntegrationCreatesConnectedPrefixRoute(t *testing.T) {
 	if !found{t.Fatalf("address %s missing from %s",cidr,name)}
 
 }
+
+func TestIntegrationRoutedPoolUnicast(t *testing.T) {
+	if os.Geteuid()!=0 {t.Fatal("this test requires root/CAP_NET_ADMIN")}
+	name:=fmt.Sprintf("mqfull%x",os.Getpid())
+	if len(name)>=ifNameSize {t.Fatalf("test TUN name too long: %s",name)}
+	pid:=os.Getpid()
+	local:=fmt.Sprintf("198.19.%d.%d/30",byte(pid>>8),int(byte(pid&0xfc))+1)
+	f,err:=OpenRouted(name,local,1360)
+	if err!=nil{t.Fatalf("routed TUN address: %v",err)}
+	defer f.Close()
+	link,err:=netlink.LinkByName(name)
+	if err!=nil{t.Fatal(err)}
+	for _,ip:=range []string{
+		fmt.Sprintf("198.19.%d.%d",byte(pid>>8),byte(pid&0xfc)),
+		fmt.Sprintf("198.19.%d.%d",byte(pid>>8),int(byte(pid&0xfc))+3),
+	}{
+		routes,err:=netlink.RouteGet(net.ParseIP(ip))
+		if err!=nil{t.Fatalf("route lookup to %s: %v",ip,err)}
+		found:=false
+		for _,route:=range routes {
+			if route.LinkIndex==link.Attrs().Index && route.Type==1 {found=true}
+		}
+		if !found{t.Fatalf("routed pool host %s was not unicast over TUN: %+v",ip,routes)}
+	}
+}

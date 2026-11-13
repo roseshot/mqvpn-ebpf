@@ -40,7 +40,7 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T){
 	if err!=nil{t.Fatal(err)}
 	b,err:=h.AttachWithTunnelIP(ctx,cfg.Peers[1],bs,true)
 	if err!=nil{t.Fatal(err)}
-	if a.TunnelAddress()!="10.77.0.2/29"||b.TunnelAddress()!="10.77.0.3/29"{
+	if a.TunnelAddress()!="10.77.0.0/29"||b.TunnelAddress()!="10.77.0.2/29"{
 		t.Fatalf("wrong leases %q %q",a.TunnelAddress(),b.TunnelAddress())
 	}
 	packet:=ip4([4]byte{10,77,0,1},[4]byte{10,77,0,3})
@@ -50,7 +50,7 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T){
 	h.Detach(a)
 	a2,err:=h.AttachWithTunnelIP(ctx,cfg.Peers[0],as,true)
 	if err!=nil{t.Fatal(err)}
-	if a2.TunnelAddress()!="10.77.0.2/29"{t.Fatal("lease was not released for reuse")}
+	if a2.TunnelAddress()!="10.77.0.0/29"{t.Fatal("lease was not released for reuse")}
 	if _,err:=h.AttachWithTunnelIP(ctx,cfg.Peers[0],as,true);err==nil{t.Fatal("duplicate session allowed")}
 	h.Detach(a2)
 	h.Detach(b)
@@ -59,7 +59,7 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T){
 func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T){
 	cfg:=dynamicPeerConfig(t,2)
 	for _,tc:=range []struct{pool,server string}{
-		{"10.77.0.0/30","10.77.0.1/30"},
+		{"10.77.0.0/32","10.77.0.0/32"},
 		{"10.78.0.0/24","10.77.0.1/24"},
 		{"10.77.0.1/24","10.77.0.1/24"},
 		{"10.77.0.0/31","10.77.0.1/31"},
@@ -75,7 +75,7 @@ func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T){
 	if err!=nil{t.Fatal(err)}
 	pool,err:=NewTunnelPool("10.77.0.0/24","10.77.0.1/24",mixed)
 	if err!=nil{t.Fatalf("static host reservation must coexist with dynamic pool: %v",err)}
-	if lease,err:=pool.allocate(map[string]*Session{});err!=nil || lease.String()!="10.77.0.3/24"{
+	if lease,err:=pool.allocate(map[string]*Session{});err!=nil || lease.String()!="10.77.0.0/24"{
 		t.Fatalf("static host address was assigned dynamically: %s %v",lease,err)
 	}
 	if mixed.Destination(netip.MustParseAddr("10.77.0.2")).ID!="static"{t.Fatal("static forwarding broken")}
@@ -89,7 +89,7 @@ func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T){
 
 func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T){
 	cfg:=dynamicPeerConfig(t,1)
-	pool,err:=NewTunnelPool("10.77.0.0/30","10.77.0.1/30",cfg)
+	pool,err:=NewTunnelPool("10.77.0.0/31","10.77.0.1/31",cfg)
 	if err!=nil{t.Fatal(err)}
 	h,err:=New(&fakeDevice{},cfg,1160,nil)
 	if err!=nil{t.Fatal(err)}
@@ -97,7 +97,7 @@ func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T){
 	stream:=&fakeStream{out:make(chan []byte,4)}
 	a,err:=h.AttachWithTunnelIP(context.Background(),cfg.Peers[0],stream,true)
 	if err!=nil{t.Fatal(err)}
-	if a.TunnelAddress()!="10.77.0.2/30"{t.Fatal(a.TunnelAddress())}
+	if a.TunnelAddress()!="10.77.0.0/31"{t.Fatal(a.TunnelAddress())}
 	if _,err:=pool.allocate(h.peers);err==nil{t.Fatal("duplicate address allocated")}
 	other,err:=New(&fakeDevice{},cfg,1160,nil)
 	if err!=nil{t.Fatal(err)}
@@ -106,4 +106,33 @@ func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T){
 	if err!=nil{t.Fatal(err)}
 	if b.TunnelAddress()!=a.TunnelAddress(){t.Fatal("tenant allocation must be independent")}
 	h.Detach(a);other.Detach(b)
+}
+
+func TestTunnelPoolReusesNetworkAndSubnetBroadcastAddresses(t *testing.T) {
+	cfg:=dynamicPeerConfig(t,3)
+	pool,err:=NewTunnelPool("10.77.0.0/30","10.77.0.1/30",cfg)
+	if err!=nil{t.Fatalf("all three remaining /30 IPs should be usable: %v",err)}
+	h,err:=New(&fakeDevice{},cfg,1160,nil)
+	if err!=nil{t.Fatal(err)}
+	if err:=h.SetTunnelPool(pool);err!=nil{t.Fatal(err)}
+	leases:=[]string{"10.77.0.0/30","10.77.0.2/30","10.77.0.3/30"}
+	var sessions []*Session
+	for i,peer:=range cfg.Peers {
+		s,err:=h.AttachWithTunnelIP(context.Background(),peer,&fakeStream{out:make(chan []byte,4)},true)
+		if err!=nil{t.Fatal(err)}
+		if s.TunnelAddress()!=leases[i] {t.Fatalf("peer %s got %s, want %s",peer.ID,s.TunnelAddress(),leases[i])}
+		sessions=append(sessions,s)
+	}
+	for _,s:=range sessions {h.Detach(s)}
+	// Fully reuse /31: one host is the Server and the other is a client.
+	small:=dynamicPeerConfig(t,1)
+	if _,err:=NewTunnelPool("10.77.0.0/31","10.77.0.1/31",small);err!=nil{t.Fatal(err)}
+}
+func TestTunnelPoolRefusesUniversalBroadcast(t *testing.T){
+	cfg:=dynamicPeerConfig(t,1)
+	// 255.255.255.255 is never a unicast destination, even with routed TUN.
+	p:=&TunnelPool{prefix:netip.MustParsePrefix("255.255.255.254/31"),serverIP:netip.MustParseAddr("255.255.255.254")}
+	if p.usable(netip.MustParseAddr("255.255.255.255")){t.Fatal("limited broadcast used for lease")}
+	if p.usable(netip.MustParseAddr("255.255.255.254")){t.Fatal("server IP used for lease")}
+	_ = cfg
 }

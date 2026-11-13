@@ -101,3 +101,26 @@ func TestSetupErrorsOnFailedConfiguration(t *testing.T){
 func TestOpenValidatesBeforeDeviceCreation(t *testing.T){
 	if _,err:=Open("mq0","not-cidr",1100);err==nil{t.Fatal("invalid address reached /dev/net/tun")}
 }
+
+func TestSetupRoutedTUNAvoidsSubnetBroadcast(t *testing.T) {
+	for _,tc:=range []struct{cidr,local,peer string; mtu int}{
+		{"10.77.0.1/24","10.77.0.1/32","10.77.0.0/24",1400},
+		{"10.77.0.0/24","10.77.0.0/32","10.77.0.1/24",1400},
+		{"10.77.0.255/24","10.77.0.255/32","10.77.0.0/24",1400},
+		{"10.77.0.0/31","10.77.0.0/32","10.77.0.1/31",1400},
+		{"fd77::/64","fd77::/128","fd77::1/64",1400},
+	}{
+		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+		if err:=setupRoutedInterface("mq0",tc.cidr,tc.mtu,f);err!=nil{t.Fatalf("%s: %v",tc.cidr,err)}
+		if f.addr==nil || f.addr.IPNet.String()!=tc.local || f.addr.Peer==nil || f.addr.Peer.String()!=tc.peer {
+			t.Fatalf("%s: unexpected local/peer %+v",tc.cidr,f.addr)
+		}
+		if f.addr.IP.To4()!=nil && !f.addr.Broadcast.Equal(net.IPv4zero){
+			t.Fatalf("%s: broadcast not explicitly disabled: %s",tc.cidr,f.addr.Broadcast)
+		}
+	}
+	// The static path must still use the original Linux CIDR semantics.
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+	if err:=setupInterface("mq0","10.77.0.1/24",1400,f);err!=nil{t.Fatal(err)}
+	if f.addr.Peer!=nil {t.Fatal("legacy static TUN gained peer route")}
+}

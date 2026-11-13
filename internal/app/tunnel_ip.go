@@ -40,12 +40,8 @@ func resolveClientTunnelAddress(requested,response string)(string,error){
 	if err!=nil || !prefix.IsValid() || prefix.Addr().Is4In6() ||
 		prefix.Addr().IsUnspecified() || prefix.Addr().IsMulticast() ||
 		prefix.Addr().IsLoopback() || prefix.Addr().IsLinkLocalUnicast() ||
-		prefix.Addr()==prefix.Masked().Addr() {
+		prefix.Addr()==netip.MustParseAddr("255.255.255.255") {
 		return "",fmt.Errorf("invalid assigned tunnel IP %q",response)
-	}
-	if prefix.Addr().Is4() && prefix.Bits()<31 {
-		// Reject the subnet-directed broadcast address.
-		if !prefix.Contains(prefix.Addr().Next()) {return "",fmt.Errorf("assigned tunnel IP %q is broadcast",response)}
 	}
 	return prefix.String(),nil
 }

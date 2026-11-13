@@ -168,16 +168,26 @@ For the matching Client, omit `address` (or use `address: auto`) in
 `cert`, and `key`. To retain a static address, provide
 `address: 10.77.0.2/24` as before; no negotiation happens.
 
-The pool excludes the Server's TUN IP, IPv4 network and broadcast
-addresses, and reserves existing static host (/32 or /128) Peer destinations.
-Broader overlapping static routes are rejected. Dynamic allocations remain
-unique across concurrent sessions. A lease is released on disconnect
+The pool reuses **all valid unicast addresses**, including the IPv4
+network-numbered and subnet-directed-broadcast-numbered addresses
+(e.g. `10.77.0.0` and `10.77.0.255` in a /24). Pool-enabled Server
+TUNs and dynamically addressed Client TUNs use Linux point-to-point-style
+`local/32 peer subnet` addressing, avoiding a traditional broadcast
+route; IPv6 uses `local/128 peer subnet`. The Server TUN IP, existing
+static host (/32 or /128) Peer destinations, and globally invalid IPs
+(e.g. `255.255.255.255`) remain reserved. Broader overlapping static
+routes are rejected. Dynamic allocations are unique across sessions. A lease is released on disconnect
 or Peer revocation. Leases are **session-scoped**, not persisted across
 reconnect/restart and not an address reservation service. Each VPN
 instance allocates independently, including when tenant subnets overlap.
 Dynamic peers without a pool and clients requesting a lease from an
-unauthorized Server are rejected. There is no DHCP, kernel route
-installation, firewall policy or inner-source anti-spoofing added.
+unauthorized Server are rejected. The kernel installs the peer-subnet
+unicast route when the TUN local/peer address is configured; the daemon
+does not explicitly add routes. There is no DHCP, custom Linux route
+administration, firewall policy or inner-source anti-spoofing added.
+Existing static clients retain their usual /24 address behavior and
+may still treat .255 as a broadcast; use dynamic/routed addressing on
+both endpoints for full pool reuse.
 See [Client configuration](docs/client-config.md).
 
 ## Overlapping subnets and host routing

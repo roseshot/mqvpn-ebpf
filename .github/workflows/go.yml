@@ -94,4 +94,5 @@ jobs:
         run: |
           sudo modprobe tun || true
           test -c /dev/net/tun
-          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=mod -tags tun_integration -run '^TestIntegrationCreatesConnectedPrefixRoute$' -v ./internal/tun
+          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=mod -tags tun_integration -run '^TestIntegration(CreatesConnectedPrefixRoute|RoutedPoolUnicast) -v ./internal/tun
+ -v ./internal/tun

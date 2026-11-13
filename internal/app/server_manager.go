@@ -218,7 +218,9 @@ func newServerManager(ctx context.Context, logger *slog.Logger) *serverManager {
 }
 
 func (m *serverManager) start(p preparedInstance) error {
-	device, err := tun.Open(p.spec.TUN,p.spec.Address,p.spec.MTU)
+	openTUN:=tun.Open
+	if p.pool!=nil {openTUN=tun.OpenRouted}
+	device, err := openTUN(p.spec.TUN,p.spec.Address,p.spec.MTU)
 	if err != nil { return fmt.Errorf("instance %s TUN: %w", p.spec.Name, err) }
 	logger := m.logger.With("instance", p.spec.Name, "tun", p.spec.TUN)
 	hub, err := p2mp.New(device, p.peers, p.spec.MaxFrame, logger)

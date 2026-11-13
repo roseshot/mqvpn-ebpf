@@ -29,8 +29,9 @@ instances:
     tun: mq0
     address: 10.77.0.1/24
     # Optional dynamic Tunnel IP assignment: pool must equal the TUN
-    # connected prefix. Enable dynamic_tunnel_ip per authorized peer in
-    # peers YAML; the active lease becomes a host destination in the hub.
+    # connected prefix. Uses routed TUN local/32 + peer-subnet semantics
+    # so even subnet .0 and .255 may be assigned as unicast host IPs.
+    # Enable dynamic_tunnel_ip per authorized peer in peers YAML.
     # tunnel_pool: 10.77.0.0/24
     # TCX defaults to bundled ELF, auto MSS clamp and stats.
     # No runtime .o file is required; explicit object is an override.
