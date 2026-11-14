@@ -5,11 +5,20 @@ HTTP/1.1/TLS Capsule fallback). eBPF programs are unchanged.
 
 ## Capability negotiation and compatibility
 
-The Client sends `Mqvpn-Compression: zstd-v1` in the authenticated CONNECT
-request. A supporting Server echoes exactly `zstd-v1` in its successful
-response. Compression is active only after that echo. Missing reply means
-legacy uncompressed CONNECT-ETHERNET: old Servers and Clients still work.
-Unknown compression replies are rejected.
+On a CPU that passes the local performance policy, the Client sends
+`Mqvpn-Compression: zstd-v1` in the authenticated CONNECT request. The
+Server echoes exactly `zstd-v1` only if its own CPU also passes the policy.
+Compression is active only after that echo. If either endpoint has an
+underpowered CPU, it uses plain CONNECT-ETHERNET in **both directions**;
+SIP/RTP priority queues remain enabled. Missing reply also safely supports
+older peers. An unsolicited or unknown compression reply is rejected.
+
+The policy is determined once per process: at least **4 usable logical
+processors** (`runtime.NumCPU()` and `GOMAXPROCS`), plus a bounded
+single-worker Zstd probe of at least **100 MiB/s** at startup. Failed probes
+disable compression by default. This conservative heuristic reduces CPU
+contention on small routers; it is not a live CPU-utilization monitor and
+does not guarantee zero impact on a busy higher-end system.
 
 The feature applies in both QUIC and TCP fallback. A compressed frame uses
 the synthetic Ethernet envelope with experimental EtherType 0x88B5. Its
