@@ -20,6 +20,14 @@ import (
 // Optional TCP fallback uses TCP/443 independently.
 const defaultServerListen = "0.0.0.0:443"
 
+// serverWAN identifies a reachable Server QUIC/UDP address on an underlay
+// interface. The shared wildcard socket accepts UDP on every listed IP;
+// MPQUIC ADD_ADDRESS advertises them to authenticated Clients.
+type serverWAN struct {
+	Interface string `yaml:"interface"`
+	IP        string `yaml:"ip"`
+}
+
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
 // All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
 type ServerInstance struct {
@@ -60,6 +68,7 @@ type ServerConfig struct {
 	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen        string            `yaml:"listen,omitempty"`
 	WANInterfaces []string          `yaml:"wan_interfaces,omitempty"`
+	WANs          []serverWAN       `yaml:"wans,omitempty"`
 	WANs          []serverWAN       `yaml:"wans,omitempty"`
 	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
 	Instances     []ServerInstance  `yaml:"instances"`
@@ -143,6 +152,36 @@ func (c *ServerConfig) Validate() error {
 			}
 			seenIPs[ip.Unmap()] = true
 			seenDevices[path.Interface] = true
+		}
+	}
+	// A single wildcard UDP socket is needed for all MPQUIC paths:
+	// independent listeners create unrelated QUIC connection registries.
+	if len(c.WANs) != 0 {
+		if len(c.WANInterfaces) != 0 {
+			return errors.New("server wans cannot be mixed with legacy wan_interfaces")
+		}
+		host, _, _ := net.SplitHostPort(c.Listen)
+		if host != "" && host != "0.0.0.0" && host != "::" {
+			return errors.New("server multi-WAN requires a wildcard listen address to receive packets on all WAN IPs")
+		}
+		seenIP := make(map[netip.Addr]bool, len(c.WANs))
+		seenIface := make(map[string]bool, len(c.WANs))
+		for i, link := range c.WANs {
+			if link.Interface == "" || strings.TrimSpace(link.Interface) != link.Interface || seenIface[link.Interface] {
+				return fmt.Errorf("server WAN %d invalid or duplicate interface %q", i+1, link.Interface)
+			}
+			ip, err := netip.ParseAddr(link.IP)
+			if err != nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Zone() != "" {
+				return fmt.Errorf("server WAN %d invalid unicast IP %q", i+1, link.IP)
+			}
+			ip = ip.Unmap()
+			if seenIP[ip] {
+				return fmt.Errorf("server WAN %d duplicate IP %s", i+1, ip)
+			}
+			if (host == "0.0.0.0" || host == "") && !ip.Is4() {
+				return fmt.Errorf("server WAN %d address %s is not IPv4 for wildcard listen %q", i+1, ip, c.Listen)
+			}
+			seenIP[ip], seenIface[link.Interface] = true, true
 		}
 	}
 	seenWAN := map[string]bool{}
