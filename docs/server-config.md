@@ -130,6 +130,10 @@ Clients accept authorized pushes by default but can opt out using `accept_routes
 
 DNS pushes use per-link `systemd-resolved` or `resolvconf` configuration and are restored at disconnect. Without a push, the resolver is not changed. See [Client configuration](client-config.md) for route, DNS and reconnect behavior.
 
+## Optional: Server cluster HA
+
+To run more than one Server backend, give each backend compatible tenant identity, peer certificate authorizations and tunnel routes. The Client can select backends in `active_standby` or fleet-wide `active_active`, or delegate TCP session selection to an external HAProxy. HA does **not** replicate Server sessions or Linux routing state. See [High availability](high-availability.md).
+
 ## Optional: multiple physical WANs
 
 ```yaml
