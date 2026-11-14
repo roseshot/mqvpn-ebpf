@@ -12,6 +12,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
 	"github.com/roseshot/mqvpn-ebpf/internal/logging"
+	"github.com/roseshot/mqvpn-ebpf/internal/qos"
 )
 
 // Stream is a CONNECT-ETHERNET HTTP/3 DATAGRAM stream.
@@ -23,8 +24,10 @@ type Stream interface {
 type Session struct {
 	rule   *Rule
 	stream Stream
-	tx     chan []byte
-	done   chan struct{}
+	tx         chan []byte
+	priorityTx chan []byte
+	codec      l3.Codec
+	done       chan struct{}
 	txDone chan struct{}
 	// txMu serializes the nonblocking enqueue with session revocation,
 	// so an already-detached peer cannot enqueue into an orphaned queue.
@@ -48,7 +51,7 @@ func (s *Session) stop() {
 
 // enqueue never blocks on a slow peer and cannot queue more datagrams once
 // stop has finished. A full or retired queue is counted as a drop by Hub.
-func (s *Session) enqueue(payload []byte) bool {
+func (s *Session) enqueue(payload []byte, priority bool) bool {
 	s.txMu.Lock()
 	defer s.txMu.Unlock()
 	if s.ctx.Err() != nil {
@@ -59,8 +62,12 @@ func (s *Session) enqueue(payload []byte) bool {
 		return false
 	default:
 	}
+	queue := s.tx
+	if priority {
+		queue = s.priorityTx
+	}
 	select {
-	case s.tx <- payload:
+	case queue <- payload:
 		return true
 	default:
 		return false
@@ -127,6 +134,12 @@ func (h *Hub) SetTunnelPool(pool *TunnelPool) error {
 // requested mode must match the authorized peer policy; a static client
 // cannot enter dynamic mode or receive a different static address.
 func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream, requestDynamic bool) (*Session, error) {
+	return h.AttachWithCompression(ctx, rule, stream, requestDynamic, false)
+}
+
+// AttachWithCompression uses a per-session codec negotiated in the authenticated
+// HTTP CONNECT headers. Legacy peers keep the original CONNECT-ETHERNET format.
+func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression bool) (*Session, error) {
 	if rule == nil || stream == nil {
 		return nil, errors.New("peer and stream required")
 	}
@@ -176,34 +189,28 @@ func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream,
 		return nil, fmt.Errorf("peer %s must request a dynamic tunnel IP", rule.ID)
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 256), done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
+	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
 	h.peers[rule.ID] = s
 	h.mu.Unlock()
 	go func() {
 		defer close(s.txDone)
+		burst := 0
 		for {
-			// A closed done channel may be selected alongside buffered
-			// packets. Check before and after dequeue so retired queues
-			// are not deliberately drained into the old transport.
-			if s.ctx.Err() != nil {
+			// Priority takes precedence over bulk packets, with bounded
+			// bursts to avoid starving normal traffic on a busy peer.
+			payload, ok := qos.Next(s.ctx, s.priorityTx, s.tx, &burst)
+			if !ok || s.ctx.Err() != nil {
 				return
 			}
-			select {
-			case <-s.ctx.Done():
-				return
-			case payload := <-s.tx:
-				if s.ctx.Err() != nil {
-					return
-				}
-				if err := s.stream.SendDatagram(payload); err != nil {
-					h.drops.Add(1)
-					h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
-				} else {
-					h.txFrames.Add(1)
-				}
+			if err := s.stream.SendDatagram(payload); err != nil {
+				h.drops.Add(1)
+				h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
+			} else {
+				h.txFrames.Add(1)
 			}
 		}
 	}()
+
 	return s, nil
 }
 
@@ -287,7 +294,7 @@ func (h *Hub) ingress(origin *Session, payload []byte) {
 		h.drops.Add(1)
 		return
 	}
-	packet, err := l3.Unwrap(payload)
+	packet, err := origin.codec.Unwrap(payload)
 	if err != nil || len(packet)+l3.EthernetLen > h.maxFrame {
 		h.drops.Add(1)
 		return
@@ -360,14 +367,15 @@ func (h *Hub) fanout(origin *Session, packet []byte) {
 }
 
 func (h *Hub) send(s *Session, packet []byte) {
-	payload, err := l3.Wrap(packet)
+	priority := qos.Priority(packet)
+	payload, err := s.codec.Wrap(packet, priority)
 	if err != nil {
 		h.drops.Add(1)
 		return
 	}
 	// A retired session cannot receive a late enqueue even when both its
 	// closed done channel and buffered tx channel would be selectable.
-	if !s.enqueue(payload) {
+	if !s.enqueue(payload, priority) {
 		// Only bounded I/O queue pressure or retired-session cleanup
 		// drops an otherwise valid packet. Not an inner IP traffic ACL.
 		h.drops.Add(1)
