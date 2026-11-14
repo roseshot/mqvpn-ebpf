@@ -33,6 +33,7 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [ -n "$files" ]; then
             printf 'Go files requiring gofmt:\n%s\n' "$files"
+            gofmt -d internal/app/client_crl_test.go internal/p2mp/config_test.go
             exit 1
           fi
       - name: Verify reproducible Go modules
