@@ -15,7 +15,7 @@ func TestServerHAReadinessValidatesLoopbackOnly(t *testing.T) {
 	good := []string{"127.0.0.1:9090", "[::1]:9090"}
 	for _, address := range good {
 		cfg := ServerConfig{
-			HA: ServerHAConfig{ReadinessListen: address},
+			HA:        ServerHAConfig{ReadinessListen: address},
 			Instances: []ServerInstance{sampleInstance("a", "vpn.example.test", "mq0")},
 		}
 		if err := cfg.Validate(); err != nil {
@@ -29,7 +29,7 @@ func TestServerHAReadinessValidatesLoopbackOnly(t *testing.T) {
 	}
 	for _, address := range bad {
 		cfg := ServerConfig{
-			HA: ServerHAConfig{ReadinessListen: address},
+			HA:        ServerHAConfig{ReadinessListen: address},
 			Instances: []ServerInstance{sampleInstance("a", "vpn.example.test", "mq0")},
 		}
 		if err := cfg.Validate(); err == nil {
