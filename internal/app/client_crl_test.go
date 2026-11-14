@@ -92,8 +92,8 @@ func TestTenantClientCRLValidRevokedAndExpired(t *testing.T) {
 		PeerCertificates: []*x509.Certificate{leaf, ca}, VerifiedChains: chain,
 	}
 	for _, tc := range []struct {
-		name, mode string
-		revoked bool
+		name, mode  string
+		revoked     bool
 		wantFailure bool
 	}{
 		{"off requires valid mTLS but does not check revocation", "off", true, false},
@@ -146,7 +146,7 @@ func TestTenantCRLMustBeSignedByVerifiedIssuer(t *testing.T) {
 
 func TestClientRevocationConfigStrictModesAndFiles(t *testing.T) {
 	for _, tc := range []struct {
-		config ClientRevocationConfig
+		config    ClientRevocationConfig
 		wantError bool
 	}{
 		{ClientRevocationConfig{Mode: "off"}, false},
