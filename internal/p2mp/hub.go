@@ -200,9 +200,14 @@ func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stre
 			h.mu.Unlock()
 			return nil, fmt.Errorf("peer %s has no authorized sticky primary session", rule.ID)
 		}
-		if _, exists := h.realtime[rule.ID]; exists {
-			h.mu.Unlock()
-			return nil, fmt.Errorf("peer %s realtime companion already connected", rule.ID)
+		if previous := h.realtime[rule.ID]; previous != nil {
+			// A dead WAN may prevent the server from receiving QUIC
+			// CONNECTION_CLOSE. A fresh mTLS-authenticated companion
+			// atomically takes over the same peer's realtime slot;
+			// its retired predecessor can no longer inject or enqueue
+			// packets. No old, stale connection may block failover.
+			delete(h.realtime, rule.ID)
+			previous.stop()
 		}
 	} else if _, exists := h.peers[rule.ID]; exists {
 		h.mu.Unlock()
