@@ -28,16 +28,16 @@ var errStickyUnavailable = errors.New("sticky realtime WAN unavailable; priority
 // silently violate strict flow affinity and reintroduce out-of-order
 // RTP under WAN failure.
 type stickyClientStream struct {
-	base    p2mp.Stream
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.RWMutex
-	active  p2mp.Stream
-	inbound chan []byte
+	base            p2mp.Stream
+	ctx             context.Context
+	cancel          context.CancelFunc
+	mu              sync.RWMutex
+	active          p2mp.Stream
+	inbound         chan []byte
 	realtimeInbound chan []byte
-	failure chan error
-	wg      sync.WaitGroup
-	logger  *slog.Logger
+	failure         chan error
+	wg              sync.WaitGroup
+	logger          *slog.Logger
 }
 
 func newStickyClientStream(ctx context.Context, base p2mp.Stream, logger *slog.Logger) *stickyClientStream {
@@ -180,7 +180,7 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	quicConfig := &quic.Config{
 		EnableDatagrams: true,
 		KeepAlivePeriod: 2 * time.Second,
-		MaxIdleTimeout: 8 * time.Second,
+		MaxIdleTimeout:  8 * time.Second,
 	}
 	dialCtx, cancel := context.WithTimeout(m.ctx, 12*time.Second)
 	conn, err := tr.Dial(dialCtx, remote, tlsTemplate.Clone(), quicConfig)
