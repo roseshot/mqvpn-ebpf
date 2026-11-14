@@ -2,8 +2,8 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,10 +13,10 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
-if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]]; then
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
 fi
-if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]]; then
+if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
   for tool in iperf3 tc ss; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
   done
@@ -78,7 +78,7 @@ done
 ip -n "$server_ns" addr add 192.0.2.1/30 dev wan0
 ip -n "$client_ns" addr add 192.0.2.2/30 dev wan0
 
-if [[ "$mode" == wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
   # Four physically distinct WAN veth pairs. The first Client path
   # dials 192.0.2.1; additional QUIC paths dial *different Server IPs*
   # on the corresponding independent links, within the same connection.
@@ -119,7 +119,16 @@ peers:
 EOF
 server_listen="192.0.2.1:8443"
 server_wans=""
-if [[ "$mode" == wan4 ]]; then
+tcp_fallback_settings=""
+if [[ "$mode" == crypto-tcp ]]; then
+  tcp_fallback_settings="$(cat <<'TCPCFG'
+tcp_fallback:
+  enabled: true
+  listen: "192.0.2.1:8443"
+TCPCFG
+)"
+fi
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
   server_listen="0.0.0.0:8443"
   server_wans="$(cat <<'WANCFG'
 wans:
@@ -137,6 +146,7 @@ fi
 cat >"$work/server.yaml" <<EOF
 listen: "$server_listen"
 $server_wans
+$tcp_fallback_settings
 instances:
   - name: lab
     server_name: vpn.ci.example
@@ -162,8 +172,37 @@ for attempt in $(seq 1 60); do
   sleep 0.2
 done
 ip -n "$server_ns" link show mq0 >/dev/null || fail "server failed to create mq0"
+# Capture only primary WAN before the client handshake, so Wireshark
+# can learn QUIC CIDs without disturbing initial multipath validation.
+is_crypto=false
+if [[ "$mode" == crypto-wan4 || "$mode" == crypto-tcp ]]; then is_crypto=true; fi
+capture_pids=""
+start_crypto_capture() {
+  local ns="$1" side="$2" iface="$3" filter="$4"
+  local path="$work/$side-$iface.pcap"
+  ip netns exec "$ns" tcpdump -n -p -s 0 -U -i "$iface" -w "$path" "$filter" \
+    >"$work/capture-$side-$iface.log" 2>&1 &
+  local cap_pid="$!"
+  pids="$pids $cap_pid"
+  capture_pids="$capture_pids $cap_pid"
+  local up=0
+  for attempt in $(seq 1 100); do
+    if [[ -s "$path" ]]; then up=1; break; fi
+    kill -0 "$cap_pid" 2>/dev/null || fail "tcpdump $side $iface died"
+    sleep 0.05
+  done
+  (( up )) || fail "tcpdump $side $iface was not ready"
+}
+if [[ "$is_crypto" == true ]]; then
+  for binary in tcpdump tshark; do
+    command -v "$binary" >/dev/null || fail "$binary required for encryption tests"
+  done
+  capture_filter="udp port 8443"
+  if [[ "$mode" == crypto-tcp ]]; then capture_filter="tcp port 8443"; fi
+  start_crypto_capture "$client_ns" client wan0 "$capture_filter"
+fi
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
-if [[ "$mode" == wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
   client_wan_flags=(
     --use-server-wans=true
     --wan 192.0.2.2@wan0=192.0.2.1
@@ -172,13 +211,22 @@ if [[ "$mode" == wan4 ]]; then
     --wan 192.0.2.6@wan3=192.0.2.5
   )
 fi
-ip netns exec "$client_ns" "$root/bin/mqvpn-client" \
+crypto_client_flags=()
+client_env=()
+client_transport=quic
+if [[ "$is_crypto" == true ]]; then
+  crypto_client_flags=(--test-tls-keylog-file "$work/tls.keys")
+  client_env=(MQVPN_UNSAFE_TEST_KEYLOG=I_ACKNOWLEDGE_TLS_SECRETS)
+  if [[ "$mode" == crypto-tcp ]]; then client_transport=tcp; fi
+fi
+ip netns exec "$client_ns" env "${client_env[@]}" "$root/bin/mqvpn-client" \
   --server vpn.ci.example:8443 --connect-ip 192.0.2.1 \
   --tun mq0 --tun-address 10.77.0.2/30 \
   --tun-mtu 1500 --max-frame 1514 \
   "${client_wan_flags[@]}" \
   --ca "$cert/ca.crt" --cert "$cert/client.crt" --key "$cert/client.key" \
-  --tc-mode off --transport quic --reconnect=false \
+  --tc-mode off --transport "$client_transport" --tcp-port 8443 \
+  "${crypto_client_flags[@]}" --reconnect=false \
   >"$work/client.log" 2>&1 &
 pids="$pids $!"
 
@@ -197,6 +245,74 @@ done
 ip -n "$server_ns" -o link show mq0 | grep -q 'mtu 1500' || fail "server TUN MTU"
 ip -n "$client_ns" -o link show mq0 | grep -q 'mtu 1500' || fail "client TUN MTU"
 echo "PASS actual mTLS QUIC+TUN peer connectivity, MTU 1500"
+
+# The dedicated confidentiality tests compare inner plaintext and all
+# outer interfaces. The ephemeral key log never leaves this 0700 work dir.
+if [[ "$is_crypto" == true ]]; then
+  if [[ "$mode" == crypto-wan4 ]]; then
+    validated=0
+    for attempt in $(seq 1 140); do
+      count="$(grep -c 'QUIC WAN path validated' "$work/client.log" || true)"
+      if [[ "$count" -eq 3 ]]; then validated=1; break; fi
+      for pid in $pids; do
+        kill -0 "$pid" 2>/dev/null || fail "VPN exited before four QUIC paths validated"
+      done
+      sleep 0.1
+    done
+    (( validated )) || fail "expected all four MPQUIC Server destinations to validate"
+    echo "PASS four MPQUIC paths established for wire confidentiality testing"
+  else
+    grep -q 'TCP fallback VPN session established' "$work/client.log" ||
+      fail "forced TLS/TCP VPN did not establish"
+  fi
+  start_crypto_capture "$server_ns" server mq0 "ip"
+  start_crypto_capture "$server_ns" server wan0 "$capture_filter"
+  if [[ "$mode" == crypto-wan4 ]]; then
+    for side in server client; do
+      if [[ "$side" == server ]]; then ns="$server_ns"; else ns="$client_ns"; fi
+      for index in 1 2 3; do
+        start_crypto_capture "$ns" "$side" "wan$index" "$capture_filter"
+      done
+    done
+  fi
+  start_crypto_capture "$client_ns" client mq0 "ip"
+
+  run_crypto_probe() {
+    local listen_ns="$1" send_ns="$2" listen_ip="$3" send_ip="$4" label="$5"
+    local marker="$work/crypto-$label.ready"
+    ip netns exec "$listen_ns" python3 "$root/tests/integration/wire_crypto_probe.py" \
+      listen "$listen_ip" "$send_ip" "$marker" \
+      >"$work/crypto-$label-listener.log" 2>&1 &
+    local probe_pid="$!"
+    pids="$pids $probe_pid"
+    local up=0
+    for attempt in $(seq 1 100); do
+      if [[ -f "$marker" ]]; then up=1; break; fi
+      kill -0 "$probe_pid" 2>/dev/null || fail "wire crypto listener exited early"
+      sleep 0.05
+    done
+    (( up )) || fail "wire crypto listener not ready"
+    timeout 50s ip netns exec "$send_ns" python3 "$root/tests/integration/wire_crypto_probe.py" \
+      send "$send_ip" "$listen_ip" "$marker" \
+      >"$work/crypto-$label-sender.log" 2>&1 ||
+      fail "wire crypto probe $label sender"
+    wait "$probe_pid" || fail "wire crypto probe $label listener"
+    cat "$work/crypto-$label-listener.log"
+    cat "$work/crypto-$label-sender.log"
+  }
+  run_crypto_probe "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 s2c
+  run_crypto_probe "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 c2s
+  for pid in $capture_pids; do kill -TERM "$pid" 2>/dev/null || true; done
+  for pid in $capture_pids; do wait "$pid" || true; done
+  crypto_transport=tcp
+  pcap_count=1
+  if [[ "$mode" == crypto-wan4 ]]; then crypto_transport=quic; pcap_count=4; fi
+  python3 "$root/tests/integration/verify_wire_crypto.py" \
+    "$crypto_transport" "$work" --wan-count "$pcap_count" ||
+    fail "TUN/WAN confidentiality or TLS secret positive decryption test failed"
+  echo "PASS encrypted $crypto_transport tunnel: plaintext only on TUN and positive TLS test-key decryption"
+  exit 0
+fi
 
 if [[ "$mode" == vxlan ]]; then
   ip -n "$server_ns" link add vx100 type vxlan id 100 dev mq0 local 10.77.0.1 remote 10.77.0.2 dstport 4789
@@ -406,7 +522,7 @@ fi
 # Four independent WAN paths, all carrying the same mTLS MPQUIC session.
 # Confirm three additional AddPath+Probe completions before fault injection.
 # Differentiated netem conditions prove traffic actually uses each link.
-if [[ "$mode" == wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
   profile=poor
   validated=0
   for attempt in $(seq 1 140); do

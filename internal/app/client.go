@@ -56,6 +56,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	acceptDNS := fs.Bool("accept-dns", true, "apply authenticated Server-pushed DNS (default true)")
 	dnsRoutes := fs.Bool("dns-routes", true, "install per-DNS /32 or /128 routes via VPN TUN (default true)")
 	reconnect := fs.Bool("reconnect", true, "automatically reconnect on session loss or initial connection failure (default true)")
+	testKeyLog := fs.String("test-tls-keylog-file", "", "DANGEROUS: test-only TLS/QUIC secrets (requires explicit environment opt-in; never production)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -184,6 +185,15 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if _, err := keyPair(*certFile, *keyFile); err != nil {
 		return err
 	}
+	keyLog, err := openTestTLSKeyLog(*testKeyLog)
+	if err != nil {
+		return err
+	}
+	if keyLog != nil {
+		defer keyLog.Close()
+		tcpOptions.tlsKeyLog = keyLog
+		logger.WarnContext(ctx, "UNSAFE TEST TLS secrets logging enabled; never use outside isolated test environment")
+	}
 	options := clientSessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
 		wans: wans, useServerWANs: *useServerWANs,
@@ -275,6 +285,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		MinVersion:   tls.VersionTLS13,
 		ServerName:   endpoint.serverName,
 		NextProtos:   []string{http3.NextProtoH3},
+		KeyLogWriter: o.tcp.tlsKeyLog,
 		RootCAs:      pool,
 		Certificates: []tls.Certificate{cert},
 	}
