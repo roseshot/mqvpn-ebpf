@@ -28,17 +28,6 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
-      - name: Temporary formatting snapshot for frag-v1 PR
-        if: github.head_ref == 'feat/frag-datagrams-mtu1500-20261114'
-        run: |
-          gofmt -w internal/l3/fragment.go internal/p2mp/hub.go
-          for f in internal/l3/fragment.go internal/p2mp/hub.go; do
-            echo "FRAG_GOFMT_BEGIN:$f"
-            base64 -w0 "$f"
-            echo
-            echo "FRAG_GOFMT_END:$f"
-          done
-          exit 1
       - name: Enforce gofmt across all application and test code
         run: |
           files="$(gofmt -l cmd internal)"
