@@ -87,6 +87,9 @@ func TestClientMTU1500FragmentedRoundTrip(t *testing.T) {
 
 func TestServerMTU1500FragmentedRoundTrip(t *testing.T) {
 	h, device, a, b, _, _, cancel := prepare(t)
+	// prepare uses the legacy 1160-byte fixture budget. Explicitly
+	// enable the 1500-byte TUN budget before attaching the new session.
+	h.maxFrame = 1514
 	defer cancel()
 	defer h.Detach(a)
 	h.Detach(b)
