@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -205,6 +206,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		return err
 	}
 	if haPlan != nil {
+		if strings.EqualFold(haConfig.Controller, "haproxy") && *transportMode != "tcp" {
+			return errors.New("ha.controller: haproxy requires transport: tcp; HAProxy Community mode tcp is not a transparent QUIC/UDP proxy")
+		}
 		if !*reconnect {
 			return errors.New("HA requires reconnect: true to recover after session loss")
 		}
