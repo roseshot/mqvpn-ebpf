@@ -147,30 +147,38 @@ func Parse(f FileConfig) (*Config, error) {
 
 // PeerByCertificate is connection authentication only. It does not inspect
 // or authorize any tunneled traffic's inner IP source or destination.
+// PeerByCertificate maps a leaf certificate to exactly one explicit peer.
+// A mixed legacy-fingerprint/CN migration must fail closed if one certificate
+// happens to match multiple authorization entries. YAML order is never a
+// valid way to choose elevated network destinations.
 func (c *Config) PeerByCertificate(certDER []byte) *Rule {
 	sum := sha256.Sum256(certDER)
 	var cert *x509.Certificate
 	parsed := false
+	var match *Rule
 	for _, p := range c.Peers {
+		matched := false
 		if p.CertificateCN == "" {
-			if p.Fingerprint == sum {
-				return p
+			matched = p.Fingerprint == sum
+		} else {
+			if !parsed {
+				parsed = true
+				var err error
+				cert, err = x509.ParseCertificate(certDER)
+				if err != nil || cert.IsCA || cert.Subject.CommonName == "" {
+					cert = nil
+				}
 			}
-			continue
+			matched = cert != nil && cert.Subject.CommonName == p.CertificateCN
 		}
-		if !parsed {
-			parsed = true
-			var err error
-			cert, err = x509.ParseCertificate(certDER)
-			if err != nil || cert.IsCA || cert.Subject.CommonName == "" {
-				cert = nil
+		if matched {
+			if match != nil {
+				return nil
 			}
-		}
-		if cert != nil && cert.Subject.CommonName == p.CertificateCN {
-			return p
+			match = p
 		}
 	}
-	return nil
+	return match
 }
 
 // SameIdentity decides whether a previously authorized connection still
