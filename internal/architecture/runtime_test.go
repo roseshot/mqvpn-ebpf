@@ -12,8 +12,10 @@ import (
 )
 
 // TestNoRuntimeSubprocesses enforces an architectural boundary: the VPN
-// daemons and their internal packages use Go libraries and Linux syscalls,
-// not shell-outs to ip(8), route(8), openssl, or any other process.
+// daemons use Go libraries and Linux syscalls, not general shell-outs.
+// The only exception is direct resolvconf invocation for interface DNS
+// when systemd-resolved is absent; resolvconf has no standard socket or
+// D-Bus API. No shell, command templates, or other external tools allowed.
 //
 // Development scripts, build tools, and _test.go files may invoke commands.
 // This guard intentionally checks only production .go source files.
@@ -24,6 +26,9 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 		filepath.Join("cmd", "mqvpn-server"),
 		filepath.Join("cmd", "mqvpn-client"),
 	}
+	// This one path may use os/exec to invoke only the checked
+	// resolvconf binary. All other production code remains subprocess-free.
+	allowedResolvconf := filepath.Join(root,"internal","dnspush","resolvconf_linux.go")
 	bannedImports := map[string]bool{
 		"os/exec":                true,
 		"golang.org/x/sys/execabs": true,
@@ -52,7 +57,7 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if bannedImports[pkg] {
+				if bannedImports[pkg] && !(path==allowedResolvconf && pkg=="os/exec") {
 					t.Errorf("%s: production code must not import %s; use Go modules or syscalls instead", path, pkg)
 				}
 			}
@@ -72,6 +77,15 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 				name := qualifier.Name + "." + selector.Sel.Name
 				if bannedCalls[name] {
 					t.Errorf("%s: %s invokes an external process in production code", set.Position(call.Pos()), name)
+				}
+				// Only the DNS fallback may use the direct exec package.
+				// Any other use or any other executable-launching method
+				// requires an explicit architecture review.
+				if qualifier.Name=="exec" && (selector.Sel.Name=="Command" ||
+					selector.Sel.Name=="CommandContext" || selector.Sel.Name=="LookPath") {
+					if path!=allowedResolvconf || selector.Sel.Name=="Command" {
+						t.Errorf("%s: unsupported process invocation %s",set.Position(call.Pos()),name)
+					}
 				}
 				return true
 			})
