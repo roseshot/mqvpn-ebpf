@@ -35,10 +35,11 @@ across packets: losing one DATAGRAM never corrupts subsequent ones.
 Only non-priority inner IP packets >=512 bytes are considered for compression,
 and the result must save at least 16 bytes after the two-byte length field.
 SIP signalling and DSCP EF traffic bypass compression. Compression is done
-independently per packet and is not a replacement for PMTU discovery or
-DATAGRAM fragmentation. A TUN MTU of 1500 is **not guaranteed** to cross a
-1500-byte WAN PMTU without application-layer fragmentation; this change does
-not implement fragmentation/reassembly.
+independently per packet and is not a replacement for PMTU discovery.
+A separately negotiated `frag-v1` feature can split an oversized encoded
+packet into bounded DATAGRAM payloads and reassemble them, even when
+low-performance CPUs have Zstd disabled. Fragmentation never guarantees
+delivery over a lossy QUIC path; see [fragmentation](fragmentation.md).
 
 ## Packet priority
 
