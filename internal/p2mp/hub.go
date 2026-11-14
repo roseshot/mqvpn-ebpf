@@ -217,21 +217,15 @@ func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream,
 				h.drops.Add(1)
 				continue
 			}
-			parts, err := s.fragmenter.Split(payload)
+			sent, reductions, err := sendEncodedFrame(s.ctx, s.stream, &s.fragmenter, payload)
+			h.txFrames.Add(uint64(sent))
+			if reductions > 0 {
+				h.log.InfoContext(s.ctx, "peer DATAGRAM size budget reduced",
+					"peer", s.ID(), "budget", s.fragmenter.Budget(), "reductions", reductions)
+			}
 			if err != nil {
 				h.drops.Add(1)
-				continue
-			}
-			for _, part := range parts {
-				if s.ctx.Err() != nil {
-					return
-				}
-				if err := s.stream.SendDatagram(part); err != nil {
-					h.drops.Add(1)
-					h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
-					break // A failed fragment makes this frame incomplete.
-				}
-				h.txFrames.Add(1)
+				h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
 			}
 		}
 	}()
