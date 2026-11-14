@@ -82,6 +82,8 @@ Install the probe at `/usr/local/libexec/mqvpn-ready`, executable by the Keepali
 
 VRRP `track_script` uses a **weight of zero**, putting a Server into FAULT after the configured number of failed health checks instead of merely reducing priority. The examples use `nopreempt` to avoid automatically stealing back the VIP after a recovered Server reappears; operators can arrange an explicit planned failback. Monitor split-brain and route convergence independently.
 
+**MPQUIC warning:** This example has **one public UDP VIP**. It does not make the Server's other advertised `wans` addresses movable. If Clients use multiple Server destination WAN addresses, cluster every required public WAN VIP consistently (for example with a Keepalived VRRP synchronization group), and verify underlay source/return routing per WAN; otherwise a retained path can still point to the failed physical Server. Start with a single Server destination for an HA rollout until multi-WAN failover is validated.
+
 A Server crash causes VRRP takeover, **not QUIC cryptographic session migration**. The existing Client will detect session failure according to its normal liveness behavior and reconnect to the same VIP. Packet loss and disruption to application sessions are possible. Faster, bounded failure detection needs a separately tested transport health/liveness design; never promise zero downtime from VIP movement alone.
 
 ## 3. External HAProxy for TLS/TCP fallback
