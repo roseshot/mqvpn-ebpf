@@ -461,7 +461,10 @@ func (h *Hub) fanout(origin *Session, packet []byte) {
 	h.mu.RLock()
 	targets := make([]*Session, 0, len(h.peers))
 	for _, s := range h.peers {
-		if s != origin {
+		// A realtime companion is a distinct session for the SAME peer.
+		// Never reflect multicast back to its primary session: fanout is
+		// based on authenticated peer identity, not session pointers.
+		if origin == nil || s.ID() != origin.ID() {
 			targets = append(targets, s)
 		}
 	}
