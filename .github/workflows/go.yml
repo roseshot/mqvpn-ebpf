@@ -180,3 +180,40 @@ jobs:
         run: sudo bash tests/integration/overlay-netns.sh wan-poor
       - name: FRRouting official stable .deb BGP peering and FIB over TUN
         run: sudo bash tests/integration/overlay-netns.sh bgp
+
+  five-site-routing:
+    name: Five-site FRR OSPF/BGP and cross-site P2MP forwarding
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install Linux networking and signed FRRouting stable
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release procps
+          curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
+            sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr noble frr-stable" |
+            sudo tee /etc/apt/sources.list.d/frrouting.list
+          sudo apt-get update -qq
+          apt-cache policy frr | tee /tmp/mqvpn-frr-five-site-policy.log
+          grep -q 'deb.frrouting.org/frr' /tmp/mqvpn-frr-five-site-policy.log
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends frr frr-pythontools
+          /usr/lib/frr/bgpd --version
+          /usr/lib/frr/ospfd --version
+      - name: Build authenticated P2MP binaries and check five-site test
+        run: |
+          sudo modprobe tun || true
+          test -c /dev/net/tun
+          bash -n tests/integration/five-site-frr.sh
+          make release
+      - name: Five sites BGP convergence, Linux FIB and 20 cross-site routes
+        run: sudo bash tests/integration/five-site-frr.sh bgp
+      - name: Five sites OSPF adjacency, Linux FIB and 20 cross-site routes
+        run: sudo bash tests/integration/five-site-frr.sh ospf
