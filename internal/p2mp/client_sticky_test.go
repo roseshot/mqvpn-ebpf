@@ -359,3 +359,60 @@ func TestClientPumpIPv6SIPWithExtensionHeaderUsesStickyCompanion(t *testing.T) {
 		t.Fatal("IPv6 dual-path client pump failed to stop")
 	}
 }
+
+func TestClientPumpAssuredQoSRemainsOnMultipathAndRealtimeIsSticky(t *testing.T) {
+	device := newTestTun()
+	stream := &dualClassStream{
+		baseIn: make(chan []byte, 8), realtimeIn: make(chan RealtimeDatagram, 8),
+		bulkOut: make(chan []byte, 8), realtimeOut: make(chan []byte, 8),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+
+	assured := ip4([4]byte{10, 77, 0, 2}, [4]byte{10, 77, 0, 1})
+	assured[1] = 34 << 2 // DSCP AF41
+	device.in <- assured
+	select {
+	case frame := <-stream.bulkOut:
+		got, err := l3.Unwrap(frame)
+		if err != nil || string(got) != string(assured) {
+			t.Fatalf("assured packet corrupted: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AF41 did not reach bulk MPQUIC")
+	}
+	select {
+	case <-stream.realtimeOut:
+		t.Fatal("AF41 incorrectly used strict realtime WAN")
+	default:
+	}
+
+	realtime := append([]byte(nil), assured...)
+	realtime[1] = 46 << 2 // EF
+	device.in <- realtime
+	select {
+	case frame := <-stream.realtimeOut:
+		got, err := l3.Unwrap(frame)
+		if err != nil || string(got) != string(realtime) {
+			t.Fatalf("realtime packet corrupted: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("EF did not reach single-WAN companion")
+	}
+	select {
+	case <-stream.bulkOut:
+		t.Fatal("EF leaked to bulk MPQUIC")
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("client pump failed to stop")
+	}
+}
