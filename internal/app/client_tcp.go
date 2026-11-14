@@ -128,7 +128,9 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	compression, err := negotiatedCompression(response.Header.Get(compressionHeader))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	effectiveAddress, err := resolveClientTunnelAddress(o.tunAddress, response.Header.Get(tunnelAddressHeader))
 	if err != nil {
 		return fmt.Errorf("TCP tunnel IP negotiation: %w", err)
