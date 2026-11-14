@@ -152,7 +152,12 @@ fi
 
 ip -n "$server_ns" addr add 198.18.101.1/32 dev lo
 ip -n "$client_ns" addr add 198.18.202.1/32 dev lo
-mkdir -p "/run/frr/$frr_server" "/run/frr/$frr_client"
+# FRR 10.7 stable daemons drop privileges to frr, which is in frrvty.
+# Keep certificate private keys root-owned; only generated daemon configs
+# and dedicated runtime directories are accessible to the FRR account.
+install -d -m 0750 -o frr -g frr "/run/frr/$frr_server" "/run/frr/$frr_client"
+chgrp frr "$work"
+chmod 0750 "$work"
 for side in server client; do
   if [[ "$side" == server ]]; then
     asn=65001; peer_asn=65002; local_ip=10.77.0.1; peer_ip=10.77.0.2
@@ -182,9 +187,14 @@ router bgp $asn
 !
 EOF
 done
+# The default FRR service user must be a member of frrvty.
+# Never bypass this protection by forcing -u root.
+id frr
+chown frr:frr "$work"/{server,client}-{zebra,bgpd}.conf
+chmod 0640 "$work"/{server,client}-{zebra,bgpd}.conf
 for side in server client; do
   if [[ "$side" == server ]]; then ns="$server_ns"; space="$frr_server"; else ns="$client_ns"; space="$frr_client"; fi
-  ip netns exec "$ns" /usr/lib/frr/zebra -N "$space" -u root -g root \
+  ip netns exec "$ns" /usr/lib/frr/zebra -N "$space" -u frr -g frr \
     -f "$work/$side-zebra.conf" -A 127.0.0.1 -P 0 >"$work/$side-zebra.log" 2>&1 &
   pids="$pids $!"
 done
@@ -196,7 +206,7 @@ done
   fail "FRR zebra ZAPI socket not created"
 for side in server client; do
   if [[ "$side" == server ]]; then ns="$server_ns"; space="$frr_server"; else ns="$client_ns"; space="$frr_client"; fi
-  ip netns exec "$ns" /usr/lib/frr/bgpd -N "$space" -u root -g root \
+  ip netns exec "$ns" /usr/lib/frr/bgpd -N "$space" -u frr -g frr \
     -f "$work/$side-bgpd.conf" -A 127.0.0.1 -P 0 >"$work/$side-bgpd.log" 2>&1 &
   pids="$pids $!"
 done
