@@ -13,6 +13,22 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/qos"
 )
 
+// realtimeDatagramSender is supplied by the opt-in dual-session QUIC
+// transport. It sends classified realtime frames on the single-WAN
+// companion connection, never on the round-robin bulk connection.
+type realtimeDatagramSender interface {
+	SendRealtimeDatagram([]byte) error
+}
+
+type realtimeSendStream struct {
+	Stream
+	sender realtimeDatagramSender
+}
+
+func (r realtimeSendStream) SendDatagram(data []byte) error {
+	return r.sender.SendRealtimeDatagram(data)
+}
+
 // ClientPump retains the legacy frame format for callers that did not
 // negotiate the optional zstd-v1 capability.
 func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, logger *slog.Logger) error {
@@ -91,7 +107,13 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if err != nil {
 				continue
 			}
-			_, reductions, err := sendEncodedFrame(ctx, stream, fragmenter, payload)
+			out := stream
+			if qos.Priority(pkt) {
+				if sticky, ok := stream.(realtimeDatagramSender); ok {
+					out = realtimeSendStream{Stream: stream, sender: sticky}
+				}
+			}
+			_, reductions, err := sendEncodedFrame(ctx, out, fragmenter, payload)
 			if reductions > 0 {
 				logger.InfoContext(ctx, "client DATAGRAM size budget reduced",
 					"budget", fragmenter.Budget(), "reductions", reductions)
