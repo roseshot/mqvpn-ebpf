@@ -110,6 +110,12 @@ func TestHAActiveStandbyFailureRotationAndFailback(t *testing.T) {
 	if index, _ := s.selected(); index != 0 {
 		t.Fatalf("stable standby did not reset preference to primary: %d", index)
 	}
+	// A primary that ran for hours and then failed must switch immediately
+	// to a standby, rather than retrying the same dead primary first.
+	s.complete(0, errors.New("long-running primary just died"), 2*time.Hour)
+	if index, _ := s.selected(); index != 1 {
+		t.Fatalf("lost long-running primary retried rather than failing over: %d", index)
+	}
 }
 
 func TestHAActiveActiveStableClientDistribution(t *testing.T) {
