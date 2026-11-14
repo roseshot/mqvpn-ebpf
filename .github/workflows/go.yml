@@ -155,6 +155,7 @@ jobs:
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
           bash -n tests/integration/five-site-frr.sh
+          bash -n tests/integration/client-ha-netns.sh
           python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py tests/integration/check_frr_neighbors.py tests/integration/test_frr_neighbors.py
           python3 -m unittest discover -s tests/integration -p 'test_frr_neighbors.py' -v
       - name: Validate active/active and active/standby HAProxy TLS/TCP configs
@@ -163,6 +164,8 @@ jobs:
           haproxy -c -f configs/haproxy-ha-active-standby.cfg
       - name: Build actual mqvpn binaries
         run: make release
+      - name: Native HA live failover between two mTLS Servers over QUIC/TUN
+        run: sudo bash tests/integration/client-ha-netns.sh
       - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
         run: sudo bash tests/integration/overlay-netns.sh crypto-wan4
       - name: Verify TLS/TCP fallback wire confidentiality using test-only traffic secrets
