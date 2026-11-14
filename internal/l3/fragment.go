@@ -34,19 +34,40 @@ var ErrInvalidFragment = errors.New("invalid VPN DATAGRAM fragment")
 type Fragmenter struct {
 	Enabled bool
 	nextID  uint32
+	budget  int // Zero means the conservative default; always shrink-only.
+}
+
+// Budget returns the maximum application DATAGRAM size used by this session.
+// It is a local transport limit, not a measured per-path PMTU.
+func (f *Fragmenter) Budget() int {
+	if f.budget == 0 {
+		return FragmentPayloadBudget
+	}
+	return f.budget
+}
+
+// ReduceBudget applies feedback from a QUIC DatagramTooLargeError.
+// It can only reduce the bound; paths are never probed or optimistically
+// increased by this heuristic.
+func (f *Fragmenter) ReduceBudget(n int) bool {
+	if !f.Enabled || n < 160 || n >= f.Budget() {
+		return false
+	}
+	f.budget = n
+	return true
 }
 
 // Split fragments the encoded CONNECT-ETHERNET payload, which may already
 // contain a stateless zstd-v1 frame. No fragmentation happens without explicit
 // protocol negotiation. Partial transport sends are handled by the caller.
 func (f *Fragmenter) Split(frame []byte) ([][]byte, error) {
-	if !f.Enabled || len(frame) <= FragmentPayloadBudget {
+	if !f.Enabled || len(frame) <= f.Budget() {
 		return [][]byte{frame}, nil
 	}
 	if len(frame) < 1+EthernetLen+20 || frame[0] != ContextIDZero || len(frame) > 65536 {
 		return nil, ErrInvalidFragment
 	}
-	chunkSize := FragmentPayloadBudget - fragmentEnvelopeSize
+	chunkSize := f.Budget() - fragmentEnvelopeSize
 	count := (len(frame) + chunkSize - 1) / chunkSize
 	if count > maxFragmentsPerPacket {
 		return nil, fmt.Errorf("%w: too many fragments (%d)", ErrInvalidFragment, count)

@@ -38,6 +38,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	codec := l3.Codec{Compression: compression, MaxFrame: maxFrame}
 	fragmenter := &l3.Fragmenter{Enabled: fragmentation}
 	reassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+	voice := &qos.VoIPMonitor{}
 	urgent, normal := make(chan []byte, 64), make(chan []byte, 192)
 	ends := make(chan error, 3)
 	var workers sync.WaitGroup
@@ -90,21 +91,13 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if err != nil {
 				continue
 			}
-			parts, err := fragmenter.Split(payload)
-			if err != nil {
-				logger.DebugContext(ctx, "client DATAGRAM fragmentation rejected", "error", err)
-				continue
+			_, reductions, err := sendEncodedFrame(ctx, stream, fragmenter, payload)
+			if reductions > 0 {
+				logger.InfoContext(ctx, "client DATAGRAM size budget reduced",
+					"budget", fragmenter.Budget(), "reductions", reductions)
 			}
-			for _, part := range parts {
-				if ctx.Err() != nil {
-					return
-				}
-				if err := stream.SendDatagram(part); err != nil {
-					// Fragmentation has no automatic retransmission.
-					// Abort the rest of the incomplete frame on failure.
-					logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
-					break
-				}
+			if err != nil {
+				logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
 			}
 		}
 	}()
@@ -134,6 +127,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 				ends <- fmt.Errorf("short TUN write: %d / %d", n, len(pkt))
 				return
 			}
+			voice.Observe(pkt)
 		}
 	}()
 
@@ -148,6 +142,9 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	// access the device after the next reconnect attempt starts.
 	closeErr := device.Close()
 	workers.Wait()
+	if stats := voice.Snapshot(); stats.RTPPackets > 0 || stats.RTCPPackets > 0 {
+		logger.Info("client VoIP receive summary", "stats", stats)
+	}
 	if errors.Is(result, context.Canceled) || errors.Is(result, io.EOF) {
 		result = nil
 	}

@@ -29,6 +29,7 @@ type Session struct {
 	codec       l3.Codec
 	fragmenter  l3.Fragmenter
 	reassembler l3.Reassembler
+	voip        qos.VoIPMonitor
 	done        chan struct{}
 	txDone      chan struct{}
 	// txMu serializes the nonblocking enqueue with session revocation,
@@ -40,6 +41,11 @@ type Session struct {
 }
 
 func (s *Session) ID() string { return s.rule.ID }
+
+// VoIPStats reports receive-side indicators for DSCP EF-marked RTP/RTCP.
+func (s *Session) VoIPStats() qos.VoIPStats {
+	return s.voip.Snapshot()
+}
 
 // stop is called only while holding Hub.mu and only after removing this
 // session from Hub.peers. It fences new queue writes before canceling the
@@ -217,21 +223,15 @@ func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream,
 				h.drops.Add(1)
 				continue
 			}
-			parts, err := s.fragmenter.Split(payload)
+			sent, reductions, err := sendEncodedFrame(s.ctx, s.stream, &s.fragmenter, payload)
+			h.txFrames.Add(uint64(sent))
+			if reductions > 0 {
+				h.log.InfoContext(s.ctx, "peer DATAGRAM size budget reduced",
+					"peer", s.ID(), "budget", s.fragmenter.Budget(), "reductions", reductions)
+			}
 			if err != nil {
 				h.drops.Add(1)
-				continue
-			}
-			for _, part := range parts {
-				if s.ctx.Err() != nil {
-					return
-				}
-				if err := s.stream.SendDatagram(part); err != nil {
-					h.drops.Add(1)
-					h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
-					break // A failed fragment makes this frame incomplete.
-				}
-				h.txFrames.Add(1)
+				h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
 			}
 		}
 	}()
@@ -244,11 +244,30 @@ func (h *Hub) Detach(s *Session) {
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.peers[s.ID()] == s {
+	active := h.peers[s.ID()] == s
+	if active {
 		delete(h.peers, s.ID())
 		s.stop()
 	}
+	h.mu.Unlock()
+	if active {
+		stats := s.VoIPStats()
+		if stats.RTPPackets > 0 || stats.RTCPPackets > 0 {
+			h.log.Info("peer VoIP receive summary", "peer", s.ID(), "stats", stats)
+		}
+	}
+}
+
+// PeerVoIPStats returns current receive-side indicators for active peers.
+// It can be consumed by a future local diagnostics or metrics exporter.
+func (h *Hub) PeerVoIPStats() map[string]qos.VoIPStats {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make(map[string]qos.VoIPStats, len(h.peers))
+	for id, peer := range h.peers {
+		out[id] = peer.VoIPStats()
+	}
+	return out
 }
 
 func (h *Hub) Receive(ctx context.Context, s *Session) error {
@@ -337,6 +356,7 @@ func (h *Hub) ingress(origin *Session, payload []byte) {
 		h.drops.Add(1)
 		return
 	}
+	origin.voip.Observe(packet)
 	if dst.IsMulticast() || l3.IsBroadcastOrMulticastIP(dst) {
 		// P2MP IP multicast/broadcast delivered to every other connected
 		// tunnel endpoint, without group allowlists, TTL rewriting or PPS caps.
