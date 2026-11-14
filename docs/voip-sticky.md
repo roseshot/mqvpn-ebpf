@@ -52,8 +52,11 @@ than secretly sent over the bulk MPQUIC connection. This preserves
 strict affinity at the cost of a brief media/signalling outage during
 failover. An authenticated **9-byte realtime control DATAGRAM** makes
 a full round trip on the pinned WAN, normally every ~750 ms plus RTT.
-If a matching response is not received in 2.5 s, the Client closes
-that companion and tries the next configured WAN. This is independent
+If no valid reply to a recently sent token arrives for 2.5 s, the Client
+closes that companion and tries the next configured WAN. Probes continue at
+~750 ms intervals during that window, so one lost heartbeat on an impaired
+WAN does not trigger a spurious switch. Only fresh, matching tokens from the
+current authenticated companion count as proof of reachability. This is independent
 of QUIC's 8 s idle timer and detects a completely blackholed path
 even while the QUIC process is still running. Heartbeat frames are
 not delivered to TUN or confused with ordinary Context ID 0 data.
@@ -68,6 +71,11 @@ The Server routes priority return traffic through the companion and
 normal return traffic through the primary session. The two incoming
 datagram streams have separate fragment reassemblers, preventing
 session-local fragment ID collisions; TUN writes are serialized.
+Each realtime datagram is tagged with its companion connection generation:
+failover invalidates queued packets, resets fragment reassembly, and fences
+the final TUN write against concurrent companion revocation. An already
+authorized TUN write finishes before revocation completes; packets from
+the retired connection cannot start new TUN writes afterward.
 
 ### QoS classification limitations
 
