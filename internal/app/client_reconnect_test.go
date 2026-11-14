@@ -111,3 +111,17 @@ func TestReconnectSupervisorWaitRespectsCanceledParent(t *testing.T){
 	}
 	if reconnectStableAfter!=time.Minute{t.Fatalf("unexpected backoff reset threshold: %v",reconnectStableAfter)}
 }
+
+func TestReconnectSupervisorStopsOnUnsafeLeaseOrRouteCleanup(t *testing.T){
+	attempts,waits:=0,0
+	err:=runClientSupervisorWithWait(context.Background(),true,silentReconnectLogger(),
+		func(context.Context)error{
+			attempts++
+			return errors.Join(errors.New("TUN lease leaked"),errUnsafeReconnect)
+		},
+		func(context.Context,time.Duration)error{waits++;return nil},
+	)
+	if !errors.Is(err,errUnsafeReconnect)||attempts!=1||waits!=0{
+		t.Fatalf("unsafe session cleanup retried: error=%v attempts=%d waits=%d",err,attempts,waits)
+	}
+}

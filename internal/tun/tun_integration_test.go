@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -129,4 +130,39 @@ func TestIntegrationRoutedFirstLastAsLocalAddresses(t *testing.T) {
 		if !ok {f.Close();t.Fatalf("peer route to %s missing from TUN %s: %+v",dest,name,routes)}
 		_ = f.Close()
 	}
+}
+
+func TestIntegrationPersistentTUNReleasesDynamicLeaseBeforeReconnect(t *testing.T){
+	if os.Geteuid()!=0{t.Fatal("requires root/CAP_NET_ADMIN")}
+	pid:=os.Getpid()
+	name:=fmt.Sprintf("mqrenew%x",pid)
+	if len(name)>=ifNameSize{t.Fatalf("TUN test name too long: %s",name)}
+	base:=int(byte(pid&0xfc))
+	first:=fmt.Sprintf("198.19.%d.%d/30",byte(pid>>8),base)
+	second:=fmt.Sprintf("198.19.%d.%d/30",byte(pid>>8),base+2)
+	f,err:=OpenRouted(name,first,1360)
+	if err!=nil{t.Fatal(err)}
+	defer func(){
+		if link,err:=netlink.LinkByName(name);err==nil{_ = netlink.LinkDel(link)}
+	}()
+	// Make the existing TUN persistent to exercise the path where closing
+	// the descriptor does not automatically remove old local addresses.
+	_,_,errno:=syscall.Syscall(syscall.SYS_IOCTL,f.Fd(),0x400454cb,1) // TUNSETPERSIST
+	if errno!=0{f.Close();t.Fatalf("persist test TUN: %v",errno)}
+	if err:=f.Close();err!=nil{t.Fatal(err)}
+	if _,err:=netlink.LinkByName(name);err!=nil{t.Fatalf("persistent TUN vanished: %v",err)}
+	if err:=ReleaseRoutedAddress(name,first);err!=nil{t.Fatalf("remove first lease %s: %v",first,err)}
+	link,err:=netlink.LinkByName(name)
+	if err!=nil{t.Fatal(err)}
+	assigned,err:=netlink.AddrList(link,netlink.FAMILY_V4)
+	if err!=nil{t.Fatal(err)}
+	for _,addr:=range assigned{
+		if addr.IPNet!=nil&&addr.IPNet.IP.Equal(net.ParseIP(strings.Split(first,"/")[0])){
+			t.Fatalf("old lease %s remained on persistent TUN: %+v",first,addr)
+		}
+	}
+	next,err:=OpenRouted(name,second,1360)
+	if err!=nil{t.Fatalf("reusing persistent TUN with new lease: %v",err)}
+	_ = next.Close()
+	if err:=ReleaseRoutedAddress(name,second);err!=nil{t.Fatalf("remove second lease %s: %v",second,err)}
 }

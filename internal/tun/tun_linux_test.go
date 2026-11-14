@@ -45,6 +45,11 @@ func(f *fakeOps)ListAddrs(_ netlink.Link)([]netlink.Addr,error){
 	if f.addr==nil{return nil,nil}
 	return []netlink.Addr{*f.addr},nil
 }
+func(f *fakeOps)DeleteAddr(_ netlink.Link,addr *netlink.Addr)error{
+	if err:=f.fail("delete");err!=nil{return err}
+	if f.addr!=nil && f.addr.IPNet.String()==addr.IPNet.String(){f.addr=nil}
+	return nil
+}
 func TestValidateName(t *testing.T){
 	for _,name:=range []string{"mq0","tun-main","tun.3"}{if err:=validateName(name);err!=nil{t.Fatal(err)}}
 	for _,name:=range []string{"","bad name","abcdefghijklmnop","bad/name"}{
@@ -123,4 +128,28 @@ func TestSetupRoutedTUNAvoidsSubnetBroadcast(t *testing.T) {
 	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
 	if err:=setupInterface("mq0","10.77.0.1/24",1400,f);err!=nil{t.Fatal(err)}
 	if f.addr.Peer!=nil {t.Fatal("static TUN unexpectedly has a peer route")}
+}
+
+func TestDynamicRoutedLeaseCleanupOnlyRemovesExactAddress(t *testing.T){
+	for _,lease:=range []string{"10.77.0.0/24","10.77.0.255/24","fd77::/64","10.77.0.0/31"}{
+		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+		if err:=setupRoutedInterface("mq0",lease,1400,f);err!=nil{t.Fatal(err)}
+		if err:=releaseRoutedAddress("mq0","10.77.0.9/24",f);err!=nil{t.Fatal(err)}
+		if lease!="10.77.0.9/24" && f.addr==nil{t.Fatalf("removed unrelated lease %s",lease)}
+		if err:=releaseRoutedAddress("mq0",lease,f);err!=nil{t.Fatalf("release %s: %v",lease,err)}
+		if f.addr!=nil{t.Fatalf("routed lease %s remained on persistent TUN",lease)}
+	}
+	// A static connected-prefix address must not be removed by dynamic
+	// cleanup even if it has the same local IP and CIDR.
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+	if err:=setupInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
+	if err:=releaseRoutedAddress("mq0","10.77.0.2/24",f);err!=nil{t.Fatal(err)}
+	if f.addr==nil{t.Fatal("static administrator address removed")}
+}
+func TestDynamicRoutedLeaseCleanupPropagatesFailure(t *testing.T){
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
+	if err:=setupRoutedInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
+	f.failOn="delete"
+	if err:=releaseRoutedAddress("mq0","10.77.0.2/24",f);err==nil{t.Fatal("cleanup permission failure not reported")}
+	if f.addr==nil{t.Fatal("address removed after failed cleanup")}
 }

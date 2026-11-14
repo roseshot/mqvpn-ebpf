@@ -141,7 +141,7 @@ type clientSessionOptions struct {
 // runClientSession owns exactly one transport and TUN session. On every
 // return its defers close the transport, TUN/TCX attachment and session
 // routes before the reconnect supervisor starts another attempt.
-func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Logger)error{
+func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Logger)(result error){
 	if o.transport=="tcp" {
 		return runTCPFallback(ctx,o.tcp,logger)
 	}
@@ -268,13 +268,26 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 	if err!=nil{return err}
 	guard,err:=routepush.ProtectServer(serverAddr.IP,selectedIP,o.tcp.wanInterface,o.tcp.tunName,pushedRoutes,second!=nil)
 	if err!=nil{return fmt.Errorf("protect VPN server underlay route: %w",err)}
-	defer func(){if err:=guard.Close();err!=nil{logger.Warn("cleanup pushed routes","error",err)}}()
+	defer func(){
+		if err:=guard.Close();err!=nil{
+			result=errors.Join(result,fmt.Errorf("%w: cleanup pushed routes: %v",errUnsafeReconnect,err))
+			logger.Error("unsafe reconnect: route cleanup failed","error",err)
+		}
+	}()
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
 	openTUN:=tun.Open
 	if dynamicAddressRequested(o.tcp.tunAddress){openTUN=tun.OpenRouted}
 	dev, err := openTUN(o.tcp.tunName,effectiveAddress,budget.TUNMTU)
 	if err != nil { return err }
+	if dynamicAddressRequested(o.tcp.tunAddress){
+		defer func(){
+			if err:=tun.ReleaseRoutedAddress(o.tcp.tunName,effectiveAddress);err!=nil{
+				result=errors.Join(result,fmt.Errorf("%w: cleanup leased TUN IP: %v",errUnsafeReconnect,err))
+				logger.Error("unsafe reconnect: dynamic Tunnel IP cleanup failed","error",err)
+			}
+		}()
+	}
 	if err:=guard.Install(o.tcp.tunName,pushedRoutes);err!=nil {
 		_ = dev.Close()
 		return fmt.Errorf("apply authenticated Server routes: %w",err)

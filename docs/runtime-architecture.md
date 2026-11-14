@@ -22,7 +22,10 @@ standard-library APIs and Go modules.
 
 The Client reconnect supervisor uses sequential sessions. On disconnect,
 a session closes its TUN descriptor, TCX attachment, QUIC/TCP sockets
-and owned pushed routes before another attempt starts. Each attempt
+and owned pushed routes before another attempt starts. In dynamic
+address mode the Client also deletes its matching routed local IP from a
+persistent pre-existing TUN, preserving unrelated addresses. A failed
+route/lease cleanup stops reconnection to avoid compounding stale state. Each attempt
 re-resolves the physical Server destination and renegotiates a dynamic
 Tunnel IP; a reconnect is not an in-place QUIC path handoff.
 

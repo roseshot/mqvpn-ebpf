@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// errUnsafeReconnect marks a failed netlink cleanup that may leave a stale
+// route or TUN lease behind. Never start another session in this state.
+var errUnsafeReconnect=errors.New("previous VPN session did not clean up safely")
+
 const (
 	reconnectInitialDelay = time.Second
 	reconnectMaximumDelay = 30 * time.Second
@@ -32,6 +36,7 @@ func runClientSupervisorWithWait(ctx context.Context,enabled bool,logger *slog.L
 		started:=time.Now()
 		err:=attempt(ctx)
 		if stop:=ctx.Err();stop!=nil{return stop}
+		if errors.Is(err,errUnsafeReconnect){return err}
 		if time.Since(started)>=reconnectStableAfter{delay=reconnectInitialDelay}
 		if err==nil {
 			logger.Warn("VPN session closed; scheduling reconnect", "attempt",attemptNumber,"retry_in",delay)

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -49,7 +50,7 @@ func tcpTarget(o clientTCPOptions)(string,string,error){
 
 // runTCPFallback sends HTTP/1.1 GET Upgrade and then exchanges RFC 9297
 // DATAGRAM Capsules bidirectionally over an authenticated TLS 1.3 stream.
-func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)error{
+func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)(result error){
 	dialAddress,requestURL,err:=tcpTarget(o)
 	if err!=nil{return err}
 	server,err:=net.ResolveTCPAddr("tcp",dialAddress)
@@ -116,7 +117,12 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if err!=nil{return err}
 	guard,err:=routepush.ProtectServer(server.IP,ip,o.wanInterface,o.tunName,pushedRoutes,false)
 	if err!=nil{return fmt.Errorf("protect TCP VPN server underlay route: %w",err)}
-	defer func(){if err:=guard.Close();err!=nil{logger.Warn("cleanup pushed TCP routes","error",err)}}()
+	defer func(){
+		if err:=guard.Close();err!=nil{
+			result=errors.Join(result,fmt.Errorf("%w: cleanup pushed TCP routes: %v",errUnsafeReconnect,err))
+			logger.Error("unsafe reconnect: TCP route cleanup failed","error",err)
+		}
+	}()
 	logger.Info("effective TCP fallback TUN MTU","mtu",budget.TUNMTU,
 		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
@@ -125,6 +131,14 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)e
 	if dynamicAddressRequested(o.tunAddress){openTUN=tun.OpenRouted}
 	device,err:=openTUN(o.tunName,effectiveAddress,budget.TUNMTU)
 	if err!=nil{return err}
+	if dynamicAddressRequested(o.tunAddress){
+		defer func(){
+			if err:=tun.ReleaseRoutedAddress(o.tunName,effectiveAddress);err!=nil{
+				result=errors.Join(result,fmt.Errorf("%w: cleanup TCP leased TUN IP: %v",errUnsafeReconnect,err))
+				logger.Error("unsafe reconnect: TCP dynamic Tunnel IP cleanup failed","error",err)
+			}
+		}()
+	}
 	if err:=guard.Install(o.tunName,pushedRoutes);err!=nil{
 		_ = device.Close()
 		return fmt.Errorf("apply TCP authenticated Server routes: %w",err)

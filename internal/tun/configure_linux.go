@@ -3,6 +3,7 @@
 package tun
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -24,6 +25,7 @@ func(systemLinkOps)SetMTU(l netlink.Link,mtu int)error{return netlink.LinkSetMTU
 func(systemLinkOps)ReplaceAddr(l netlink.Link,a *netlink.Addr)error{return netlink.AddrReplace(l,a)}
 func(systemLinkOps)SetUp(l netlink.Link)error{return netlink.LinkSetUp(l)}
 func(systemLinkOps)ListAddrs(l netlink.Link)([]netlink.Addr,error){return netlink.AddrList(l,netlink.FAMILY_ALL)}
+func(systemLinkOps)DeleteAddr(l netlink.Link,a *netlink.Addr)error{return netlink.AddrDel(l,a)}
 
 func setupInterface(name,cidr string,mtu int,ops linkOps)error{
 	return setupInterfaceMode(name,cidr,mtu,ops,false)
@@ -83,3 +85,51 @@ func setupInterfaceMode(name,cidr string,mtu int,ops linkOps,routed bool)error{
 	return fmt.Errorf("TUN %q has no assigned address %s after configuration",name,cidr)
 }
 
+
+// routedLeaseOps isolates precise dynamic TUN lease removal for unit testing.
+// It deliberately does not delete arbitrary addresses from a persistent TUN.
+type routedLeaseOps interface {
+	ByName(string)(netlink.Link,error)
+	ListAddrs(netlink.Link)([]netlink.Addr,error)
+	DeleteAddr(netlink.Link,*netlink.Addr)error
+}
+
+// ReleaseRoutedAddress removes only the exact dynamically leased host address
+// and matching peer subnet configured by OpenRouted. Closing a nonpersistent
+// TUN has already destroyed its link, in which case there is nothing to do.
+// Existing static/administrator-assigned addresses are not touched.
+func ReleaseRoutedAddress(name,cidr string)error {
+	return releaseRoutedAddress(name,cidr,systemLinkOps{})
+}
+
+func releaseRoutedAddress(name,cidr string,ops routedLeaseOps)error{
+	requested,err:=netip.ParsePrefix(cidr)
+	if err!=nil{return fmt.Errorf("invalid dynamic TUN lease %q: %w",cidr,err)}
+	link,err:=ops.ByName(name)
+	if err!=nil{
+		var missing netlink.LinkNotFoundError
+		if errors.As(err,&missing){return nil}
+		return fmt.Errorf("find TUN %s for lease cleanup: %w",name,err)
+	}
+	addrs,err:=ops.ListAddrs(link)
+	if err!=nil{return fmt.Errorf("inspect dynamic TUN %s addresses: %w",name,err)}
+	for _,a:=range addrs{
+		if !matchesRoutedLease(a,requested){continue}
+		if err:=ops.DeleteAddr(link,&a);err!=nil {
+			return fmt.Errorf("release dynamic TUN lease %s on %s: %w",cidr,name,err)
+		}
+		return nil
+	}
+	return nil
+}
+
+func matchesRoutedLease(candidate netlink.Addr,requested netip.Prefix)bool{
+	if candidate.IPNet==nil||candidate.Peer==nil{return false}
+	bits:=requested.Addr().BitLen()
+	ones,total:=candidate.IPNet.Mask.Size()
+	if ones!=bits||total!=bits||!candidate.IPNet.IP.Equal(net.ParseIP(requested.Addr().String())) {
+		return false
+	}
+	peer,err:=netip.ParsePrefix(candidate.Peer.String())
+	return err==nil&&peer.Bits()==requested.Bits()&&peer.Masked()==requested.Masked()
+}
