@@ -88,3 +88,69 @@ func TestStickyRealtimeCompanionRoutesOnlyPriorityData(t *testing.T) {
 		t.Fatal("old realtime companion injected a TUN frame after primary revocation")
 	}
 }
+
+type stickyEchoStream struct {
+	input  chan []byte
+	output chan []byte
+}
+
+func (s *stickyEchoStream) SendDatagram(b []byte) error {
+	s.output <- append([]byte(nil), b...)
+	return nil
+}
+
+func (s *stickyEchoStream) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case b := <-s.input:
+		return b, nil
+	}
+}
+
+func TestStickyHeartbeatIsNotAnInnerIPPacket(t *testing.T) {
+	h, dev, a, initial, _, _, cancel := prepare(t)
+	defer cancel()
+	defer h.Detach(a)
+	h.Detach(initial)
+	h.Detach(initial)
+	primary, err := h.AttachWithTrafficRole(context.Background(), initial.rule,
+		&fakeStream{out: make(chan []byte, 8)}, false, false, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Detach(primary)
+	stream := &stickyEchoStream{input: make(chan []byte, 1), output: make(chan []byte, 1)}
+	companion, err := h.AttachWithTrafficRole(context.Background(), initial.rule, stream,
+		false, false, false, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Detach(companion)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- h.Receive(ctx, companion) }()
+	ping := []byte{StickyHeartbeatMarker, 1, 2, 3, 4, 5, 6, 7, 8}
+	if !IsStickyHeartbeat(ping) {
+		t.Fatal("heartbeat framing rejected")
+	}
+	stream.input <- ping
+	select {
+	case got := <-stream.output:
+		if string(got) != string(ping) {
+			t.Fatalf("bad heartbeat response %x", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("authenticated heartbeat was not echoed")
+	}
+	if got := dev.count(); got != 0 {
+		t.Fatalf("heartbeat leaked %d inner IP packets into TUN", got)
+	}
+	stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat receive worker did not stop")
+	}
+}
