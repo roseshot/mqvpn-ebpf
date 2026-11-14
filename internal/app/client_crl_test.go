@@ -25,10 +25,10 @@ func testTenantCRLIdentity(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, 
 	now := time.Now()
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "test-client-ca"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
-		IsCA: true, BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		Subject:      pkix.Name{CommonName: "test-client-ca"},
+		NotBefore:    now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+		IsCA:         true, BasicConstraintsValid: true,
+		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		SubjectKeyId: []byte{1, 2, 3, 4},
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
@@ -45,9 +45,9 @@ func testTenantCRLIdentity(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, 
 	}
 	clientTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(42), Subject: pkix.Name{CommonName: "site-1"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		NotBefore:    now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, ca, &clientKey.PublicKey, caKey)
 	if err != nil {
@@ -65,7 +65,7 @@ func testTenantCRLIdentity(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, 
 func testSignedClientCRL(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, revoked bool) string {
 	t.Helper()
 	list := &x509.RevocationList{
-		Number: big.NewInt(1),
+		Number:     big.NewInt(1),
 		ThisUpdate: time.Now().Add(-time.Minute),
 		NextUpdate: time.Now().Add(time.Hour),
 	}
