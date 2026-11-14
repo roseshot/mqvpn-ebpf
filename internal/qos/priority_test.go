@@ -194,3 +194,94 @@ func TestPriorityIPv6SIPWithExtensionHeaders(t *testing.T) {
 		t.Fatal("invalid IPv6 payload length must not be prioritized")
 	}
 }
+
+func TestQoSClassifyAFAndControlPlane(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pkt []byte
+		want Class
+	}{
+		{"EF is realtime", ipv4(17, 46, 40000, 40001), Realtime},
+		{"SIP is realtime even unmarked", ipv4(6, 0, 5061, 9000), Realtime},
+		{"AF11 assured", ipv4(17, 10, 9000, 9001), Assured},
+		{"AF31 assured", ipv4(17, 26, 9000, 9001), Assured},
+		{"AF41 assured", ipv4(17, 34, 9000, 9001), Assured},
+		{"AF43 assured", ipv4(17, 38, 9000, 9001), Assured},
+		{"CS5 assured", ipv4(17, 40, 9000, 9001), Assured},
+		{"CS6 routing control assured", ipv4(89, 48, 0, 0), Assured},
+		{"CS7 routing control assured", ipv4(89, 56, 0, 0), Assured},
+		{"best effort", ipv4(17, 0, 9000, 9001), BestEffort},
+		{"unknown DSCP best effort", ipv4(17, 7, 9000, 9001), BestEffort},
+		{"empty best effort", nil, BestEffort},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Classify(tc.pkt); got != tc.want {
+				t.Fatalf("Classify() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	v6 := ipv6Packet(17, sipPorts(9000, 9001))
+	v6[0] = 0x60 | byte((34<<2)>>4)
+	v6[1] = byte((34<<2)&0x0f) << 4
+	if got := Classify(v6); got != Assured {
+		t.Fatalf("IPv6 AF41 classified %d, want assured", got)
+	}
+	v6[5]--
+	if got := Classify(v6); got != BestEffort {
+		t.Fatalf("malformed IPv6 AF41 classified %d, want best effort", got)
+	}
+	v4 := ipv4(17, 34, 9000, 9001)
+	v4[2] = 0
+	v4[3] = 21
+	if got := Classify(v4); got != BestEffort {
+		t.Fatalf("malformed IPv4 AF41 classified %d, want best effort", got)
+	}
+}
+
+func TestNextTierSustainedWeightedFairness(t *testing.T) {
+	urgent, assured, bulk := make(chan []byte, 8), make(chan []byte, 8), make(chan []byte, 8)
+	for i := 0; i < cap(urgent); i++ {
+		urgent <- []byte{1}
+		assured <- []byte{2}
+		bulk <- []byte{3}
+	}
+	cursor := 0
+	want := []byte{1, 1, 2, 1, 2, 1, 3}
+	var counts [4]int
+	for i := 0; i < 700; i++ {
+		pkt, ok := NextTier(context.Background(), urgent, assured, bulk, &cursor)
+		if !ok || len(pkt) != 1 || pkt[0] != want[i%len(want)] {
+			t.Fatalf("packet %d: got %v, want class %d", i, pkt, want[i%len(want)])
+		}
+		counts[pkt[0]]++
+		switch pkt[0] {
+		case 1:
+			urgent <- pkt
+		case 2:
+			assured <- pkt
+		case 3:
+			bulk <- pkt
+		}
+	}
+	if counts[1] != 400 || counts[2] != 200 || counts[3] != 100 {
+		t.Fatalf("weighted service ratio drifted: realtime=%d assured=%d bulk=%d", counts[1], counts[2], counts[3])
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, ok := NextTier(ctx, urgent, assured, bulk, &cursor); ok {
+		t.Fatal("cancelled sender consumed a packet")
+	}
+}
+
+func TestNextTierEmptyLaneDoesNotBlock(t *testing.T) {
+	urgent, assured, bulk := make(chan []byte, 2), make(chan []byte, 2), make(chan []byte, 2)
+	bulk <- []byte{3}
+	assured <- []byte{2}
+	cursor := 0
+	if pkt, ok := NextTier(context.Background(), urgent, assured, bulk, &cursor); !ok || pkt[0] != 2 {
+		t.Fatalf("assured lane was blocked by empty realtime lane: %v", pkt)
+	}
+	if pkt, ok := NextTier(context.Background(), urgent, assured, bulk, &cursor); !ok || pkt[0] != 3 {
+		t.Fatalf("best effort lane was blocked by empty higher lanes: %v", pkt)
+	}
+}
