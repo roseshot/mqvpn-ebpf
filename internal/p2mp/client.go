@@ -38,6 +38,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	codec := l3.Codec{Compression: compression, MaxFrame: maxFrame}
 	fragmenter := &l3.Fragmenter{Enabled: fragmentation}
 	reassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+	voice := &qos.VoIPMonitor{}
 	urgent, normal := make(chan []byte, 64), make(chan []byte, 192)
 	ends := make(chan error, 3)
 	var workers sync.WaitGroup
@@ -126,6 +127,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 				ends <- fmt.Errorf("short TUN write: %d / %d", n, len(pkt))
 				return
 			}
+			voice.Observe(pkt)
 		}
 	}()
 
@@ -140,6 +142,9 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	// access the device after the next reconnect attempt starts.
 	closeErr := device.Close()
 	workers.Wait()
+	if stats := voice.Snapshot(); stats.RTPPackets > 0 || stats.RTCPPackets > 0 {
+		logger.Info("client VoIP receive summary", "stats", stats)
+	}
 	if errors.Is(result, context.Canceled) || errors.Is(result, io.EOF) {
 		result = nil
 	}
