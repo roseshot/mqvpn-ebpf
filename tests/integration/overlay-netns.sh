@@ -2,8 +2,8 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,7 +13,7 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
-if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]]; then
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
 fi
 if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]]; then
@@ -78,6 +78,35 @@ done
 ip -n "$server_ns" addr add 192.0.2.1/30 dev wan0
 ip -n "$client_ns" addr add 192.0.2.2/30 dev wan0
 
+if [[ "$mode" == wan4 ]]; then
+  # Four physically distinct WAN veth pairs. The Client always dials the
+  # same authenticated Server address (192.0.2.1), with source-specific
+  # Linux policy routes for each other independent interface.
+  server_addrs=(192.0.2.1 198.51.100.1 203.0.113.1 192.0.2.5)
+  client_addrs=(192.0.2.2 198.51.100.2 203.0.113.2 192.0.2.6)
+  for index in 1 2 3; do
+    ip link add "vs${index}$" type veth peer name "vc${index}$"
+    ip link set "vs${index}$" netns "$server_ns" name "wan$index"
+    ip link set "vc${index}$" netns "$client_ns" name "wan$index"
+    ip -n "$server_ns" addr add "${server_addrs[$index]}/30" dev "wan$index"
+    ip -n "$client_ns" addr add "${client_addrs[$index]}/30" dev "wan$index"
+    ip -n "$server_ns" link set "wan$index" up
+    ip -n "$client_ns" link set "wan$index" up
+    # Without these rules the packet may leave via wan0 despite an
+    # explicit source IP. SO_BINDTODEVICE and policy FIB must agree.
+    table=$((100 + index))
+    ip -n "$client_ns" rule add from "${client_addrs[$index]}/32" \
+      table "$table" priority "$((1000+index))"
+    ip -n "$client_ns" route add 192.0.2.1/32 \
+      via "${server_addrs[$index]}" dev "wan$index" \
+      src "${client_addrs[$index]}" table "$table"
+    ip -n "$client_ns" route get 192.0.2.1 from "${client_addrs[$index]}" |
+      grep -q "dev wan$index" ||
+      fail "source-specific route did not select WAN$index"
+  done
+fi
+
+
 bash "$root/scripts/gen-dev-certs.sh" "$work/certs" vpn.ci.example >"$work/certs.log" 2>&1
 cert="$work/certs"
 fingerprint="$(openssl x509 -in "$cert/client.crt" -outform DER | sha256sum | awk '{print $1}')"
@@ -116,11 +145,20 @@ for attempt in $(seq 1 60); do
   sleep 0.2
 done
 ip -n "$server_ns" link show mq0 >/dev/null || fail "server failed to create mq0"
+client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
+if [[ "$mode" == wan4 ]]; then
+  client_wan_flags=(
+    --wan 192.0.2.2@wan0
+    --wan 198.51.100.2@wan1
+    --wan 203.0.113.2@wan2
+    --wan 192.0.2.6@wan3
+  )
+fi
 ip netns exec "$client_ns" "$root/bin/mqvpn-client" \
   --server vpn.ci.example:8443 --connect-ip 192.0.2.1 \
   --tun mq0 --tun-address 10.77.0.2/30 \
   --tun-mtu 1500 --max-frame 1514 \
-  --source-ip 192.0.2.2 --source-interface wan0 \
+  "${client_wan_flags[@]}" \
   --ca "$cert/ca.crt" --cert "$cert/client.crt" --key "$cert/client.key" \
   --tc-mode off --transport quic --reconnect=false \
   >"$work/client.log" 2>&1 &
@@ -306,6 +344,52 @@ for side in ("server", "client"):
         print(f"PASS mixed {side} {proto}: {byte_count} receiver bytes", flush=True)
 PY
   echo "PASS mixed: full-duplex VoIP during bidirectional TCP and UDP on shaped WAN"
+  exit 0
+fi
+
+# Four independent WAN paths, all carrying the same mTLS MPQUIC session.
+# Confirm three additional AddPath+Probe completions before fault injection.
+# Differentiated netem conditions prove traffic actually uses each link.
+if [[ "$mode" == wan4 ]]; then
+  validated=0
+  for attempt in $(seq 1 140); do
+    count="$(grep -c 'QUIC WAN path validated' "$work/client.log" || true)"
+    if [[ "$count" -eq 3 ]]; then validated=1; break; fi
+    for pid in $pids; do
+      kill -0 "$pid" 2>/dev/null || fail "VPN exited before four paths validated"
+    done
+    sleep 0.1
+  done
+  (( validated )) || fail "expected four MPQUIC paths (one primary + three validated): $(grep 'WAN path' "$work/client.log" || true)"
+  echo "PASS four independent QUIC paths established"
+  delays=(10ms 35ms 70ms 120ms)
+  jitters=(2ms 8ms 20ms 40ms)
+  losses=(0% 0.5% 1% 3%)
+  rates=(50mbit 20mbit 10mbit 5mbit)
+  for ns in "$server_ns" "$client_ns"; do
+    for index in 0 1 2 3; do
+      ip netns exec "$ns" tc qdisc replace dev "wan$index" root netem \
+        delay "${delays[$index]}" "${jitters[$index]}" distribution normal \
+        loss "${losses[$index]}" rate "${rates[$index]}" limit 120
+      ip netns exec "$ns" tc qdisc show dev "wan$index" | grep -q netem ||
+        fail "WAN$index netem missing in $ns"
+    done
+  done
+  echo "four-WAN netem active: WAN0 10ms/0%, WAN1 35ms/0.5%, WAN2 70ms/1%, WAN3 120ms/3%"
+  # The first WAN remains fast enough for handshake, but the server
+  # round-robin scheduler must now cope with asymmetric performance.
+  run_wan_voice "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 multi-s2c
+  run_wan_voice "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 multi-c2s
+  for ns in "$server_ns" "$client_ns"; do
+    for index in 0 1 2 3; do
+      stats="$(ip netns exec "$ns" tc -s qdisc show dev "wan$index")"
+      echo "MPQUIC four-WAN $ns wan$index: $stats"
+      bytes="$(echo "$stats" | awk '/ Sent [0-9]+ bytes/{print $2; exit}')"
+      [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 1000 ]] ||
+        fail "WAN$index in $ns carried too few bytes ($bytes): path may not be scheduled"
+    done
+  done
+  echo "PASS MPQUIC four-WAN: validated paths, independent netem profiles and per-WAN traffic counters"
   exit 0
 fi
 
