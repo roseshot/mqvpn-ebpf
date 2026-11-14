@@ -42,9 +42,9 @@ type voipKey struct {
 // It only inspects inner IPv4/IPv6 UDP packets marked DSCP EF (46) and keeps
 // at most 128 SSRC/5-tuple states. Packets are never blocked or rewritten.
 type VoIPMonitor struct {
-	mu      sync.Mutex
-	flows   map[voipKey]*voipFlow
-	stats   VoIPStats
+	mu    sync.Mutex
+	flows map[voipKey]*voipFlow
+	stats VoIPStats
 }
 
 func (m *VoIPMonitor) Snapshot() VoIPStats {
