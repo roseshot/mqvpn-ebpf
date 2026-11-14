@@ -4,10 +4,10 @@ import "testing"
 
 func TestCompressionCPUAllowed(t *testing.T) {
 	cases := []struct {
-		name                   string
-		cpus, gomaxprocs        int
-		throughputMiB          float64
-		want                   bool
+		name             string
+		cpus, gomaxprocs int
+		throughputMiB    float64
+		want             bool
 	}{
 		{name: "single core", cpus: 1, gomaxprocs: 1, throughputMiB: 500, want: false},
 		{name: "dual core", cpus: 2, gomaxprocs: 2, throughputMiB: 500, want: false},
