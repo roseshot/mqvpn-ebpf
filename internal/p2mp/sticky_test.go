@@ -9,7 +9,7 @@ import (
 )
 
 func TestStickyRealtimeCompanionRoutesOnlyPriorityData(t *testing.T) {
-	h, dev, a, old, _, _, cancel := prepare(t)
+	h, dev, a, old, as, _, cancel := prepare(t)
 	defer cancel()
 	defer h.Detach(a)
 	h.Detach(old)
@@ -69,6 +69,16 @@ func TestStickyRealtimeCompanionRoutesOnlyPriorityData(t *testing.T) {
 	if dev.count() != 1 {
 		t.Fatal("realtime companion could not receive and inject TUN datagrams")
 	}
+	// A distinct realtime session must not cause IP multicast/broadcast
+	// to be echoed to the same peer's primary MPQUIC connection.
+	mcast := ip4([4]byte{10, 77, 0, 3}, [4]byte{224, 0, 0, 251})
+	h.ingress(companion, mustFrame(t, mcast))
+	if _, err := l3.Unwrap(waitFrame(t, as)); err != nil {
+		t.Fatalf("multicast not forwarded to other peer: %v", err)
+	}
+	if len(normal.out) != 0 || dev.count() != 2 {
+		t.Fatal("realtime multicast reflected to its own peer or failed local TUN")
+	}
 	h.Detach(companion)
 	h.egress(voice)
 	select {
@@ -93,7 +103,7 @@ func TestStickyRealtimeCompanionRoutesOnlyPriorityData(t *testing.T) {
 		t.Fatal("revoking primary failed to cancel the companion")
 	}
 	h.ingress(replacement, mustFrame(t, voice))
-	if dev.count() != 1 {
+	if dev.count() != 2 {
 		t.Fatal("old realtime companion injected a TUN frame after primary revocation")
 	}
 }
