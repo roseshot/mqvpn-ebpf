@@ -16,7 +16,7 @@ done
 if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
 fi
-if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]]; then
+if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 ]]; then
   for tool in iperf3 tc ss; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
   done
