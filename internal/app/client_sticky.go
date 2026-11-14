@@ -34,6 +34,7 @@ type stickyClientStream struct {
 	mu      sync.RWMutex
 	active  p2mp.Stream
 	inbound chan []byte
+	realtimeInbound chan []byte
 	failure chan error
 	wg      sync.WaitGroup
 	logger  *slog.Logger
@@ -43,7 +44,7 @@ func newStickyClientStream(ctx context.Context, base p2mp.Stream, logger *slog.L
 	lifetime, cancel := context.WithCancel(ctx)
 	m := &stickyClientStream{
 		base: base, ctx: lifetime, cancel: cancel, logger: logger,
-		inbound: make(chan []byte, 256), failure: make(chan error, 1),
+		inbound: make(chan []byte, 256), realtimeInbound: make(chan []byte, 128), failure: make(chan error, 1),
 	}
 	m.wg.Add(1)
 	go func() {
@@ -80,7 +81,25 @@ func (m *stickyClientStream) ReceiveDatagram(ctx context.Context) ([]byte, error
 	}
 }
 
+// ReceiveRealtimeDatagram returns only a companion's frames. Keep each
+// QUIC session's fragment reassembler independent, because fragment IDs
+// are session-local and can overlap between the bulk and realtime streams.
+func (m *stickyClientStream) ReceiveRealtimeDatagram(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-m.ctx.Done():
+		return nil, m.ctx.Err()
+	case b := <-m.realtimeInbound:
+		return b, nil
+	}
+}
+
 func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool) {
+	out := m.realtimeInbound
+	if essential {
+		out = m.inbound
+	}
 	for {
 		b, err := stream.ReceiveDatagram(m.ctx)
 		if err != nil {
@@ -95,7 +114,7 @@ func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool) {
 		select {
 		case <-m.ctx.Done():
 			return
-		case m.inbound <- b:
+		case out <- b:
 		default:
 			// Bound received datagrams instead of allowing WAN packet
 			// bursts to grow memory without limit.
