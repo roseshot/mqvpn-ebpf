@@ -106,6 +106,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "connect-ethernet")
 	request.Header.Set("Capsule-Protocol", "?1")
+	request.Header.Set(compressionHeader, compressionZstd)
 	if dynamicAddressRequested(o.tunAddress) {
 		request.Header.Set(tunnelAddressHeader, "auto")
 	}
@@ -126,6 +127,8 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		return fmt.Errorf("TCP CONNECT-ETHERNET rejected: %s", response.Status)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	compression, err := negotiatedCompression(response.Header.Get(compressionHeader))
+	if err != nil { return err }
 	effectiveAddress, err := resolveClientTunnelAddress(o.tunAddress, response.Header.Get(tunnelAddressHeader))
 	if err != nil {
 		return fmt.Errorf("TCP tunnel IP negotiation: %w", err)
@@ -179,6 +182,6 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		return err
 	}
 	logger.InfoContext(ctx, "TCP fallback VPN session established", "remote", dialAddress, "tenant", o.endpoint.serverName, "tunnel_address", effectiveAddress)
-	err = p2mp.ClientPump(ctx, pumpDevice, stream, budget.MaxFrame, logger)
+	err = p2mp.ClientPumpWithCompression(ctx, pumpDevice, stream, budget.MaxFrame, compression, logger)
 	return classifyClientCleanup(err)
 }
