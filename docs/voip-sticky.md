@@ -50,11 +50,19 @@ configured list with bounded delay.
 When a companion is unavailable, realtime packets are **dropped** rather
 than secretly sent over the bulk MPQUIC connection. This preserves
 strict affinity at the cost of a brief media/signalling outage during
-failover. The realtime QUIC idle timeout is 8 s, so failover is not
-instantaneous. The original bulk VPN connection remains independently
-multipath-capable, including during realtime failover. WAN routes and
-interface policy routing remain the network administrator's
-responsibility.
+failover. An authenticated **9-byte realtime control DATAGRAM** makes
+a full round trip on the pinned WAN, normally every ~750 ms plus RTT.
+If a matching response is not received in 2.5 s, the Client closes
+that companion and tries the next configured WAN. This is independent
+of QUIC's 8 s idle timer and detects a completely blackholed path
+even while the QUIC process is still running. Heartbeat frames are
+not delivered to TUN or confused with ordinary Context ID 0 data.
+The Server permits a newly authenticated companion to atomically
+supersede an old unresponsive companion, while old sessions lose
+authorization immediately. The original bulk VPN connection remains
+independently multipath-capable, including during realtime failover.
+WAN routes and interface policy routing remain the network
+administrator's responsibility.
 
 The Server routes priority return traffic through the companion and
 normal return traffic through the primary session. The two incoming
