@@ -34,8 +34,9 @@ type stickyClientStream struct {
 	cancel          context.CancelFunc
 	mu              sync.RWMutex
 	active          p2mp.Stream
+	generation      uint64 // guarded by mu; fragment IDs are connection-local
 	inbound         chan []byte
-	realtimeInbound chan []byte
+	realtimeInbound chan p2mp.RealtimeDatagram
 	failure         chan error
 	wg              sync.WaitGroup
 	logger          *slog.Logger
@@ -45,12 +46,12 @@ func newStickyClientStream(ctx context.Context, base p2mp.Stream, logger *slog.L
 	lifetime, cancel := context.WithCancel(ctx)
 	m := &stickyClientStream{
 		base: base, ctx: lifetime, cancel: cancel, logger: logger,
-		inbound: make(chan []byte, 256), realtimeInbound: make(chan []byte, 128), failure: make(chan error, 1),
+		inbound: make(chan []byte, 256), realtimeInbound: make(chan p2mp.RealtimeDatagram, 128), failure: make(chan error, 1),
 	}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		m.recvLoop(base, true, nil)
+		m.recvLoop(base, true, nil, 0)
 	}()
 	return m
 }
@@ -60,13 +61,13 @@ func (m *stickyClientStream) SendDatagram(b []byte) error {
 }
 
 func (m *stickyClientStream) SendRealtimeDatagram(b []byte) error {
+	// Finish any in-flight QUIC send before uninstall revokes the session.
 	m.mu.RLock()
-	active := m.active
-	m.mu.RUnlock()
-	if active == nil {
+	defer m.mu.RUnlock()
+	if m.active == nil {
 		return errStickyUnavailable
 	}
-	return active.SendDatagram(b)
+	return m.active.SendDatagram(b)
 }
 
 func (m *stickyClientStream) ReceiveDatagram(ctx context.Context) ([]byte, error) {
@@ -82,25 +83,28 @@ func (m *stickyClientStream) ReceiveDatagram(ctx context.Context) ([]byte, error
 	}
 }
 
-// ReceiveRealtimeDatagram returns only a companion's frames. Keep each
-// QUIC session's fragment reassembler independent, because fragment IDs
-// are session-local and can overlap between the bulk and realtime streams.
-func (m *stickyClientStream) ReceiveRealtimeDatagram(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-m.ctx.Done():
-		return nil, m.ctx.Err()
-	case b := <-m.realtimeInbound:
-		return b, nil
+// ReceiveRealtimeDatagram rejects packets from retired companions, even
+// when they were queued before failover. The receiver resets fragment state
+// on the tagged generation rather than mixing connection-local fragment IDs.
+func (m *stickyClientStream) ReceiveRealtimeDatagram(ctx context.Context) (p2mp.RealtimeDatagram, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return p2mp.RealtimeDatagram{}, ctx.Err()
+		case <-m.ctx.Done():
+			return p2mp.RealtimeDatagram{}, m.ctx.Err()
+		case packet := <-m.realtimeInbound:
+			m.mu.RLock()
+			valid := m.active != nil && m.generation == packet.Generation
+			m.mu.RUnlock()
+			if valid {
+				return packet, nil
+			}
+		}
 	}
 }
 
-func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool, acks chan<- uint64) {
-	out := m.realtimeInbound
-	if essential {
-		out = m.inbound
-	}
+func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool, acks chan<- uint64, generation uint64) {
 	for {
 		b, err := stream.ReceiveDatagram(m.ctx)
 		if err != nil {
@@ -124,28 +128,47 @@ func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool, acks c
 			}
 			continue
 		}
+		if essential {
+			select {
+			case <-m.ctx.Done():
+				return
+			case m.inbound <- b:
+			default:
+				m.logger.DebugContext(m.ctx, "bulk VPN inbound queue overflow")
+			}
+			continue
+		}
+		// An in-flight read can complete after revocation. Reject it here
+		// and again at dequeue to fence packets already buffered.
+		m.mu.RLock()
+		valid := m.active == stream && m.generation == generation
+		m.mu.RUnlock()
+		if !valid {
+			return
+		}
 		select {
 		case <-m.ctx.Done():
 			return
-		case out <- b:
+		case m.realtimeInbound <- p2mp.RealtimeDatagram{Payload: b, Generation: generation}:
 		default:
-			// Bound received datagrams instead of allowing WAN packet
-			// bursts to grow memory without limit.
 			m.logger.DebugContext(m.ctx, "sticky VPN inbound queue overflow")
 		}
 	}
 }
 
-func (m *stickyClientStream) install(stream p2mp.Stream) {
+func (m *stickyClientStream) install(stream p2mp.Stream) uint64 {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.generation++
 	m.active = stream
-	m.mu.Unlock()
+	return m.generation
 }
 
 func (m *stickyClientStream) uninstall(stream p2mp.Stream) {
 	m.mu.Lock()
 	if m.active == stream {
 		m.active = nil
+		m.generation++ // invalidate queued packets before the next dial
 	}
 	m.mu.Unlock()
 }
@@ -161,7 +184,7 @@ func (m *stickyClientStream) close() {
 // transient RTT change or jumps back automatically after recovery.
 func (m *stickyClientStream) runStickyCompanions(o clientSessionOptions, destinations []*net.UDPAddr, ca *tls.Config, compression, fragmentation bool) {
 	defer m.wg.Done()
-	if len(destinations) != len(o.wans) {
+	if len(o.wans) == 0 || len(destinations) != len(o.wans) {
 		m.logger.ErrorContext(m.ctx, "sticky WAN destination count mismatch", "destinations", len(destinations), "wans", len(o.wans))
 		return
 	}
@@ -248,10 +271,10 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	}
 	acks := make(chan uint64, 8)
 	recvDone := make(chan struct{})
-	m.install(stream)
+	generation := m.install(stream)
 	go func() {
 		defer close(recvDone)
-		m.recvLoop(stream, false, acks)
+		m.recvLoop(stream, false, acks, generation)
 	}()
 	defer func() {
 		m.uninstall(stream)
