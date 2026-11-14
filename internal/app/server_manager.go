@@ -41,15 +41,15 @@ type preparedInstance struct {
 }
 
 type preparedServer struct {
-	listen        string
-	pathScheduler string
-	wans          []serverWAN
-	tcpEnabled    bool
-	tcpListen     string
+	listen          string
+	pathScheduler   string
+	wans            []serverWAN
+	tcpEnabled      bool
+	tcpListen       string
 	readinessListen string
-	instances     map[string]preparedInstance
-	xdp           xdp.Config
-	fingerprint   [32]byte
+	instances       map[string]preparedInstance
+	xdp             xdp.Config
+	fingerprint     [32]byte
 }
 
 func hashRecord(h hash.Hash, data []byte) {
@@ -66,13 +66,13 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		return preparedServer{}, err
 	}
 	next := preparedServer{
-		listen:        config.Listen,
-		pathScheduler: config.PathScheduler,
-		wans:          append([]serverWAN(nil), config.WANs...),
-		tcpEnabled:    config.TCPFallback.Enabled,
-		tcpListen:     config.TCPFallback.Listen,
+		listen:          config.Listen,
+		pathScheduler:   config.PathScheduler,
+		wans:            append([]serverWAN(nil), config.WANs...),
+		tcpEnabled:      config.TCPFallback.Enabled,
+		tcpListen:       config.TCPFallback.Listen,
 		readinessListen: config.HA.ReadinessListen,
-		instances:     make(map[string]preparedInstance, len(config.Instances)),
+		instances:       make(map[string]preparedInstance, len(config.Instances)),
 	}
 	// Resolve the default TUN budget once for the whole shared listener.
 	// The smallest selected WAN budget applies to all tenants and both
@@ -241,31 +241,31 @@ type liveInstance struct {
 }
 
 type serverManager struct {
-	ctx           context.Context
-	logger        *slog.Logger
-	listen        string
-	pathScheduler string
-	wans          []serverWAN
-	tcpEnabled    bool
-	tcpListen     string
+	ctx             context.Context
+	logger          *slog.Logger
+	listen          string
+	pathScheduler   string
+	wans            []serverWAN
+	tcpEnabled      bool
+	tcpListen       string
 	readinessListen string
-	healthServer   *http.Server
-	healthListener net.Listener
-	healthDone     chan struct{}
-	healthErr      error
-	ready          atomic.Bool
-	tcpServer     *http.Server
-	tcpListener   net.Listener
-	tcpDone       chan struct{}
-	tcpErr        error
-	xdp           *xdp.Controller
-	mux           *serverMux
-	instances     map[string]*liveInstance
-	exits         chan *liveInstance
-	server        *http3.Server
-	packetConn    net.PacketConn
-	listenerDone  chan struct{}
-	listenerErr   error
+	healthServer    *http.Server
+	healthListener  net.Listener
+	healthDone      chan struct{}
+	healthErr       error
+	ready           atomic.Bool
+	tcpServer       *http.Server
+	tcpListener     net.Listener
+	tcpDone         chan struct{}
+	tcpErr          error
+	xdp             *xdp.Controller
+	mux             *serverMux
+	instances       map[string]*liveInstance
+	exits           chan *liveInstance
+	server          *http3.Server
+	packetConn      net.PacketConn
+	listenerDone    chan struct{}
+	listenerErr     error
 }
 
 func newServerManager(ctx context.Context, logger *slog.Logger) *serverManager {
