@@ -125,3 +125,31 @@ func TestReconnectSupervisorStopsOnUnsafeLeaseOrRouteCleanup(t *testing.T){
 		t.Fatalf("unsafe session cleanup retried: error=%v attempts=%d waits=%d",err,attempts,waits)
 	}
 }
+
+func TestReconnectSupervisorSerializesCleanupAcrossFailures(t *testing.T) {
+	ctx,cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const sessions = 100
+	var active,attempts,waits int
+	err:=runClientSupervisorWithWait(ctx,true,silentReconnectLogger(),
+		func(context.Context)error{
+			if active!=0{t.Fatalf("overlapping VPN sessions: %d",active)}
+			active++
+			attempts++
+			// This represents completion of route, DNS, TCX and TUN
+			// cleanup before the supervisor can initiate another dial.
+			active--
+			if attempts==sessions{cancel()}
+			if attempts%2==0{return nil}
+			return errors.New("intermittent underlay disconnect")
+		},
+		func(context.Context,time.Duration)error{
+			if active!=0{t.Fatal("backoff started before session cleanup")}
+			waits++
+			return nil
+		},
+	)
+	if !errors.Is(err,context.Canceled) || active!=0 || attempts!=sessions || waits!=sessions-1 {
+		t.Fatalf("serial reconnect lifecycle: err=%v active=%d attempts=%d waits=%d",err,active,attempts,waits)
+	}
+}

@@ -17,6 +17,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Temporary toolchain export: gofmt and go mod tidy generate the
+  # canonical sources/checksums in the same Go 1.27 CI environment.
+  # The output is consumed in the next repository commit, after which
+  # this job is replaced by strict format/module verification.
+  modernize-export:
+    name: Export gofmt and go.sum for modernization
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+      - name: Generate canonical Go formatting and module checksums
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go mod tidy
+          echo __MQVPN_MOD_BEGIN__
+          base64 -w76 go.mod
+          echo __MQVPN_MOD_END__
+          echo __MQVPN_SUM_BEGIN__
+          base64 -w76 go.sum
+          echo __MQVPN_SUM_END__
+          mapfile -t files < <(gofmt -l cmd internal | LC_ALL=C sort)
+          echo "formatting ${#files[@]} Go files"
+          for path in "${files[@]}"; do
+            echo "__MQVPN_GOFILE_BEGIN__ $path"
+            gofmt "$path" | base64 -w76
+            echo "__MQVPN_GOFILE_END__ $path"
+          done
+
   native:
     name: Native Go (CGO=0)
     runs-on: ubuntu-latest

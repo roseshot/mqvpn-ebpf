@@ -100,3 +100,34 @@ func TestClientPumpReportsCleanupError(t *testing.T){
 	err:=ClientPump(ctx,device,stream,1160,slog.New(slog.NewTextHandler(io.Discard,nil)))
 	if !errors.Is(err,failure){t.Fatalf("ClientPump swallowed TUN Close failure: %v",err)}
 }
+
+type immediateEOFDatagrams struct{}
+func(immediateEOFDatagrams)SendDatagram([]byte)error{return nil}
+func(immediateEOFDatagrams)ReceiveDatagram(context.Context)([]byte,error){return nil,io.EOF}
+
+type readCompletionTun struct{
+	*testTun
+	readDone chan struct{}
+	onceRead sync.Once
+}
+func(d *readCompletionTun)Read(b []byte)(int,error){
+	n,err:=d.testTun.Read(b)
+	d.onceRead.Do(func(){close(d.readDone)})
+	return n,err
+}
+
+func TestClientPumpRemoteEOFWaitsForBlockedTUNReader(t *testing.T){
+	for range 64 {
+		device:=&readCompletionTun{testTun:newTestTun(),readDone:make(chan struct{})}
+		err:=ClientPump(context.Background(),device,immediateEOFDatagrams{},1160,nil)
+		if err!=nil{t.Fatalf("unexpected remote EOF: %v",err)}
+		select {
+		case <-device.readDone:
+		default:t.Fatal("ClientPump returned before its TUN reader exited")
+		}
+		select {
+		case <-device.stop:
+		default:t.Fatal("ClientPump did not close TUN before returning")
+		}
+	}
+}

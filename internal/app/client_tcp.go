@@ -19,9 +19,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
-	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
-	"github.com/roseshot/mqvpn-ebpf/internal/tun"
-	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
+			"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
@@ -136,37 +134,9 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)(
 		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
 	if err!=nil{return err}
-	device,err:=tun.OpenClient(o.tunName,effectiveAddress,budget.TUNMTU,dynamicAddressRequested(o.tunAddress))
-	if err!=nil{
-		if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
-		return err
-	}
-	if err:=guard.Install(o.tunName,pushedRoutes);err!=nil{
-		closeErr:=device.Close()
-		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("apply TCP authenticated Server routes: %w",err),closeErr,errUnsafeReconnect)}
-		return errors.Join(fmt.Errorf("apply TCP authenticated Server routes: %w",err),closeErr)
-	}
-	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed over TCP","routes",routepush.Encode(pushedRoutes),"server_ip",server.IP)}
-	tcAttachment,err:=attachConfiguredTC(o.tunName,o.tcConfig,budget.TUNMTU,logger)
-	if err!=nil{
-		closeErr:=device.Close()
-		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach TCP TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
-		return errors.Join(fmt.Errorf("attach TCP TUN TC eBPF: %w",err),closeErr)
-	}
-	dnsLease,err:=dnspush.Apply(o.tunName,pushedDNS)
-	if err!=nil{
-		tcErr:=reportAndCloseTC(tcAttachment,logger)
-		closeErr:=device.Close()
-		failure:=errors.Join(fmt.Errorf("apply TCP authenticated DNS: %w",err),tcErr,closeErr)
-		if errors.Is(err,dnspush.ErrCleanup)||errors.Is(closeErr,tun.ErrCleanup)||tcErr!=nil{
-			return errors.Join(failure,errUnsafeReconnect)
-		}
-		return failure
-	}
-	if dnsLease!=nil{logger.Info("authenticated DNS installed over TCP","tun",o.tunName,"servers",dnspush.Encode(pushedDNS))}
-	pumpDevice:=newManagedPumpDevice(device,tcAttachment,dnsLease,logger)
+	pumpDevice,err:=openClientNetworkSession(guard,o,effectiveAddress,budget,pushedRoutes,pushedDNS,logger)
+	if err!=nil{return err}
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName,"tunnel_address",effectiveAddress)
 	err=p2mp.ClientPump(ctx,pumpDevice,stream,budget.MaxFrame,logger)
-	if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
-	return err
+	return classifyClientCleanup(err)
 }

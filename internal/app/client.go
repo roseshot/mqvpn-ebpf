@@ -17,9 +17,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
-	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
-	"github.com/roseshot/mqvpn-ebpf/internal/tun"
-	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
+			"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
@@ -289,42 +287,14 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 	}()
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
-	dev,err:=tun.OpenClient(o.tcp.tunName,effectiveAddress,budget.TUNMTU,dynamicAddressRequested(o.tcp.tunAddress))
-	if err!=nil{
-		if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
-		return err
-	}
-	if err:=guard.Install(o.tcp.tunName,pushedRoutes);err!=nil {
-		closeErr:=dev.Close()
-		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("apply authenticated Server routes: %w",err),closeErr,errUnsafeReconnect)}
-		return errors.Join(fmt.Errorf("apply authenticated Server routes: %w",err),closeErr)
-	}
-	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed","routes",routepush.Encode(pushedRoutes),"server_ip",serverAddr.IP)}
-	tcAttachment,err:=attachConfiguredTC(o.tcp.tunName,o.tcp.tcConfig,budget.TUNMTU,logger)
-	if err!=nil{
-		closeErr:=dev.Close()
-		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
-		return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr)
-	}
-	dnsLease,err:=dnspush.Apply(o.tcp.tunName,pushedDNS)
-	if err!=nil{
-		tcErr:=reportAndCloseTC(tcAttachment,logger)
-		closeErr:=dev.Close()
-		failure:=errors.Join(fmt.Errorf("apply authenticated DNS: %w",err),tcErr,closeErr)
-		if errors.Is(err,dnspush.ErrCleanup)||errors.Is(closeErr,tun.ErrCleanup)||tcErr!=nil{
-			return errors.Join(failure,errUnsafeReconnect)
-		}
-		return failure
-	}
-	if dnsLease!=nil{logger.Info("authenticated DNS installed on TUN","tun",o.tcp.tunName,"servers",dnspush.Encode(pushedDNS))}
-	pumpDevice:=newManagedPumpDevice(dev,tcAttachment,dnsLease,logger)
+	pumpDevice,err:=openClientNetworkSession(guard,o.tcp,effectiveAddress,budget,pushedRoutes,pushedDNS,logger)
+	if err!=nil{return err}
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
 	logger.Info("L3 route-based TUN forwarding started", "tun", o.tcp.tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)
 	err = p2mp.ClientPump(ctx, pumpDevice, stream, budget.MaxFrame, logger)
 	close(done)
-	if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
-	return err
+	return classifyClientCleanup(err)
 }
 
 func printPaths(done <-chan struct{}, conn *quic.Conn, logger *slog.Logger) {
