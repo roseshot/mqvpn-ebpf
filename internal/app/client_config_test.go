@@ -179,7 +179,8 @@ func TestClientHAFlagsValidateBeforeLoadingCertificates(t *testing.T) {
 		{"external cannot take backend list", []string{"--ha-mode", "active_standby", "--ha-controller", "haproxy", "--ha-backend", "192.0.2.1"}, "ha.backends"},
 		{"cannot pin connect IP and internal backend list", []string{"--ha-mode", "active_active", "--ha-backend", "192.0.2.1", "--ha-backend", "192.0.2.2", "--connect-ip", "198.51.100.10"}, "connect_ip"},
 		{"valid native mode reaches identity validation", []string{"--ha-mode", "active_active", "--ha-backend", "192.0.2.1", "--ha-backend", "192.0.2.2"}, "read CA"},
-		{"valid haproxy mode reaches identity validation", []string{"--ha-mode", "active_standby", "--ha-controller", "haproxy", "--connect-ip", "192.0.2.5"}, "read CA"},
+		{"haproxy rejects QUIC proxy misconception", []string{"--ha-mode", "active_standby", "--ha-controller", "haproxy", "--connect-ip", "192.0.2.5"}, "requires transport: tcp"},
+		{"valid haproxy TLS passthrough mode reaches identity validation", []string{"--ha-mode", "active_standby", "--ha-controller", "haproxy", "--connect-ip", "192.0.2.5", "--transport", "tcp"}, "read CA"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append(append([]string(nil), base...), tc.args...)
