@@ -22,15 +22,15 @@ type Stream interface {
 }
 
 type Session struct {
-	rule       *Rule
-	stream     Stream
-	tx         chan []byte
-	priorityTx chan []byte
-	codec      l3.Codec
-	fragmenter l3.Fragmenter
+	rule        *Rule
+	stream      Stream
+	tx          chan []byte
+	priorityTx  chan []byte
+	codec       l3.Codec
+	fragmenter  l3.Fragmenter
 	reassembler l3.Reassembler
-	done       chan struct{}
-	txDone     chan struct{}
+	done        chan struct{}
+	txDone      chan struct{}
 	// txMu serializes the nonblocking enqueue with session revocation,
 	// so an already-detached peer cannot enqueue into an orphaned queue.
 	txMu          sync.Mutex
