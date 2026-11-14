@@ -141,9 +141,9 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)(
 		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach TCP TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
 		return errors.Join(fmt.Errorf("attach TCP TUN TC eBPF: %w",err),closeErr)
 	}
-	defer reportAndCloseTC(tcAttachment,logger)
+	pumpDevice:=newManagedPumpDevice(device,tcAttachment,logger)
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName,"tunnel_address",effectiveAddress)
-	err=p2mp.ClientPump(ctx,device,stream,budget.MaxFrame,logger)
+	err=p2mp.ClientPump(ctx,pumpDevice,stream,budget.MaxFrame,logger)
 	if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
 	return err
 }

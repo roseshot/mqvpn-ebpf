@@ -290,11 +290,11 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
 		return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr)
 	}
-	defer reportAndCloseTC(tcAttachment,logger)
+	pumpDevice:=newManagedPumpDevice(dev,tcAttachment,logger)
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
 	logger.Info("L3 route-based TUN forwarding started", "tun", o.tcp.tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)
-	err = p2mp.ClientPump(ctx, dev, stream, budget.MaxFrame, logger)
+	err = p2mp.ClientPump(ctx, pumpDevice, stream, budget.MaxFrame, logger)
 	close(done)
 	if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
 	return err

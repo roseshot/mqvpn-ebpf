@@ -1,9 +1,14 @@
 package app
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
+	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 )
 
 // attachConfiguredTC fails open only in auto mode. Required remains strict.
@@ -24,12 +29,41 @@ func attachConfiguredTC(ifname string, policy tcebpf.Config, mtu int, logger *sl
 	return attached,nil
 }
 
-// Log counters after the forwarding pump exits and detach TCX before
-// shutdown. Both QUIC and TCP fallback share the same attachment lifecycle.
-func reportAndCloseTC(tc *tcebpf.Attachment,logger *slog.Logger) {
-	if tc==nil{return}
-	if counters,err:=tc.Snapshot();err==nil{
+// reportAndCloseTC closes the live TCX links while the TUN still exists.
+func reportAndCloseTC(tc *tcebpf.Attachment,logger *slog.Logger)error {
+	if tc==nil{return nil}
+	if counters,err:=tc.Snapshot();err==nil {
 		logger.Info("TUN TC eBPF counters","ingress",counters.Ingress,"egress",counters.Egress)
 	}else{logger.Warn("read TUN TC eBPF counters","error",err)}
-	if err:=tc.Close();err!=nil{logger.Warn("detach TUN TC eBPF","error",err)}
+	err:=tc.Close()
+	if err!=nil{logger.Error("detach TUN TC eBPF","error",err)}
+	return err
+}
+
+// managedPumpDevice serializes resource teardown and makes it idempotent:
+// detach TCX first, then release the TUN (and restore any prior interface
+// configuration), then the app-level deferred route guard is closed.
+// Unexpected cleanup errors are fatal to the reconnect supervisor.
+type managedPumpDevice struct{
+	io.ReadWriteCloser
+	beforeClose func()error
+	once sync.Once
+	closeErr error
+}
+
+func(d *managedPumpDevice)Close()error{
+	d.once.Do(func(){
+		var prior error
+		if d.beforeClose!=nil {
+			if err:=d.beforeClose();err!=nil{
+				prior=fmt.Errorf("%w: detach TUN TCX: %v",tun.ErrCleanup,err)
+			}
+		}
+		d.closeErr=errors.Join(prior,d.ReadWriteCloser.Close())
+	})
+	return d.closeErr
+}
+
+func newManagedPumpDevice(device io.ReadWriteCloser,tc *tcebpf.Attachment,logger *slog.Logger)*managedPumpDevice{
+	return &managedPumpDevice{ReadWriteCloser:device,beforeClose:func()error{return reportAndCloseTC(tc,logger)}}
 }
