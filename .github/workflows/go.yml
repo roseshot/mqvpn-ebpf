@@ -28,17 +28,6 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
-      - name: Temporary gofmt output for review branch
-        if: github.head_ref == 'feature/zstd-sip-priority-20261114'
-        run: |
-          gofmt -w cmd internal
-          for f in internal/app/client.go internal/app/client_tcp.go internal/app/compression.go internal/app/server.go internal/app/server_tcp.go internal/l3/codec_test.go internal/p2mp/client.go internal/p2mp/hub.go; do
-            echo "MQVPN_GOFMT_BEGIN:$f"
-            base64 -w0 "$f"
-            echo
-            echo "MQVPN_GOFMT_END:$f"
-          done
-          exit 1
       - name: Enforce gofmt across all application and test code
         run: |
           files="$(gofmt -l cmd internal)"
