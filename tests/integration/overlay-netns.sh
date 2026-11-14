@@ -184,7 +184,7 @@ EOF
 done
 for side in server client; do
   if [[ "$side" == server ]]; then ns="$server_ns"; space="$frr_server"; else ns="$client_ns"; space="$frr_client"; fi
-  ip netns exec "$ns" /usr/lib/frr/zebra -N "$space" -S \
+  ip netns exec "$ns" /usr/lib/frr/zebra -N "$space" -u root -g root \
     -f "$work/$side-zebra.conf" -A 127.0.0.1 -P 0 >"$work/$side-zebra.log" 2>&1 &
   pids="$pids $!"
 done
@@ -196,7 +196,7 @@ done
   fail "FRR zebra ZAPI socket not created"
 for side in server client; do
   if [[ "$side" == server ]]; then ns="$server_ns"; space="$frr_server"; else ns="$client_ns"; space="$frr_client"; fi
-  ip netns exec "$ns" /usr/lib/frr/bgpd -N "$space" -S \
+  ip netns exec "$ns" /usr/lib/frr/bgpd -N "$space" -u root -g root \
     -f "$work/$side-bgpd.conf" -A 127.0.0.1 -P 0 >"$work/$side-bgpd.log" 2>&1 &
   pids="$pids $!"
 done
