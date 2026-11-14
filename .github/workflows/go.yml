@@ -119,9 +119,9 @@ jobs:
           sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
 
   overlay-integration:
-    name: QUIC/TCP wire encryption, four-WAN MPQUIC and network integration
+    name: QUIC/TCP wire encryption, four-WAN and five-site FRR integration
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -145,12 +145,14 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends frr frr-pythontools
           dpkg -l frr frr-pythontools
           /usr/lib/frr/bgpd --version
+          /usr/lib/frr/ospfd --version
       - name: Prepare Linux TUN and VXLAN modules
         run: |
           sudo modprobe tun || true
           sudo modprobe vxlan || true
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
+          bash -n tests/integration/five-site-frr.sh
           python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py
       - name: Build actual mqvpn binaries
         run: make release
@@ -178,5 +180,14 @@ jobs:
         run: sudo bash tests/integration/overlay-netns.sh wan-regional
       - name: WAN netem poor (RTT 240ms, jitter, 3% loss)
         run: sudo bash tests/integration/overlay-netns.sh wan-poor
-      - name: FRRouting official stable .deb BGP peering and FIB over TUN
-        run: sudo bash tests/integration/overlay-netns.sh bgp
+      # Reuse this job's signed FRR installation, binaries and TUN setup.
+      # The previous two-site BGP case duplicates the more complete
+      # five-site convergence/FIB/forwarding assertions, so run only these.
+      - name: Five-site randomized 1–8 WAN BGP convergence and 20-way forwarding
+        env:
+          WAN_SEED: ${{ github.run_id }}
+        run: sudo env WAN_SEED="$WAN_SEED" bash tests/integration/five-site-frr.sh bgp
+      - name: Five-site randomized 1–8 WAN OSPF convergence and 20-way forwarding
+        env:
+          WAN_SEED: ${{ github.run_id }}
+        run: sudo env WAN_SEED="$WAN_SEED" bash tests/integration/five-site-frr.sh ospf
