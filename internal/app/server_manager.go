@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"slices"
 	"sort"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -45,6 +46,7 @@ type preparedServer struct {
 	wans          []serverWAN
 	tcpEnabled    bool
 	tcpListen     string
+	readinessListen string
 	instances     map[string]preparedInstance
 	xdp           xdp.Config
 	fingerprint   [32]byte
@@ -69,6 +71,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		wans:          append([]serverWAN(nil), config.WANs...),
 		tcpEnabled:    config.TCPFallback.Enabled,
 		tcpListen:     config.TCPFallback.Listen,
+		readinessListen: config.HA.ReadinessListen,
 		instances:     make(map[string]preparedInstance, len(config.Instances)),
 	}
 	// Resolve the default TUN budget once for the whole shared listener.
@@ -96,6 +99,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		hashRecord(digest, []byte(link.Interface+"@"+link.IP))
 	}
 	hashRecord(digest, []byte(fmt.Sprintf("tcp:%t:%s", config.TCPFallback.Enabled, config.TCPFallback.Listen)))
+	hashRecord(digest, []byte("ha-readiness:"+config.HA.ReadinessListen))
 	if config.XDP != nil {
 		next.xdp = *config.XDP
 		if len(next.xdp.Interfaces) > 0 && next.xdp.Object != "" {
@@ -244,6 +248,12 @@ type serverManager struct {
 	wans          []serverWAN
 	tcpEnabled    bool
 	tcpListen     string
+	readinessListen string
+	healthServer   *http.Server
+	healthListener net.Listener
+	healthDone     chan struct{}
+	healthErr      error
+	ready          atomic.Bool
 	tcpServer     *http.Server
 	tcpListener   net.Listener
 	tcpDone       chan struct{}
@@ -337,6 +347,16 @@ func (m *serverManager) stop(name string) {
 }
 
 func (m *serverManager) close() {
+	m.ready.Store(false)
+	if m.healthServer != nil {
+		_ = m.healthServer.Close()
+	}
+	if m.healthListener != nil {
+		_ = m.healthListener.Close()
+	}
+	if m.healthDone != nil {
+		<-m.healthDone
+	}
 	if m.tcpServer != nil {
 		_ = m.tcpServer.Close()
 	}
@@ -399,6 +419,9 @@ func (m *serverManager) apply(next preparedServer) error {
 	if m.listen != "" && (m.tcpEnabled != next.tcpEnabled || m.tcpListen != next.tcpListen) {
 		return errors.New("TCP fallback enabled/listen changes require daemon restart")
 	}
+	if m.listen != "" && m.readinessListen != next.readinessListen {
+		return errors.New("HA readiness listener changes require daemon restart")
+	}
 	ports, err := xdp.ListenersToPorts([]string{next.listen})
 	if err != nil {
 		return err
@@ -414,6 +437,7 @@ func (m *serverManager) apply(next preparedServer) error {
 	m.wans = append(m.wans[:0], next.wans...)
 	m.tcpEnabled = next.tcpEnabled
 	m.tcpListen = next.tcpListen
+	m.readinessListen = next.readinessListen
 	names := make([]string, 0, len(m.instances))
 	for n := range m.instances {
 		names = append(names, n)
@@ -488,6 +512,12 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 			return err
 		}
 	}
+	if manager.readinessListen != "" {
+		if err := manager.startHealthListener(); err != nil {
+			return err
+		}
+	}
+	manager.ready.Store(true)
 	applied := initial.fingerprint
 
 	signals := make(chan os.Signal, 1)
@@ -530,6 +560,11 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 				return nil
 			}
 			return fmt.Errorf("TCP fallback listener terminated unexpectedly: %w", manager.tcpErr)
+		case <-manager.healthDone:
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("HA readiness listener terminated unexpectedly: %w", manager.healthErr)
 		case live := <-manager.exits:
 			if active := manager.instances[live.prepared.spec.Name]; active == live {
 				return fmt.Errorf("VPN instance %s terminated: %w", live.prepared.spec.Name, live.err)
