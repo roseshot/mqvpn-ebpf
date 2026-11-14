@@ -110,8 +110,10 @@ provided. UDP/443 and TCP/443 are independent sockets and can both bind.
   manages those authenticated routes plus an underlay-protecting host
   route. It does not add VRFs, policy routing rules, multicast entries
   or inner packet filters.
-- No hardware N200/I226 failover benchmark or network namespace E2E tests
-  have been run. CI includes unit-level TLS/HTTP Upgrade tests only.
+- CI exercises encrypted TLS/TCP fallback in real network namespaces with
+  positive TLS-key-based wire decryption checks (`crypto-tcp`) as well as
+  protocol unit tests. It does **not** establish hardware N200/I226
+  throughput or production failover performance.
 
 Specifications:
 - CONNECT-ETHERNET draft-18: https://datatracker.ietf.org/doc/html/draft-ietf-masque-connect-ethernet-18
