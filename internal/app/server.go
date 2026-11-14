@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
 	"github.com/roseshot/mqvpn-ebpf/internal/logging"
+	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 )
 
@@ -170,22 +170,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Capsule-Protocol: ?1 required", http.StatusBadRequest)
 		return
 	}
-	if len(r.TLS.PeerCertificates) == 0 || len(r.TLS.VerifiedChains) == 0 {
-		http.Error(w, "verified client certificate required", http.StatusForbidden)
-		return
-	}
-	// Revalidate against the current SNI tenant CA after a hot reload.
-	// An old HTTP/3 connection must not retain permissions after CA rotation.
-	intermediates := x509.NewCertPool()
-	for _, cert := range r.TLS.PeerCertificates[1:] {
-		intermediates.AddCert(cert)
-	}
-	if _, err := r.TLS.PeerCertificates[0].Verify(x509.VerifyOptions{
-		Roots:         instance.prepared.tlsConfig.ClientCAs,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}); err != nil {
-		http.Error(w, "client CA no longer authorized for this instance", http.StatusForbidden)
+	if err := verifyClientCertificate(r.TLS, instance.prepared.tlsConfig.ClientCAs, instance.prepared.revocation); err != nil {
+		instance.logger.WarnContext(r.Context(), "client TLS verification rejected", "error", err)
+		http.Error(w, "client certificate not authorized", http.StatusForbidden)
 		return
 	}
 	rule, err := instance.hub.Authorize(r.TLS.PeerCertificates[0].Raw)
@@ -258,11 +245,11 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if assigned := session.TunnelAddress(); assigned != "" {
 		w.Header().Set(tunnelAddressHeader, assigned)
 	}
-	if len(instance.prepared.spec.PushRoutes) > 0 {
-		w.Header().Set(routepush.Header, strings.Join(instance.prepared.spec.PushRoutes, ","))
+	if routes := p2mp.EffectivePush(instance.prepared.spec.PushRoutes, rule.PushRoutes); len(routes) > 0 {
+		w.Header().Set(routepush.Header, strings.Join(routes, ","))
 	}
-	if len(instance.prepared.spec.PushDNS) > 0 {
-		w.Header().Set(dnspush.Header, strings.Join(instance.prepared.spec.PushDNS, ","))
+	if dns := p2mp.EffectivePush(instance.prepared.spec.PushDNS, rule.PushDNS); len(dns) > 0 {
+		w.Header().Set(dnspush.Header, strings.Join(dns, ","))
 	}
 	if compression {
 		w.Header().Set(compressionHeader, compressionZstd)
