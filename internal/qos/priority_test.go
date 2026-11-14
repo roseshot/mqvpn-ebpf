@@ -198,7 +198,7 @@ func TestPriorityIPv6SIPWithExtensionHeaders(t *testing.T) {
 func TestQoSClassifyAFAndControlPlane(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		pkt []byte
+		pkt  []byte
 		want Class
 	}{
 		{"EF is realtime", ipv4(17, 46, 40000, 40001), Realtime},
