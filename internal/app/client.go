@@ -277,7 +277,10 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
 	dev,err:=tun.OpenClient(o.tcp.tunName,effectiveAddress,budget.TUNMTU,dynamicAddressRequested(o.tcp.tunAddress))
-	if err!=nil{return err}
+	if err!=nil{
+		if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
+		return err
+	}
 	if err:=guard.Install(o.tcp.tunName,pushedRoutes);err!=nil {
 		closeErr:=dev.Close()
 		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("apply authenticated Server routes: %w",err),closeErr,errUnsafeReconnect)}

@@ -128,7 +128,10 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)(
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
 	if err!=nil{return err}
 	device,err:=tun.OpenClient(o.tunName,effectiveAddress,budget.TUNMTU,dynamicAddressRequested(o.tunAddress))
-	if err!=nil{return err}
+	if err!=nil{
+		if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
+		return err
+	}
 	if err:=guard.Install(o.tunName,pushedRoutes);err!=nil{
 		closeErr:=device.Close()
 		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("apply TCP authenticated Server routes: %w",err),closeErr,errUnsafeReconnect)}
