@@ -156,9 +156,10 @@ func TestStickyHeartbeatIsNotAnInnerIPPacket(t *testing.T) {
 		t.Fatalf("heartbeat leaked %d inner IP packets into TUN", got)
 	}
 	stop()
+	h.Detach(companion)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("heartbeat receive worker did not stop")
+		t.Fatal("heartbeat receive worker did not stop after session revocation")
 	}
 }
