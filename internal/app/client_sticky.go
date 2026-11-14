@@ -304,11 +304,27 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	m.logger.InfoContext(m.ctx, "sticky realtime established",
 		"wan_index", index+1, "source_ip", source, "interface", link.Interface,
 		"local", packetConn.LocalAddr(), "remote", remote)
-	// QUIC keepalives alone don't establish two-way application reachability
-	// on a path which drops every packet. Require an authenticated
-	// DATAGRAM round trip before continuing to use this pinned WAN.
+	// QUIC keepalives alone don't establish two-way application reachability.
+	// Probe periodically and fail only after a sustained absence of verified
+	// round trips. A single lost DATAGRAM on a lossy WAN must not move calls
+	// to the next physical interface.
+	return runStickyHeartbeats(m.ctx, stream, recvDone, acks, 750*time.Millisecond, 2500*time.Millisecond)
+}
+
+// runStickyHeartbeats accepts only echoes of tokens sent on THIS authenticated
+// QUIC companion. It tolerates isolated packet loss but tears down blackholed
+// paths when no valid response arrives for timeout. Outstanding tokens are
+// bounded by the timeout, so a blackhole cannot grow memory indefinitely.
+func runStickyHeartbeats(ctx context.Context, stream p2mp.Stream, recvDone <-chan struct{}, acks <-chan uint64, period, timeout time.Duration) error {
+	ticker := time.NewTicker(period)
+	defer ticker.Stop()
+	watchdog := time.NewTicker(min(period, timeout/4))
+	defer watchdog.Stop()
+
 	nextToken := uint64(time.Now().UnixNano())
-	for {
+	lastReply := time.Now()
+	outstanding := make(map[uint64]time.Time)
+	send := func() error {
 		nextToken++
 		ping := make([]byte, p2mp.StickyHeartbeatSize)
 		ping[0] = p2mp.StickyHeartbeatMarker
@@ -316,31 +332,41 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 		if err := stream.SendDatagram(ping); err != nil {
 			return fmt.Errorf("pinned WAN heartbeat send: %w", err)
 		}
-		timer := time.NewTimer(2500 * time.Millisecond)
-		verified := false
-		for !verified {
-			select {
-			case <-m.ctx.Done():
-				timer.Stop()
-				return m.ctx.Err()
-			case <-recvDone:
-				timer.Stop()
-				return errors.New("pinned WAN QUIC receiver closed")
-			case token := <-acks:
-				if token == nextToken {
-					verified = true
-				}
-			case <-timer.C:
-				return errors.New("pinned WAN heartbeat timed out: no authenticated two-way reply")
+		now := time.Now()
+		outstanding[nextToken] = now
+		for token, sent := range outstanding {
+			if now.Sub(sent) >= timeout {
+				delete(outstanding, token)
 			}
 		}
-		timer.Stop()
+		return nil
+	}
+	if err := send(); err != nil {
+		return err
+	}
+
+	for {
 		select {
-		case <-m.ctx.Done():
-			return m.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-recvDone:
 			return errors.New("pinned WAN QUIC receiver closed")
-		case <-time.After(750 * time.Millisecond):
+		case token := <-acks:
+			if sent, ok := outstanding[token]; ok && time.Since(sent) < timeout {
+				lastReply = time.Now()
+				delete(outstanding, token)
+			}
+		case <-watchdog.C:
+			if time.Since(lastReply) >= timeout {
+				return errors.New("pinned WAN heartbeat timed out: no authenticated two-way reply")
+			}
+		case <-ticker.C:
+			if time.Since(lastReply) >= timeout {
+				return errors.New("pinned WAN heartbeat timed out: no authenticated two-way reply")
+			}
+			if err := send(); err != nil {
+				return err
+			}
 		}
 	}
 }
