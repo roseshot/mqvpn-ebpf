@@ -130,7 +130,9 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer inst.hub.Detach(session)
 	responseHeaders := "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: connect-ethernet\r\nCapsule-Protocol: ?1\r\n"
-	if compression { responseHeaders += compressionHeader + ": " + compressionZstd + "\r\n" }
+	if compression {
+		responseHeaders += compressionHeader + ": " + compressionZstd + "\r\n"
+	}
 	if assigned := session.TunnelAddress(); assigned != "" {
 		responseHeaders += tunnelAddressHeader + ": " + assigned + "\r\n"
 	}
