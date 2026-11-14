@@ -39,7 +39,7 @@ ha:
     - 198.51.100.10 # backup UDP/8443
 ```
 
-The initial QUIC session dials the first Server. On connection failure, the Client finishes the failed session's cleanup, waits according to its existing 1–30 s exponential reconnect backoff, then tries the next IP. After all backends fail, it cycles again. A cleanly closed or long-lived session resets active/standby preference to the first Server *for the next reconnect*; it does **not** preempt a healthy backup session to probe primary.
+The initial QUIC session dials the first Server. On connection failure, the Client finishes the failed session's cleanup, waits according to its existing 1–30 s exponential reconnect backoff, then tries the next IP. After all backends fail, it cycles again. Any primary disconnect (including a clean end-of-session) chooses the next standby Server. A cleanly closed or long-lived **standby** session resets active/standby preference to the first Server *for its next reconnect*. It does **not** preempt a healthy backup session to probe primary.
 
 For active/active across a **fleet of Clients**, change only the mode:
 
