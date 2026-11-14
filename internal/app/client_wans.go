@@ -15,6 +15,7 @@ import (
 type clientWAN struct {
 	SourceIP  string `yaml:"source_ip,omitempty"`
 	Interface string `yaml:"interface,omitempty"`
+	ServerIP  string `yaml:"server_ip,omitempty"`
 }
 
 // clientWANFlags accepts repeated --wan=source_ip@interface arguments.
@@ -24,17 +25,25 @@ type clientWANFlags []clientWAN
 func (w *clientWANFlags) String() string {
 	parts := make([]string, 0, len(*w))
 	for _, item := range *w {
-		parts = append(parts, item.SourceIP+"@"+item.Interface)
+		spec := item.SourceIP + "@" + item.Interface
+		if item.ServerIP != "" {
+			spec += "=" + item.ServerIP
+		}
+		parts = append(parts, spec)
 	}
 	return strings.Join(parts, ",")
 }
 
 func (w *clientWANFlags) Set(value string) error {
-	source, iface, ok := strings.Cut(value, "@")
-	if !ok || source == "" || iface == "" {
-		return errors.New("--wan expects SOURCE_IP@INTERFACE (repeat for each WAN)")
+	source, remainder, ok := strings.Cut(value, "@")
+	if !ok || source == "" || remainder == "" {
+		return errors.New("--wan expects SOURCE_IP@INTERFACE[=SERVER_IP] (repeat for each WAN)")
 	}
-	*w = append(*w, clientWAN{SourceIP: source, Interface: iface})
+	iface, server, specified := strings.Cut(remainder, "=")
+	if iface == "" || (specified && server == "") {
+		return errors.New("--wan expects SOURCE_IP@INTERFACE[=SERVER_IP]")
+	}
+	*w = append(*w, clientWAN{SourceIP: source, Interface: iface, ServerIP: server})
 	return nil
 }
 
@@ -75,6 +84,18 @@ func planClientWANs(list, cli []clientWAN, primaryIP, primaryInterface, secondIP
 				return nil, fmt.Errorf("WAN %d reuses source IP %s", i+1, item.SourceIP)
 			}
 			seenIPs[ip.Unmap()] = true
+		}
+		if item.ServerIP != "" {
+			server, err := netip.ParseAddr(item.ServerIP)
+			if err != nil || server.IsUnspecified() || server.IsMulticast() || server.Zone() != "" {
+				return nil, fmt.Errorf("WAN %d invalid server_ip %q", i+1, item.ServerIP)
+			}
+			if item.SourceIP != "" {
+				source, _ := netip.ParseAddr(item.SourceIP)
+				if source.Is4() != server.Is4() {
+					return nil, fmt.Errorf("WAN %d source and server IP families differ", i+1)
+				}
+			}
 		}
 		if item.Interface != "" {
 			if seenInterfaces[item.Interface] {

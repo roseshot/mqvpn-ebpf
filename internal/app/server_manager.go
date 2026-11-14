@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"syscall"
 	"time"
@@ -40,6 +41,7 @@ type preparedInstance struct {
 
 type preparedServer struct {
 	listen      string
+	wans        []serverWAN
 	tcpEnabled  bool
 	tcpListen   string
 	instances   map[string]preparedInstance
@@ -62,6 +64,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	}
 	next := preparedServer{
 		listen:     config.Listen,
+		wans:       append([]serverWAN(nil), config.WANs...),
 		tcpEnabled: config.TCPFallback.Enabled,
 		tcpListen:  config.TCPFallback.Listen,
 		instances:  make(map[string]preparedInstance, len(config.Instances)),
@@ -73,7 +76,11 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	for _, spec := range config.Instances {
 		if spec.MTU == 0 {
 			var err error
-			underlays, err = wan.ServerUnderlays(config.Listen, config.WANInterfaces)
+			names := append([]string(nil), config.WANInterfaces...)
+			for _, link := range config.WANs {
+				names = append(names, link.Interface)
+			}
+			underlays, err = wan.ServerUnderlays(config.Listen, names)
 			if err != nil {
 				return preparedServer{}, fmt.Errorf("discover server WAN MTU: %w", err)
 			}
@@ -82,6 +89,9 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	}
 	digest := sha256.New()
 	hashRecord(digest, []byte(config.Listen))
+	for _, link := range config.WANs {
+		hashRecord(digest, []byte(link.Interface+"@"+link.IP))
+	}
 	hashRecord(digest, []byte(fmt.Sprintf("tcp:%t:%s", config.TCPFallback.Enabled, config.TCPFallback.Listen)))
 	if config.XDP != nil {
 		next.xdp = *config.XDP
@@ -227,6 +237,7 @@ type serverManager struct {
 	ctx          context.Context
 	logger       *slog.Logger
 	listen       string
+	wans         []serverWAN
 	tcpEnabled   bool
 	tcpListen    string
 	tcpServer    *http.Server
@@ -364,7 +375,7 @@ func (m *serverManager) startListener() error {
 		return fmt.Errorf("bind shared HTTP/3 UDP %s: %w", m.listen, err)
 	}
 	m.packetConn = conn
-	m.server = newSharedHTTP3Server(m.mux)
+	m.server = newSharedHTTP3Server(m.mux, m.wans...)
 	m.listenerDone = make(chan struct{})
 	go func() { m.listenerErr = m.server.Serve(conn); close(m.listenerDone) }()
 	m.logger.InfoContext(m.ctx, "shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
@@ -374,6 +385,9 @@ func (m *serverManager) startListener() error {
 func (m *serverManager) apply(next preparedServer) error {
 	if m.listen != "" && m.listen != next.listen {
 		return fmt.Errorf("shared listen address change %q -> %q requires daemon restart", m.listen, next.listen)
+	}
+	if m.listen != "" && !slices.Equal(m.wans, next.wans) {
+		return errors.New("server WAN address changes require daemon restart to preserve active QUIC sessions")
 	}
 	if m.listen != "" && (m.tcpEnabled != next.tcpEnabled || m.tcpListen != next.tcpListen) {
 		return errors.New("TCP fallback enabled/listen changes require daemon restart")
@@ -389,6 +403,7 @@ func (m *serverManager) apply(next preparedServer) error {
 	// if an OS-level resource failure stops an individual reload.
 	defer m.mux.Publish(m.instances)
 	m.listen = next.listen
+	m.wans = append(m.wans[:0], next.wans...)
 	m.tcpEnabled = next.tcpEnabled
 	m.tcpListen = next.tcpListen
 	names := make([]string, 0, len(m.instances))

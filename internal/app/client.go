@@ -36,7 +36,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
 	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
 	var wanCLI clientWANFlags
-	fs.Var(&wanCLI, "wan", "WAN path SOURCE_IP@INTERFACE (repeat in priority order; first WAN is handshake path)")
+	fs.Var(&wanCLI, "wan", "WAN path SOURCE_IP@INTERFACE[=SERVER_IP] (repeat; first is handshake path)")
+	useServerWANs := fs.Bool("use-server-wans", false, "use authenticated Server ADD_ADDRESS announcements for secondary WAN destinations")
 	tunName := fs.String("tun", "mq0", "Linux L3 TUN name (created and configured by daemon)")
 	tunAddress := fs.String("tun-address", "", "required local TUN host IPv4/IPv6 CIDR")
 	tunMTU := fs.Int("tun-mtu", 0, "TUN MTU (default auto, capped at 1400 based on WAN MTU)")
@@ -67,6 +68,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			return err
 		}
 		configuredWANs = file.WANs
+		if !explicit["use-server-wans"] && file.UseServerWANs != nil {
+			*useServerWANs = *file.UseServerWANs
+		}
 		if len(file.WANs) > 0 &&
 			(file.SourceIP != "" || file.SourceInterface != "" || file.WAN2IP != "" || file.WAN2Interface != "") {
 			return errors.New("client YAML wans cannot be combined with legacy source_ip / wan2_ip fields")
@@ -182,7 +186,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	options := clientSessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
-		wans: wans,
+		wans: wans, useServerWANs: *useServerWANs,
 	}
 	return runClientSupervisor(ctx, *reconnect, logger, func(sessionCtx context.Context) error {
 		return runClientSession(sessionCtx, options, logger)
@@ -194,6 +198,7 @@ type clientSessionOptions struct {
 	transport      string
 	udpDialTimeout time.Duration
 	wans           []clientWAN
+	useServerWANs  bool
 }
 
 // runClientSession owns exactly one transport and TUN session. On every
@@ -221,13 +226,50 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		return err
 	}
 	logger.InfoContext(ctx, "primary WAN bound", "source_ip", selectedIP, "interface", o.tcp.wanInterface, "local", base.LocalAddr())
-	tr := &quic.Transport{Conn: base}
+	// Multiple *remote* Server addresses require a single packet reader
+	// spanning all Client source sockets, so QUIC CIDs stay in one
+	// connection registry. Legacy same-destination WAN sockets continue
+	// to use SO_BINDTODEVICE via independent WAN transports.
+	remoteSpecific := o.useServerWANs
+	for _, link := range o.wans {
+		if link.ServerIP != "" {
+			remoteSpecific = true
+		}
+	}
+	var multiSockets *quic.MultiSocketManager
+	var selectedSources []net.IP
+	var packetConn net.PacketConn = base
+	if remoteSpecific && len(o.wans) > 1 {
+		extraIPs := make([]net.IP, 0, len(o.wans)-1)
+		selectedSources = append(selectedSources, selectedIP)
+		for i, link := range o.wans[1:] {
+			ip, err := wan.ResolveSource(link.SourceIP, link.Interface, serverAddr)
+			if err != nil {
+				_ = base.Close()
+				return fmt.Errorf("resolve WAN %d source: %w", i+2, err)
+			}
+			selectedSources = append(selectedSources, ip)
+			extraIPs = append(extraIPs, ip)
+		}
+		manager, err := quic.NewMultiSocketManager(quic.MultiSocketManagerConfig{
+			BaseConn: base, LocalAddrs: extraIPs,
+		})
+		if err != nil {
+			_ = base.Close()
+			return fmt.Errorf("open Client multi-WAN UDP sockets: %w", err)
+		}
+		multiSockets = manager
+		packetConn = manager
+		logger.InfoContext(ctx, "MPQUIC multi-address socket manager ready", "wan_count", len(o.wans))
+	}
+	tr := &quic.Transport{Conn: packetConn}
 	qconf := &quic.Config{
-		EnableDatagrams:     true,
-		MaxPaths:            max(2, len(o.wans)),
-		MultipathController: quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler()),
-		KeepAlivePeriod:     10 * time.Second,
-		MaxIdleTimeout:      30 * time.Second,
+		EnableDatagrams:            true,
+		EnableAddressAdvertisement: true,
+		MaxPaths:                   max(2, len(o.wans)),
+		MultipathController:        quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler()),
+		KeepAlivePeriod:            10 * time.Second,
+		MaxIdleTimeout:             30 * time.Second,
 	}
 	tlsConf := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
@@ -242,6 +284,9 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	cancelDial()
 	if err != nil {
 		_ = tr.Close()
+		if multiSockets != nil {
+			_ = multiSockets.Close()
+		}
 		if o.transport == "auto" && fallbackAllowed {
 			logger.WarnContext(ctx, "QUIC UDP handshake timed out; trying authenticated TCP fallback", "timeout", o.udpDialTimeout)
 			if len(o.wans) > 1 {
@@ -263,6 +308,9 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 			_ = transport.Close()
 		}
 		_ = tr.Close()
+		if multiSockets != nil {
+			_ = multiSockets.Close()
+		}
 	}()
 	underlaySources := []struct {
 		ip    net.IP
@@ -351,19 +399,53 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if len(o.wans) > 1 && !conn.ConnectionState().SupportsMultipath {
 		return errors.New("peer did not negotiate IETF Multipath QUIC")
 	}
+	var destinations []*net.UDPAddr
+	if remoteSpecific {
+		destinations, err = getServerTargets(ctx, conn, serverAddr, o.wans, o.useServerWANs)
+		if err != nil {
+			return err
+		}
+		for i, destination := range destinations {
+			logger.InfoContext(ctx, "MPQUIC Server destination selected",
+				"wan_index", i+1, "server_address", destination)
+		}
+	}
 	for index, link := range o.wans[1:] {
-		otherUDP, selectedSource, err := wan.Listen(ctx, link.SourceIP, link.Interface, serverAddr)
-		if err != nil {
-			return fmt.Errorf("open WAN %d: %w", index+2, err)
+		var path *quic.Path
+		var selectedSource net.IP
+		var localAddress net.Addr
+		if multiSockets != nil {
+			// The MultiSocketManager chooses each source socket by the
+			// local IP in packetinfo. Linux source policy routing must
+			// still deliver packets via the configured WAN interface.
+			selectedSource = selectedSources[index+1]
+			localAddress = &net.UDPAddr{IP: selectedSource}
+			path, err = conn.AddPathFromAddr(localAddress, destinations[index+1])
+			if err != nil {
+				return fmt.Errorf("add WAN %d path to %s: %w", index+2, destinations[index+1], err)
+			}
+		} else {
+			otherUDP, ip, bindErr := wan.Listen(ctx, link.SourceIP, link.Interface, serverAddr)
+			if bindErr != nil {
+				return fmt.Errorf("open WAN %d: %w", index+2, bindErr)
+			}
+			selectedSource = ip
+			localAddress = otherUDP.LocalAddr()
+			transport := &quic.Transport{Conn: otherUDP}
+			extraTransports = append(extraTransports, transport)
+			path, err = conn.AddPath(transport)
+			if err != nil {
+				return fmt.Errorf("add WAN %d path: %w", index+2, err)
+			}
 		}
-		transport := &quic.Transport{Conn: otherUDP}
-		extraTransports = append(extraTransports, transport)
 		logger.InfoContext(ctx, "additional WAN bound", "wan_index", index+2,
-			"source_ip", selectedSource, "interface", link.Interface, "local", otherUDP.LocalAddr())
-		path, err := conn.AddPath(transport)
-		if err != nil {
-			return fmt.Errorf("add WAN %d path: %w", index+2, err)
-		}
+			"source_ip", selectedSource, "interface", link.Interface,
+			"local", localAddress, "remote", func() net.Addr {
+				if destinations != nil {
+					return destinations[index+1]
+				}
+				return serverAddr
+			}())
 		probeCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		err = path.Probe(probeCtx)
 		cancel()
@@ -372,7 +454,13 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		}
 		pathID, _ := path.ID()
 		logger.InfoContext(ctx, "QUIC WAN path validated", "wan_index", index+2,
-			"path_id", pathID, "source", otherUDP.LocalAddr())
+			"path_id", pathID, "source", selectedSource,
+			"server_address", func() net.Addr {
+				if destinations != nil {
+					return destinations[index+1]
+				}
+				return serverAddr
+			}())
 		underlaySources = append(underlaySources, struct {
 			ip    net.IP
 			iface string

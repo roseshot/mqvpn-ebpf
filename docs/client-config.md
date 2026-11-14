@@ -112,6 +112,48 @@ routing externally. mqvpn does not install or remove these Linux rules.
 The TUN's automatic MTU considers **every validated WAN**, and the
 TCP fallback remains intentionally single-WAN.
 
+### Client paths to different Server WAN IPs
+
+An ordered Client WAN list can target a different Server IP on each
+path, still using **one authenticated MPQUIC connection**. Specify the
+secondary destinations in YAML:
+
+~~~yaml
+wans:
+  - source_ip: 192.0.2.2
+    interface: wan0
+    server_ip: 192.0.2.1
+  - source_ip: 198.51.100.2
+    interface: wan1
+    server_ip: 198.51.100.1
+  - source_ip: 203.0.113.2
+    interface: wan2
+    server_ip: 203.0.113.1
+  - source_ip: 192.0.2.6
+    interface: wan3
+    server_ip: 192.0.2.5
+~~~
+
+Or use repeatable `--wan 198.51.100.2@wan1=198.51.100.1` for
+additional interfaces. A first-path `server_ip` must match the
+authenticated connection's `connect_ip` destination.
+
+With `use_server_wans: true` (CLI: `--use-server-wans=true`) the
+Client can discover missing secondary Server IPs from authenticated
+MPQUIC `ADD_ADDRESS` announcements. For nontrivial topology,
+explicit pairing is recommended so each link targets a reachable IP.
+
+The multi-destination path transport uses source-bound UDP sockets
+through `mp-quic-go MultiSocketManager`, not `SO_BINDTODEVICE` for
+the secondary paths. Administrators must configure and verify Linux
+source-policy routes to the desired interface for every Server IP;
+mqvpn does not create those rules.
+
+Server-side configuration and the four-WAN test are documented in
+`docs/server-multiwan.md`. The current `mp-quic-go v0.3.1` library
+still caps active MPQUIC paths at **64**, independent of the unbounded
+configuration list.
+
 ## Optional YAML fields
 
 | Key | Purpose |
@@ -125,7 +167,7 @@ TCP fallback remains intentionally single-WAN.
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
 | `source_ip`, `source_interface` | Primary WAN binding |
-| `wans` | Ordered list of MPQUIC WANs: `source_ip` and `interface` |\n| `wan2_ip`, `wan2_interface` | Legacy secondary WAN parameters (still supported) |
+| `wans` | Ordered list of MPQUIC WANs: `source_ip` and `interface` |\n| `wan2_ip`, `wan2_interface` | Legacy secondary WAN parameters (still supported) |\n| `use_server_wans` | Discover Server WAN IPs from authenticated MPQUIC ADD_ADDRESS announcements |
 | `transport`, `udp_dial_timeout`, `tcp_port` | Transport and fallback policy |
 | `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
 
