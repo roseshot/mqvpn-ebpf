@@ -28,6 +28,7 @@ The tunnel carries **IPv4 and IPv6 packets** in MASQUE CONNECT-ETHERNET DATAGRAM
 | --- | --- |
 | Encrypted transport | HTTP/3 over QUIC, TLS 1.3, mTLS certificate and peer-fingerprint authorization |
 | Multi-WAN | Ordered, validated MPQUIC paths; `round_robin` or connection-wide `low_latency` scheduling |
+| Server HA | Client-managed active/standby failover or fleet active/active placement; external HAProxy TLS/TCP passthrough |
 | QoS | Separate realtime, assured and best-effort queues (4:2:1 weighted service) |
 | Sticky voice | Optional single-WAN QUIC companion for SIP/DSCP EF, with WAN failover |
 | Routing | Per-peer allowed destination prefixes; optional server-pushed routes and DNS; external FRR for dynamic routing |
