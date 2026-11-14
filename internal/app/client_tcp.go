@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -36,6 +37,7 @@ type clientTCPOptions struct {
 	acceptRoutes                 bool
 	acceptDNS                    bool
 	dnsRoutes                    bool
+	tlsKeyLog                    io.Writer
 }
 
 // tcpTarget supports an independent TCP port without weakening tenant TLS
@@ -83,6 +85,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		MinVersion:   tls.VersionTLS13,
 		ServerName:   o.endpoint.serverName,
 		NextProtos:   []string{"http/1.1"},
+		KeyLogWriter: o.tlsKeyLog,
 		RootCAs:      roots,
 		Certificates: []tls.Certificate{cert},
 	}
