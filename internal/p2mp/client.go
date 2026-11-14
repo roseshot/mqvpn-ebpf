@@ -59,6 +59,13 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	ends := make(chan error, 3)
 	var workers sync.WaitGroup
 	workers.Add(3)
+	realtime, hasRealtime := stream.(interface {
+		ReceiveRealtimeDatagram(context.Context) ([]byte, error)
+	})
+	if hasRealtime {
+		workers.Add(1)
+	}
+	var writeMu sync.Mutex
 
 	go func() {
 		defer workers.Done()
@@ -140,7 +147,9 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if err != nil {
 				continue
 			}
+			writeMu.Lock()
 			n, err := device.Write(pkt)
+			writeMu.Unlock()
 			if err != nil {
 				ends <- err
 				return
@@ -152,6 +161,38 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			voice.Observe(pkt)
 		}
 	}()
+
+	// Realtime companion frames use a separate fragment-ID namespace.
+	// Both receivers synchronize writes to the same Linux TUN and share
+	// the threadsafe VoIP monitor, but never merge partial fragments.
+	if hasRealtime {
+		go func() {
+			defer workers.Done()
+			stickyReassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+			for {
+				frame, err := realtime.ReceiveRealtimeDatagram(ctx)
+				if err != nil {
+					return
+				}
+				payload, complete, err := stickyReassembler.Accept(frame)
+				if err != nil || !complete {
+					continue
+				}
+				pkt, err := codec.Unwrap(payload)
+				if err != nil {
+					continue
+				}
+				writeMu.Lock()
+				n, err := device.Write(pkt)
+				writeMu.Unlock()
+				if err != nil || n != len(pkt) {
+					ends <- fmt.Errorf("realtime TUN write: %w (len %d/%d)", err, n, len(pkt))
+					return
+				}
+				voice.Observe(pkt)
+			}
+		}()
+	}
 
 	var result error
 	select {
