@@ -82,7 +82,10 @@ func TestSingleInstanceIPCertificateWithoutSNI(t *testing.T){
 		host:=ip
 		if strings.Contains(ip,":"){host="["+ip+"]"}
 		if !requestAuthorityMatchesSNI(host+":443",ip){t.Fatalf("IP authority rejected: %s",ip)}
-		req:=httptest.NewRequest(http.MethodConnect,"https://"+net.JoinHostPort(ip,"443")+defaultPath,nil)
+		// httptest's CONNECT constructor interprets an absolute URL as
+		// authority-form and sets Host="https:". Use GET to check
+		// tenant selection/Host matching; method validation follows.
+		req:=httptest.NewRequest(http.MethodGet,"https://"+net.JoinHostPort(ip,"443")+defaultPath,nil)
 		req.TLS=&tls.ConnectionState{}
 		w:=httptest.NewRecorder()
 		mux.ServeHTTP(w,req)

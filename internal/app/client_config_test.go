@@ -43,9 +43,9 @@ func TestClientYAMLAndCLIOverrideBeforeNetworking(t *testing.T){
 	path:=writeClientTestYAML(t,"server: 198.51.100.10\naddress: 10.77.0.2/24\nca: /missing/ca.crt\ncert: /missing/client.crt\nkey: /missing/client.key\n")
 	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
 	err:=RunClient(context.Background(),[]string{"--config",path},logger)
-	if err==nil||!strings.Contains(err.Error(),"DNS identity"){t.Fatalf("IP-only server must be rejected, got %v",err)}
+	if err==nil||!strings.Contains(err.Error(),"read CA"){t.Fatalf("IP SAN server target must pass endpoint validation before CA check: %v",err)}
 	err=RunClient(context.Background(),[]string{"--config",path,"--server","tenant.vpn.example.com"},logger)
-	if err==nil||strings.Contains(err.Error(),"DNS identity"){t.Fatalf("CLI server override ignored: %v",err)}
+	if err==nil||!strings.Contains(err.Error(),"read CA"){t.Fatalf("CLI DNS server override ignored: %v",err)}
 }
 
 func TestClientYAMLTCPAndTCPolicy(t *testing.T){
