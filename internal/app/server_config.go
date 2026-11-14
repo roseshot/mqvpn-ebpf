@@ -55,7 +55,15 @@ type TCPFallbackConfig struct {
 	Listen  string `yaml:"listen,omitempty"`
 }
 
+// ServerHAConfig exposes local-only readiness for VRRP, BGP and TCP/UDP
+// ingress health controllers. Ownership/election belongs to the Server
+// deployment, never to the Client.
+type ServerHAConfig struct {
+	ReadinessListen string `yaml:"readiness_listen,omitempty"`
+}
+
 type ServerConfig struct {
+	HA            ServerHAConfig    `yaml:"ha,omitempty"`
 	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen        string            `yaml:"listen,omitempty"`
 	PathScheduler string            `yaml:"path_scheduler,omitempty"`
@@ -85,6 +93,20 @@ func (c *ServerConfig) Validate() error {
 		return err
 	}
 	c.PathScheduler = policy
+	if c.HA.ReadinessListen != "" {
+		host, port, err := net.SplitHostPort(c.HA.ReadinessListen)
+		if err != nil {
+			return fmt.Errorf("invalid ha.readiness_listen: %w", err)
+		}
+		addr, err := netip.ParseAddr(host)
+		if err != nil || !addr.IsLoopback() || addr.Zone() != "" {
+			return errors.New("ha.readiness_listen must use a literal loopback IP (127.0.0.1 or ::1); never expose unauthenticated health checks publicly")
+		}
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("invalid ha.readiness_listen TCP port %q", port)
+		}
+	}
 	if c.TCPFallback.Enabled && c.TCPFallback.Listen == "" {
 		c.TCPFallback.Listen = "0.0.0.0:443"
 	}
