@@ -68,6 +68,11 @@ The Server routes priority return traffic through the companion and
 normal return traffic through the primary session. The two incoming
 datagram streams have separate fragment reassemblers, preventing
 session-local fragment ID collisions; TUN writes are serialized.
+Each realtime datagram is tagged with its companion connection generation:
+failover invalidates queued packets, resets fragment reassembly, and fences
+the final TUN write against concurrent companion revocation. An already
+authorized TUN write finishes before revocation completes; packets from
+the retired connection cannot start new TUN writes afterward.
 
 ### QoS classification limitations
 
