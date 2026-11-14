@@ -119,7 +119,7 @@ jobs:
           sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
 
   overlay-integration:
-    name: Four-WAN MPQUIC, VXLAN, VoIP, netem and FRR over TUN
+    name: QUIC/TCP wire encryption, four-WAN MPQUIC and network integration
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -133,7 +133,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3 iperf3
+            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3 iperf3 tcpdump tshark
           # Official signed frr-stable channel, NOT the Ubuntu archive package.
           curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
             sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
@@ -151,9 +151,13 @@ jobs:
           sudo modprobe vxlan || true
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
-          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py
+          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py
       - name: Build actual mqvpn binaries
         run: make release
+      - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
+        run: sudo bash tests/integration/overlay-netns.sh crypto-wan4
+      - name: Verify TLS/TCP fallback wire confidentiality using test-only traffic secrets
+        run: sudo bash tests/integration/overlay-netns.sh crypto-tcp
       - name: Four independent WAN paths with asymmetric latency and packet loss
         run: sudo bash tests/integration/overlay-netns.sh wan4
       - name: VXLAN MTU 1450 over TUN (ARP, full-MTU DF, both directions)
