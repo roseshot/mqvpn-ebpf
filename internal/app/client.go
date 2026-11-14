@@ -274,6 +274,10 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
+	compressionOffered := localCompressionAvailable()
+	if compressionOffered {
+		request.Header.Set(compressionHeader, compressionZstd)
+	}
 	if dynamicAddressRequested(o.tcp.tunAddress) {
 		request.Header.Set(tunnelAddressHeader, "auto")
 	}
@@ -299,6 +303,10 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	effectiveAddress, err := resolveClientTunnelAddress(o.tcp.tunAddress, response.Header.Get(tunnelAddressHeader))
 	if err != nil {
 		return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w", err)
+	}
+	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
+	if err != nil {
+		return err
 	}
 	// Go 1.27 promoted keyed fields and generic methods keep authenticated
 	// route/DNS decoding identical for QUIC and TCP without losing context.
@@ -388,7 +396,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	var monitors sync.WaitGroup
 	monitors.Go(func() { printPaths(ctx, done, conn, logger) })
 	logger.InfoContext(ctx, "L3 route-based TUN forwarding started", "address", effectiveAddress, "mtu", budget.TUNMTU)
-	err = p2mp.ClientPump(ctx, pumpDevice, stream, budget.MaxFrame, logger)
+	err = p2mp.ClientPumpWithCompression(ctx, pumpDevice, stream, budget.MaxFrame, compression, logger)
 	close(done)
 	monitors.Wait()
 	return classifyClientCleanup(err)

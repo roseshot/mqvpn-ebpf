@@ -223,7 +223,8 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	session, err := instance.hub.AttachWithTunnelIP(r.Context(), rule, streamer.HTTPStream(), requestDynamic)
+	compression := acceptCompression(r.Header.Get(compressionHeader))
+	session, err := instance.hub.AttachWithCompression(r.Context(), rule, streamer.HTTPStream(), requestDynamic, compression)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -237,6 +238,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(instance.prepared.spec.PushDNS) > 0 {
 		w.Header().Set(dnspush.Header, strings.Join(instance.prepared.spec.PushDNS, ","))
+	}
+	if compression {
+		w.Header().Set(compressionHeader, compressionZstd)
 	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)

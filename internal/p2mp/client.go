@@ -6,23 +6,37 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
 	"github.com/roseshot/mqvpn-ebpf/internal/logging"
+	"github.com/roseshot/mqvpn-ebpf/internal/qos"
 )
 
-// ClientPump transports every valid IP packet read from the TUN. It does not
-// inspect ports, multicast groups, IP source addresses, mDNS, or packet rate.
-// Linux (not mqvpn) decides which traffic to send to the TUN.
+// ClientPump retains the legacy frame format for callers that did not
+// negotiate the optional zstd-v1 capability.
 func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, logger *slog.Logger) error {
+	return ClientPumpWithCompression(ctx, device, stream, maxFrame, false, logger)
+}
+
+// ClientPumpWithCompression forwards all valid IP traffic without imposing
+// port- or DSCP-based ACLs. RTP marked DSCP EF and SIP signalling use a
+// bounded priority queue, and are never compressed.
+func ClientPumpWithCompression(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, compression bool, logger *slog.Logger) error {
 	if maxFrame < 64 || maxFrame > 65535 {
 		return fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
 	logger = logging.Ensure(logger)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ends := make(chan error, 2)
+	codec := l3.Codec{Compression: compression, MaxFrame: maxFrame}
+	urgent, normal := make(chan []byte, 64), make(chan []byte, 192)
+	ends := make(chan error, 3)
+	var workers sync.WaitGroup
+	workers.Add(3)
+
 	go func() {
+		defer workers.Done()
 		buf := make([]byte, 65535)
 		for {
 			n, err := device.Read(buf)
@@ -33,25 +47,58 @@ func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, m
 			if n+l3.EthernetLen > maxFrame {
 				continue
 			}
-			payload, err := l3.Wrap(buf[:n])
+			pkt := buf[:n]
+			if _, _, _, err := l3.Inspect(pkt); err != nil {
+				continue
+			}
+			priority := qos.Priority(pkt)
+			// The TUN read buffer is reused, so queued packets own a copy.
+			copyPkt := append([]byte(nil), pkt...)
+			queue := normal
+			if priority {
+				queue = urgent
+			}
+			// Slow peers must not create an unbounded buffer or block
+			// the reader behind bulk traffic.
+			select {
+			case <-ctx.Done():
+				return
+			case queue <- copyPkt:
+			default:
+				logger.DebugContext(ctx, "client DATAGRAM priority queue full", "priority", priority)
+			}
+		}
+	}()
+
+	go func() {
+		defer workers.Done()
+		burst := 0
+		for {
+			pkt, ok := qos.Next(ctx, urgent, normal, &burst)
+			if !ok || ctx.Err() != nil {
+				return
+			}
+			payload, err := codec.Wrap(pkt, qos.Priority(pkt))
 			if err != nil {
 				continue
 			}
 			if err := stream.SendDatagram(payload); err != nil {
-				// A QUIC DATAGRAM can be dropped due to path MTU or congestion.
+				// QUIC DATAGRAM has no retransmission guarantee.
 				logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
 			}
 		}
 	}()
+
 	go func() {
+		defer workers.Done()
 		for {
 			payload, err := stream.ReceiveDatagram(ctx)
 			if err != nil {
 				ends <- err
 				return
 			}
-			pkt, err := l3.Unwrap(payload)
-			if err != nil || len(pkt)+l3.EthernetLen > maxFrame {
+			pkt, err := codec.Unwrap(payload)
+			if err != nil {
 				continue
 			}
 			n, err := device.Write(pkt)
@@ -65,6 +112,7 @@ func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, m
 			}
 		}
 	}()
+
 	var result error
 	select {
 	case <-ctx.Done():
@@ -72,11 +120,10 @@ func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, m
 	case result = <-ends:
 	}
 	cancel()
-	// Closing TUN stops a blocked kernel Read. Always wait for both pump
-	// goroutines before returning to the reconnect supervisor; otherwise
-	// the previous session could still touch an interface being restored.
+	// Close TUN before joining all workers; a stale reader must never
+	// access the device after the next reconnect attempt starts.
 	closeErr := device.Close()
-	<-ends
+	workers.Wait()
 	if errors.Is(result, context.Canceled) || errors.Is(result, io.EOF) {
 		result = nil
 	}
