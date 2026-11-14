@@ -119,7 +119,7 @@ jobs:
           sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
 
   overlay-integration:
-    name: VXLAN and official FRR eBGP over QUIC TUN
+    name: VXLAN, TCP, UDP, VoIP and FRR over QUIC TUN
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -133,7 +133,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release
+            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3
           # Official signed frr-stable channel, NOT the Ubuntu archive package.
           curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
             sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
@@ -151,9 +151,16 @@ jobs:
           sudo modprobe vxlan || true
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
+          python3 -m py_compile tests/integration/transport_probe.py
       - name: Build actual mqvpn binaries
         run: make release
-      - name: VXLAN over TUN (ARP, UDP 4789, bidirectional and large DF payload)
+      - name: VXLAN MTU 1450 over TUN (ARP, full-MTU DF, both directions)
         run: sudo bash tests/integration/overlay-netns.sh vxlan
+      - name: TCP over QUIC TUN (256 KiB bidirectional integrity, both server roles)
+        run: sudo bash tests/integration/overlay-netns.sh tcp
+      - name: UDP over QUIC TUN (sizes through IPv4 MTU 1500, both server roles)
+        run: sudo bash tests/integration/overlay-netns.sh udp
+      - name: SIP/RTP/RTCP over QUIC TUN (full-duplex G.711 PCMU, DSCP EF)
+        run: sudo bash tests/integration/overlay-netns.sh voip
       - name: FRRouting official stable .deb BGP peering and FIB over TUN
         run: sudo bash tests/integration/overlay-netns.sh bgp
