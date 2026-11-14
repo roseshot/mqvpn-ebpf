@@ -106,7 +106,10 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "connect-ethernet")
 	request.Header.Set("Capsule-Protocol", "?1")
-	request.Header.Set(compressionHeader, compressionZstd)
+	compressionOffered := localCompressionAvailable()
+	if compressionOffered {
+		request.Header.Set(compressionHeader, compressionZstd)
+	}
 	if dynamicAddressRequested(o.tunAddress) {
 		request.Header.Set(tunnelAddressHeader, "auto")
 	}
@@ -127,7 +130,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		return fmt.Errorf("TCP CONNECT-ETHERNET rejected: %s", response.Status)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	compression, err := negotiatedCompression(response.Header.Get(compressionHeader))
+	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
 	if err != nil {
 		return err
 	}
