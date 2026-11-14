@@ -217,6 +217,24 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "HTTP/3 stream unavailable", http.StatusInternalServerError)
 		return
 	}
+	// Realtime companion sessions require the same mTLS-authenticated peer
+	// and an already attached sticky-enabled primary session. This role
+	// never allocates a second tunnel lease or replaces the P2MP route.
+	stickyValue := r.Header.Get(stickySessionHeader)
+	roleValue := r.Header.Get(trafficRoleHeader)
+	if stickyValue != "" && stickyValue != "sticky-v1" {
+		http.Error(w, "unsupported sticky transport capability", http.StatusBadRequest)
+		return
+	}
+	if roleValue != "" && roleValue != "realtime" {
+		http.Error(w, "unsupported VPN traffic role", http.StatusBadRequest)
+		return
+	}
+	realtime := roleValue == "realtime"
+	if realtime && stickyValue != "sticky-v1" {
+		http.Error(w, "realtime role requires sticky-v1 negotiation", http.StatusBadRequest)
+		return
+	}
 	// Attach before sending HTTP 200 so duplicate sessions can get HTTP 409.
 	requestDynamic, err := wantsTunnelIP(r.Header.Get(tunnelAddressHeader))
 	if err != nil {
@@ -231,7 +249,7 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A pending stream keeps sender goroutines parked until the complete
 	// HTTP response is committed, without sending 200 for rejected peers.
 	pending := &pendingHTTP3Stream{ctx: r.Context(), ready: make(chan struct{})}
-	session, err := instance.hub.AttachWithFeatures(r.Context(), rule, pending, requestDynamic, compression, fragmentation)
+	session, err := instance.hub.AttachWithTrafficRole(r.Context(), rule, pending, requestDynamic, compression, fragmentation, stickyValue == "sticky-v1", realtime)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -261,6 +279,11 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	peerLogger.InfoContext(r.Context(), "peer disconnected")
 }
+
+const (
+	stickySessionHeader = "X-Mqvpn-Sticky-Voip"
+	trafficRoleHeader   = "X-Mqvpn-Traffic-Role"
+)
 
 func newSharedHTTP3Server(mux *serverMux, wans ...serverWAN) *http3.Server {
 	return newSharedHTTP3ServerWithScheduler(mux, pathSchedulerRoundRobin, wans...)
