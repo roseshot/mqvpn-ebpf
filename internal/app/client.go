@@ -302,7 +302,9 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w", err)
 	}
 	compression, err := negotiatedCompression(response.Header.Get(compressionHeader))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	// Go 1.27 promoted keyed fields and generic methods keep authenticated
 	// route/DNS decoding identical for QUIC and TCP without losing context.
 	headers := authenticatedHeaders{Header: response.Header, transport: "CONNECT-ETHERNET"}
