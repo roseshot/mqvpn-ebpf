@@ -23,6 +23,7 @@ type clientFileConfig struct {
 	MTU             int           `yaml:"mtu,omitempty"`
 	MaxFrame        int           `yaml:"max_frame,omitempty"`
 	Transport       string        `yaml:"transport,omitempty"`
+	PathScheduler   string        `yaml:"path_scheduler,omitempty"`
 	UDPDialTimeout  string        `yaml:"udp_dial_timeout,omitempty"`
 	TCPPort         int           `yaml:"tcp_port,omitempty"`
 	TC              *clientFileTC `yaml:"tc,omitempty"`
