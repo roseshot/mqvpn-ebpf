@@ -51,6 +51,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcStats := fs.Bool("tc-stats", true, "collect TUN ingress/egress BPF counters")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
 	pathScheduler := fs.String("path-scheduler", pathSchedulerRoundRobin, "MPQUIC scheduling: round_robin (default) or low_latency")
+	stickyVoIP := fs.Bool("sticky-voip", false, "strict SIP/DSCP-EF WAN affinity via separate single-path authenticated QUIC session")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort := fs.Int("tcp-port", 443, "TCP fallback server port (independent of QUIC URL port)")
 	acceptRoutes := fs.Bool("accept-routes", true, "apply authenticated Server-pushed routes (default true)")
@@ -105,6 +106,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		setString("key", keyFile, file.Key)
 		setString("transport", transportMode, file.Transport)
 		setString("path-scheduler", pathScheduler, file.PathScheduler)
+		if !explicit["sticky-voip"] && file.StickyVoIP != nil {
+			*stickyVoIP = *file.StickyVoIP
+		}
 		setInt("tcp-port", tcpPort, file.TCPPort)
 		if !explicit["udp-dial-timeout"] && file.UDPDialTimeout != "" {
 			timeout, err := time.ParseDuration(file.UDPDialTimeout)
@@ -150,6 +154,9 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	normalizedScheduler, err := normalizePathScheduler(*pathScheduler)
 	if err != nil {
 		return err
+	}
+	if *stickyVoIP && *transportMode == "tcp" {
+		return errors.New("sticky_voip requires QUIC; TCP fallback cannot preserve per-WAN affinity")
 	}
 	if *transportMode != "auto" && *transportMode != "quic" && *transportMode != "tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)", *transportMode)
@@ -202,7 +209,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	options := clientSessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
-		wans: wans, useServerWANs: *useServerWANs, pathScheduler: normalizedScheduler,
+		wans: wans, useServerWANs: *useServerWANs, pathScheduler: normalizedScheduler, stickyVoIP: *stickyVoIP,
 	}
 	return runClientSupervisor(ctx, *reconnect, logger, func(sessionCtx context.Context) error {
 		return runClientSession(sessionCtx, options, logger)
@@ -216,6 +223,7 @@ type clientSessionOptions struct {
 	wans           []clientWAN
 	useServerWANs  bool
 	pathScheduler  string
+	stickyVoIP     bool
 }
 
 // runClientSession owns exactly one transport and TUN session. On every
@@ -305,7 +313,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		if multiSockets != nil {
 			_ = multiSockets.Close()
 		}
-		if o.transport == "auto" && fallbackAllowed {
+		if o.transport == "auto" && fallbackAllowed && !o.stickyVoIP {
 			logger.WarnContext(ctx, "QUIC UDP handshake timed out; trying authenticated TCP fallback", "timeout", o.udpDialTimeout)
 			if len(o.wans) > 1 {
 				logger.WarnContext(ctx, "TCP fallback uses primary WAN only; additional WAN paths unavailable over TCP")
@@ -354,6 +362,9 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
 	request.Header.Set(framingHeader, framingValue)
+	if o.stickyVoIP {
+		request.Header.Set(stickySessionHeader, "sticky-v1")
+	}
 	compressionOffered := localCompressionAvailable()
 	if compressionOffered {
 		request.Header.Set(compressionHeader, compressionZstd)
@@ -379,6 +390,9 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	}
 	if response.Header.Get("Capsule-Protocol") != "?1" {
 		return errors.New("missing successful Capsule-Protocol response")
+	}
+	if o.stickyVoIP && response.Header.Get(stickySessionHeader) != "sticky-v1" {
+		return errors.New("Server did not negotiate strict sticky realtime companion support")
 	}
 	effectiveAddress, err := resolveClientTunnelAddress(o.tcp.tunAddress, response.Header.Get(tunnelAddressHeader))
 	if err != nil {
@@ -520,7 +534,25 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	var monitors sync.WaitGroup
 	monitors.Go(func() { printPaths(ctx, done, conn, logger) })
 	logger.InfoContext(ctx, "L3 route-based TUN forwarding started", "address", effectiveAddress, "mtu", budget.TUNMTU)
-	err = p2mp.ClientPumpWithFeatures(ctx, pumpDevice, stream, budget.MaxFrame, compression, fragmentation, logger)
+	var pumpStream p2mp.Stream = stream
+	if o.stickyVoIP {
+		// The ordinary VPN session keeps all N MPQUIC WANs for TCP/UDP
+		// aggregation. Realtime uses a separate *single-path* QUIC
+		// connection, so no scheduler can rotate SIP/RTP/RTCP packets.
+		if destinations == nil {
+			destinations = make([]*net.UDPAddr, len(o.wans))
+			for i := range destinations {
+				destinations[i] = serverAddr
+			}
+		}
+		sticky := newStickyClientStream(ctx, stream, logger)
+		sticky.wg.Add(1)
+		go sticky.runStickyCompanions(o, destinations, tlsConf, compression, fragmentation)
+		defer sticky.close()
+		pumpStream = sticky
+		logger.InfoContext(ctx, "strict sticky VoIP enabled", "wan_count", len(o.wans))
+	}
+	err = p2mp.ClientPumpWithFeatures(ctx, pumpDevice, pumpStream, budget.MaxFrame, compression, fragmentation, logger)
 	close(done)
 	monitors.Wait()
 	return classifyClientCleanup(err)
