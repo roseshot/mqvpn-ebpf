@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -46,6 +47,21 @@ func loadClientCRL(config *ClientRevocationConfig) (*clientCRLPolicy, error) {
 	if crl.ThisUpdate.IsZero() || crl.NextUpdate.IsZero() ||
 		!crl.NextUpdate.After(crl.ThisUpdate) {
 		return nil, errors.New("client CRL requires valid thisUpdate and nextUpdate")
+	}
+	// A delta CRL or scope-limited/indirect list cannot establish the
+	// complete revocation status of a Client leaf. Unsupported extensions
+	// must fail closed, not silently grant a certificate.
+	deltaIndicator := asn1.ObjectIdentifier{2, 5, 29, 27}
+	issuingDistributionPoint := asn1.ObjectIdentifier{2, 5, 29, 28}
+	freshestCRL := asn1.ObjectIdentifier{2, 5, 29, 46}
+	for _, ext := range crl.Extensions {
+		if ext.Id.Equal(deltaIndicator) || ext.Id.Equal(issuingDistributionPoint) ||
+			ext.Id.Equal(freshestCRL) {
+			return nil, fmt.Errorf("unsupported delta or restricted-scope Client CRL extension %s", ext.Id)
+		}
+		if ext.Critical {
+			return nil, fmt.Errorf("unsupported critical Client CRL extension %s", ext.Id)
+		}
 	}
 	return &clientCRLPolicy{list: crl}, nil
 }
