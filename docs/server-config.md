@@ -130,6 +130,10 @@ Clients accept authorized pushes by default but can opt out using `accept_routes
 
 DNS pushes use per-link `systemd-resolved` or `resolvconf` configuration and are restored at disconnect. Without a push, the resolver is not changed. See [Client configuration](client-config.md) for route, DNS and reconnect behavior.
 
+## Optional: Server-side high availability
+
+You can opt in to a loopback-only Server readiness listener with `ha.readiness_listen: 127.0.0.1:9090`. Keepalived/VRRP can use this health signal to move a UDP VIP between Server nodes; HAProxy can balance opaque TLS/TCP sessions. No Client HA backend list is required. Server HA does **not** replicate encrypted QUIC session state, peer maps or leases across nodes. See [High availability](high-availability.md) for deployment modes, security constraints and limits.
+
 ## Optional: multiple physical WANs
 
 ```yaml
