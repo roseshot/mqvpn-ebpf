@@ -79,9 +79,9 @@ ip -n "$server_ns" addr add 192.0.2.1/30 dev wan0
 ip -n "$client_ns" addr add 192.0.2.2/30 dev wan0
 
 if [[ "$mode" == wan4 ]]; then
-  # Four physically distinct WAN veth pairs. The Client always dials the
-  # same authenticated Server address (192.0.2.1), with source-specific
-  # Linux policy routes for each other independent interface.
+  # Four physically distinct WAN veth pairs. The first Client path
+  # dials 192.0.2.1; additional QUIC paths dial *different Server IPs*
+  # on the corresponding independent links, within the same connection.
   server_addrs=(192.0.2.1 198.51.100.1 203.0.113.1 192.0.2.5)
   client_addrs=(192.0.2.2 198.51.100.2 203.0.113.2 192.0.2.6)
   for index in 1 2 3; do
@@ -97,10 +97,9 @@ if [[ "$mode" == wan4 ]]; then
     table=$((100 + index))
     ip -n "$client_ns" rule add from "${client_addrs[$index]}/32" \
       table "$table" priority "$((1000+index))"
-    ip -n "$client_ns" route add 192.0.2.1/32 \
-      via "${server_addrs[$index]}" dev "wan$index" \
-      src "${client_addrs[$index]}" table "$table"
-    ip -n "$client_ns" route get 192.0.2.1 from "${client_addrs[$index]}" |
+    ip -n "$client_ns" route add "${server_addrs[$index]}/32" \
+      dev "wan$index" src "${client_addrs[$index]}" table "$table"
+    ip -n "$client_ns" route get "${server_addrs[$index]}" from "${client_addrs[$index]}" |
       grep -q "dev wan$index" ||
       fail "source-specific route did not select WAN$index"
   done
@@ -118,8 +117,26 @@ peers:
       - 10.77.0.2/32
       - 198.18.202.1/32
 EOF
+server_listen="192.0.2.1:8443"
+server_wans=""
+if [[ "$mode" == wan4 ]]; then
+  server_listen="0.0.0.0:8443"
+  server_wans="$(cat <<'WANCFG'
+wans:
+  - interface: wan0
+    ip: 192.0.2.1
+  - interface: wan1
+    ip: 198.51.100.1
+  - interface: wan2
+    ip: 203.0.113.1
+  - interface: wan3
+    ip: 192.0.2.5
+WANCFG
+)"
+fi
 cat >"$work/server.yaml" <<EOF
-listen: "192.0.2.1:8443"
+listen: "$server_listen"
+$server_wans
 instances:
   - name: lab
     server_name: vpn.ci.example
@@ -148,10 +165,10 @@ ip -n "$server_ns" link show mq0 >/dev/null || fail "server failed to create mq0
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
 if [[ "$mode" == wan4 ]]; then
   client_wan_flags=(
-    --wan 192.0.2.2@wan0
-    --wan 198.51.100.2@wan1
-    --wan 203.0.113.2@wan2
-    --wan 192.0.2.6@wan3
+    --wan 192.0.2.2@wan0=192.0.2.1
+    --wan 198.51.100.2@wan1=198.51.100.1
+    --wan 203.0.113.2@wan2=203.0.113.1
+    --wan 192.0.2.6@wan3=192.0.2.5
   )
 fi
 ip netns exec "$client_ns" "$root/bin/mqvpn-client" \
@@ -392,7 +409,7 @@ if [[ "$mode" == wan4 ]]; then
     sleep 0.1
   done
   (( validated )) || fail "expected four MPQUIC paths (one primary + three validated): $(grep 'WAN path' "$work/client.log" || true)"
-  echo "PASS four independent QUIC paths established"
+  echo "PASS four independent MPQUIC paths to four different Server IP addresses established"
   delays=(10ms 35ms 70ms 120ms)
   jitters=(2ms 8ms 20ms 40ms)
   losses=(0% 0.5% 1% 3%)
@@ -420,7 +437,7 @@ if [[ "$mode" == wan4 ]]; then
         fail "WAN$index in $ns carried too few bytes ($bytes): path may not be scheduled"
     done
   done
-  echo "PASS MPQUIC four-WAN: validated paths, independent netem profiles and per-WAN traffic counters"
+  echo "PASS MPQUIC four-WAN: distinct Server IPs, validated paths, independent netem and per-WAN counters"
   exit 0
 fi
 
