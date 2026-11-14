@@ -33,9 +33,18 @@ func TestStickyRealtimeCompanionRoutesOnlyPriorityData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer h.Detach(companion)
-	if _, err := h.AttachWithTrafficRole(context.Background(), old.rule, &fakeStream{out: make(chan []byte, 1)}, false, false, false, true, true); err == nil {
-		t.Fatal("second concurrent realtime companion must be rejected")
+	// A later mTLS-authenticated realtime session must take over an
+	// unreachable predecessor without waiting for its QUIC idle timeout.
+	newRealtime := &fakeStream{out: make(chan []byte, 8)}
+	takeover, err := h.AttachWithTrafficRole(context.Background(), old.rule, newRealtime, false, false, false, true, true)
+	if err != nil {
+		t.Fatalf("authenticated sticky failover should replace old companion: %v", err)
 	}
+	if companion.ctx.Err() == nil {
+		t.Fatal("predecessor companion remained authorized after takeover")
+	}
+	companion = takeover
+	realtime = newRealtime
 	voice := ip4([4]byte{10, 77, 0, 1}, [4]byte{10, 77, 0, 3})
 	voice[1] = 46 << 2 // DSCP EF
 	h.egress(voice)
