@@ -264,12 +264,12 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	}
 	tr := &quic.Transport{Conn: packetConn}
 	qconf := &quic.Config{
-		EnableDatagrams:     true,
+		EnableDatagrams:            true,
 		EnableAddressAdvertisement: true,
-		MaxPaths:            max(2, len(o.wans)),
-		MultipathController: quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler()),
-		KeepAlivePeriod:     10 * time.Second,
-		MaxIdleTimeout:      30 * time.Second,
+		MaxPaths:                   max(2, len(o.wans)),
+		MultipathController:        quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler()),
+		KeepAlivePeriod:            10 * time.Second,
+		MaxIdleTimeout:             30 * time.Second,
 	}
 	tlsConf := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
