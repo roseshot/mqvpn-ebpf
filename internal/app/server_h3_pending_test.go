@@ -34,13 +34,17 @@ func TestPendingHTTP3StreamWaitsForCommittedResponse(t *testing.T) {
 	pending.release(stream)
 	select {
 	case err := <-result:
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("DATAGRAM sender did not resume after HTTP response")
 	}
 	select {
 	case p := <-stream.sent:
-		if string(p) != "payload" { t.Fatalf("wrong data %q", p) }
+		if string(p) != "payload" {
+			t.Fatalf("wrong data %q", p)
+		}
 	default:
 		t.Fatal("expected stream DATAGRAM not written")
 	}
