@@ -153,3 +153,40 @@ func TestClientDNSHostRoutesSwitch(t *testing.T) {
 		t.Fatalf("omitted dns_routes uses default true: %+v %v", cfg.DNSRoutes, err)
 	}
 }
+
+func TestClientHAConfigYAMLAndStrictSchema(t *testing.T) {
+	cfg, err := loadClientFile(writeClientTestYAML(t, "server: vpn.example.com\nha:\n  mode: active_standby\n  controller: client\n  backends: [192.0.2.10, 192.0.2.11]\n"))
+	if err != nil || cfg.HA == nil || cfg.HA.Mode != "active_standby" || cfg.HA.Controller != "client" || len(cfg.HA.Backends) != 2 {
+		t.Fatalf("HA YAML not decoded: %+v %v", cfg.HA, err)
+	}
+	_, err = loadClientFile(writeClientTestYAML(t, "server: vpn.example.com\nha:\n  mode: active_active\n  unexpected: true\n"))
+	if err == nil {
+		t.Fatal("unknown HA option accepted by strict YAML parser")
+	}
+}
+
+func TestClientHAFlagsValidateBeforeLoadingCertificates(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	base := []string{"--server", "vpn.example.com", "--ca", "/missing/ca.pem", "--cert", "/missing/client.pem", "--key", "/missing/client.key"}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"missing required second backend", []string{"--ha-mode", "active_standby", "--ha-backend", "192.0.2.1"}, "between 2 and 16"},
+		{"duplicate backend", []string{"--ha-mode", "active_active", "--ha-backend", "192.0.2.1", "--ha-backend", "192.0.2.1"}, "duplicate"},
+		{"cannot disable reconnect", []string{"--ha-mode", "active_standby", "--ha-backend", "192.0.2.1", "--ha-backend", "192.0.2.2", "--reconnect=false"}, "reconnect"},
+		{"external cannot take backend list", []string{"--ha-mode", "active_standby", "--ha-controller", "haproxy", "--ha-backend", "192.0.2.1"}, "ha.backends"},
+		{"cannot pin connect IP and internal backend list", []string{"--ha-mode", "active_active", "--ha-backend", "192.0.2.1", "--ha-backend", "192.0.2.2", "--connect-ip", "198.51.100.10"}, "connect_ip"},
+		{"valid native mode reaches identity validation", []string{"--ha-mode", "active_active", "--ha-backend", "192.0.2.1", "--ha-backend", "192.0.2.2"}, "read CA"},
+		{"valid haproxy mode reaches identity validation", []string{"--ha-mode", "active_standby", "--ha-controller", "haproxy", "--connect-ip", "192.0.2.5"}, "read CA"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string(nil), base...), tc.args...)
+			err := RunClient(context.Background(), args, logger)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("wrong HA validation result %v (wanted %s)", err, tc.want)
+			}
+		})
+	}
+}
