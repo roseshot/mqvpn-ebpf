@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -49,7 +50,7 @@ func newStickyClientStream(ctx context.Context, base p2mp.Stream, logger *slog.L
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		m.recvLoop(base, true)
+		m.recvLoop(base, true, nil)
 	}()
 	return m
 }
@@ -95,7 +96,7 @@ func (m *stickyClientStream) ReceiveRealtimeDatagram(ctx context.Context) ([]byt
 	}
 }
 
-func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool) {
+func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool, acks chan<- uint64) {
 	out := m.realtimeInbound
 	if essential {
 		out = m.inbound
@@ -110,6 +111,18 @@ func (m *stickyClientStream) recvLoop(stream p2mp.Stream, essential bool) {
 				}
 			}
 			return
+		}
+		if !essential && p2mp.IsStickyHeartbeat(b) {
+			// The heartbeat is a privileged transport-internal control
+			// message, never a user IP frame. ACKs are tied to this
+			// specific authenticated single-WAN session.
+			if acks != nil {
+				select {
+				case acks <- binary.BigEndian.Uint64(b[1:]):
+				default:
+				}
+			}
+			continue
 		}
 		select {
 		case <-m.ctx.Done():
@@ -233,14 +246,63 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	if fragmentation && response.Header.Get(framingHeader) != framingValue {
 		return errors.New("realtime companion did not negotiate frag-v1")
 	}
+	acks := make(chan uint64, 8)
+	recvDone := make(chan struct{})
 	m.install(stream)
-	defer m.uninstall(stream)
+	go func() {
+		defer close(recvDone)
+		m.recvLoop(stream, false, acks)
+	}()
+	defer func() {
+		m.uninstall(stream)
+		// The active receive loop must stop before the next companion
+		// starts, so old-path heartbeat ACKs cannot satisfy new probes.
+		_ = conn.CloseWithError(0, "sticky WAN disconnected")
+		select {
+		case <-recvDone:
+		case <-time.After(2 * time.Second):
+		}
+	}()
 	m.logger.InfoContext(m.ctx, "sticky realtime established",
 		"wan_index", index+1, "source_ip", source, "interface", link.Interface,
 		"local", packetConn.LocalAddr(), "remote", remote)
-	m.recvLoop(stream, false)
-	if m.ctx.Err() != nil {
-		return m.ctx.Err()
+	// QUIC keepalives alone don't establish two-way application reachability
+	// on a path which drops every packet. Require an authenticated
+	// DATAGRAM round trip before continuing to use this pinned WAN.
+	nextToken := uint64(time.Now().UnixNano())
+	for {
+		nextToken++
+		ping := make([]byte, p2mp.StickyHeartbeatSize)
+		ping[0] = p2mp.StickyHeartbeatMarker
+		binary.BigEndian.PutUint64(ping[1:], nextToken)
+		if err := stream.SendDatagram(ping); err != nil {
+			return fmt.Errorf("pinned WAN heartbeat send: %w", err)
+		}
+		timer := time.NewTimer(2500 * time.Millisecond)
+		verified := false
+		for !verified {
+			select {
+			case <-m.ctx.Done():
+				timer.Stop()
+				return m.ctx.Err()
+			case <-recvDone:
+				timer.Stop()
+				return errors.New("pinned WAN QUIC receiver closed")
+			case token := <-acks:
+				if token == nextToken {
+					verified = true
+				}
+			case <-timer.C:
+				return errors.New("pinned WAN heartbeat timed out: no authenticated two-way reply")
+			}
+		}
+		timer.Stop()
+		select {
+		case <-m.ctx.Done():
+			return m.ctx.Err()
+		case <-recvDone:
+			return errors.New("pinned WAN QUIC receiver closed")
+		case <-time.After(750 * time.Millisecond):
+		}
 	}
-	return errors.New("realtime QUIC path closed")
 }
