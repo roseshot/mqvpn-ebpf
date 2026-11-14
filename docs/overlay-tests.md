@@ -106,6 +106,60 @@ path failover, or audio intelligibility guarantees. It is deliberately
 a reproducible smoke test; production acceptance needs external WAN
 impairment and long-running measurements.
 
+### Impaired Internet WAN using Linux tc netem
+
+Two scenarios explicitly add delay, jitter, loss and a rate cap to the
+**physical WAN-facing `wan0` egress interfaces in both namespaces**.
+Netem is installed only **after** the genuine mTLS/QUIC TUN is established,
+and never on the inner `mq0` TUN or VXLAN interfaces:
+
+| Scenario | One-way average delay | Delay jitter (normal) | Independent random packet loss, per egress | Rate cap |
+|---|---:|---:|---:|---:|
+| `wan-regional` | 40 ms | 10 ms | 1% | 20 Mbit/s |
+| `wan-poor` | 120 ms | 40 ms | 3% | 10 Mbit/s |
+
+These values are **per WAN egress**, yielding approximate baseline RTTs
+of 80 ms and 240 ms before scheduling/processing overhead. Traffic
+passes through the encrypted QUIC/UDP tunnel, not a fake socket or a
+simulated TUN. A bounded 120-packet netem queue avoids multi-second
+buffering unrelated to the requested loss/jitter profile.
+
+Under `wan-regional`, the test additionally launches continuous
+bidirectional `iperf3` TCP (two streams per direction) and UDP
+(3 Mbit/s per direction) for the duration of **two** synthetic
+full-duplex SIP/RTP/RTCP calls. It checks that the generators stay
+active, measures actual received bytes and reports TCP/UDP throughput
+from `iperf3` JSON. `wan-poor` keeps the network impairment but
+isolates SIP/RTP from competing bulk traffic.
+
+Both scenarios run the test-only `wan_probe.py` endpoint on each side:
+SIP UDP INVITE/ACK/BYE has bounded retries; each side sends 250
+G.711 PCMU RTP packets at 20 ms intervals and checks DSCP EF (46).
+Unlike the zero-loss smoke test, the receiver uses a fixed-time window,
+so missing RTP packets are **counted**, not treated as an indefinite wait.
+It prints parseable `WAN_QOE_JSON` containing delivered and missing
+RTP packets, loss percentage, duplicates, reordered packets, RFC
+3550-style jitter in milliseconds (8 kHz RTP clock), maximum
+interarrival gap, SIP retransmits and RTCP receiver-report fields.
+The RTCP report itself uses redundant sends to tolerate impairment.
+
+QoE checks have loose smoke-test ceilings (regional 25% loss,
+150 ms jitter, 1200 ms interarrival gap; poor 40% loss, 260 ms
+jitter, 2000 ms gap), and merely detect catastrophic tunnel
+breakage. **They are not acceptable production VoIP SLAs.**
+Random loss is probabilistic: a sample may observe no losses, and
+the displayed loss rate is for **inner RTP** after QUIC/IP encapsulation
+and any fragmentation, not the netem outer packet-loss percentage.
+The shape does not implement WAN per-path routing or prove audio
+intelligibility. Results vary between GitHub-hosted CI machines.
+
+Example local executions (privileged Linux, `tc`, `iperf3`, Python 3):
+
+```bash
+sudo bash tests/integration/overlay-netns.sh wan-regional
+sudo bash tests/integration/overlay-netns.sh wan-poor
+```
+
 ### FRRouting eBGP peer on TUN
 
 The BGP scenario uses **FRRouting's official signed stable Debian/Ubuntu
@@ -147,6 +201,8 @@ sudo bash tests/integration/overlay-netns.sh tcp
 sudo bash tests/integration/overlay-netns.sh udp
 sudo bash tests/integration/overlay-netns.sh voip
 sudo bash tests/integration/overlay-netns.sh mixed
+sudo bash tests/integration/overlay-netns.sh wan-regional
+sudo bash tests/integration/overlay-netns.sh wan-poor
 sudo bash tests/integration/overlay-netns.sh bgp
 ```
 
