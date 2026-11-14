@@ -173,6 +173,21 @@ func (m *stickyClientStream) uninstall(stream p2mp.Stream) {
 	m.mu.Unlock()
 }
 
+// WithRealtimeGeneration prevents a frame that passed dequeue validation
+// before a WAN failover from reaching TUN after that companion was revoked.
+// The read lock spans the TUN write so uninstall cannot complete until any
+// already-authorized write finishes. Never call back into this stream from
+// write: the callback must only write the already-decoded packet.
+func (m *stickyClientStream) WithRealtimeGeneration(generation uint64, write func()) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.ctx.Err() != nil || m.active == nil || m.generation != generation {
+		return false
+	}
+	write()
+	return true
+}
+
 func (m *stickyClientStream) close() {
 	m.cancel()
 	m.wg.Wait()
