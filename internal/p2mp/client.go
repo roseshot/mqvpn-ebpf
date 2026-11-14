@@ -71,7 +71,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	fragmenter := &l3.Fragmenter{Enabled: fragmentation}
 	reassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
 	voice := &qos.VoIPMonitor{}
-	urgent, normal := make(chan []byte, 64), make(chan []byte, 192)
+	urgent, assured, normal := make(chan []byte, 64), make(chan []byte, 96), make(chan []byte, 192)
 	ends := make(chan error, 3)
 	var workers sync.WaitGroup
 	workers.Add(3)
@@ -99,12 +99,15 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if _, _, _, err := l3.Inspect(pkt); err != nil {
 				continue
 			}
-			priority := qos.Priority(pkt)
+			class := qos.Classify(pkt)
 			// The TUN read buffer is reused, so queued packets own a copy.
 			copyPkt := append([]byte(nil), pkt...)
 			queue := normal
-			if priority {
+			switch class {
+			case qos.Realtime:
 				queue = urgent
+			case qos.Assured:
+				queue = assured
 			}
 			// Slow peers must not create an unbounded buffer or block
 			// the reader behind bulk traffic.
@@ -113,16 +116,16 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 				return
 			case queue <- copyPkt:
 			default:
-				logger.DebugContext(ctx, "client DATAGRAM priority queue full", "priority", priority)
+				logger.DebugContext(ctx, "client DATAGRAM QoS queue full", "class", class)
 			}
 		}
 	}()
 
 	go func() {
 		defer workers.Done()
-		burst := 0
+		cursor := 0
 		for {
-			pkt, ok := qos.Next(ctx, urgent, normal, &burst)
+			pkt, ok := qos.NextTier(ctx, urgent, assured, normal, &cursor)
 			if !ok || ctx.Err() != nil {
 				return
 			}
@@ -131,7 +134,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 				continue
 			}
 			out := stream
-			if qos.Priority(pkt) {
+			if qos.Classify(pkt) == qos.Realtime {
 				if sticky, ok := stream.(realtimeDatagramSender); ok {
 					out = realtimeSendStream{Stream: stream, sender: sticky}
 				}
