@@ -14,12 +14,12 @@ import (
 func newServerHAHealthHandler(ready *atomic.Bool) http.Handler {
 	mux := http.NewServeMux()
 	serve := func(w http.ResponseWriter, r *http.Request, healthy bool) {
+		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		if !healthy {
 			w.WriteHeader(http.StatusServiceUnavailable)
