@@ -72,3 +72,19 @@ func TestClientYAMLMasquePathAndCLIOverride(t *testing.T){
 	err=RunClient(context.Background(),[]string{"--server","vpn.example.com","--path","/invalid/../path"},logger)
 	if err==nil||!strings.Contains(err.Error(),"MASQUE"){t.Fatalf("invalid --path not rejected: %v",err)}
 }
+
+func TestClientReconnectConfiguration(t *testing.T){
+	for _,tc:=range []struct{value string;want bool}{
+		{"true",true}, {"false",false},
+	}{
+		cfg,err:=loadClientFile(writeClientTestYAML(t,
+			"server: vpn.example.com\nreconnect: "+tc.value+"\n"))
+		if err!=nil||cfg.Reconnect==nil||*cfg.Reconnect!=tc.want{
+			t.Fatalf("reconnect: %s parsed as %+v: %v",tc.value,cfg.Reconnect,err)
+		}
+	}
+	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\n"))
+	if err!=nil||cfg.Reconnect!=nil{
+		t.Fatalf("omitted reconnect must use the default true: %+v %v",cfg.Reconnect,err)
+	}
+}

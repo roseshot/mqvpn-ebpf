@@ -18,6 +18,13 @@ standard-library APIs and Go modules.
 | XDP attach and maps | `internal/xdp/dispatcher_linux.go` | `github.com/cilium/ebpf` |
 | QUIC/HTTP3/MPQUIC | Go `github.com/qoke/mp-quic-go` | Pure Go networking |
 | HTTP/1.1/TCP fallback capsules | `internal/capsule` | Pure Go framing |
+| Client reconnect supervisor | `internal/app/client_reconnect.go` | Context-aware serial attempts and capped exponential backoff |
+
+The Client reconnect supervisor uses sequential sessions. On disconnect,
+a session closes its TUN descriptor, TCX attachment, QUIC/TCP sockets
+and owned pushed routes before another attempt starts. Each attempt
+re-resolves the physical Server destination and renegotiates a dynamic
+Tunnel IP; a reconnect is not an in-place QUIC path handoff.
 
 The TUN driver creates or attaches the configured interface, sets
 its IP/CIDR and MTU, brings it UP and checks readiness. The Linux kernel

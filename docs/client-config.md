@@ -41,6 +41,17 @@ it; forced TCP uses primary WAN only. The TCX eBPF program is embedded
 in the binaries and normally loads in `auto` mode with automatic
 MSS clamp and counters.
 
+Automatic reconnection is enabled by default, including after initial
+dial failures, established QUIC/TCP session failures, and remote EOF.
+The Client uses a 1, 2, 4, 8, 16, 30-second exponential retry delay
+with a 30-second cap. A session running for at least one minute resets
+the delay to one second. SIGINT/SIGTERM stops retries immediately.
+Each attempt re-resolves the Server's IP and WAN, redoes mTLS and
+dynamic Tunnel IP negotiation, and re-applies authenticated routes
+after removing the previous session's managed routes. A Server-assigned
+lease may change after reconnect. This does not migrate an existing
+QUIC/TCP connection: every attempt starts a new authenticated session.
+
 ## Optional YAML fields
 
 | Key | Purpose |
@@ -48,6 +59,7 @@ MSS clamp and counters.
 | `path` | Server-specific MASQUE CONNECT path |
 | `address` | Static TUN CIDR or `auto` for Server lease |
 | `accept_routes` | Apply authenticated `push_routes` (default true) |
+| `reconnect` | Automatically reconnect on disconnect or dial failure (default true; false = one attempt) |
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
 | `source_ip`, `source_interface` | Primary WAN binding |
@@ -56,7 +68,9 @@ MSS clamp and counters.
 | `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
 
 The CLI forms use hyphens, for example `--server`, `--path`,
-`--connect-ip`, and `--accept-routes=false`.
+`--connect-ip`, `--accept-routes=false` and `--reconnect=false`.
+Missing or invalid configuration and identity files are rejected before
+entering the reconnect loop rather than silently retried.
 
 ## Server-pushed routes
 

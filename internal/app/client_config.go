@@ -25,6 +25,7 @@ type clientFileConfig struct {
 	TCPPort int `yaml:"tcp_port,omitempty"`
 	TC *clientFileTC `yaml:"tc,omitempty"`
 	AcceptRoutes *bool `yaml:"accept_routes,omitempty"`
+	Reconnect *bool `yaml:"reconnect,omitempty"`
 }
 
 type clientFileTC struct {

@@ -95,9 +95,12 @@ provided. UDP/443 and TCP/443 are independent sockets and can both bind.
 - Automatic fallback is **only** used if QUIC fails to complete its initial
   connection handshake before --udp-dial-timeout. No fallback occurs for
   TLS/CA/peer authentication failures, HTTP rejection, or application errors.
-- There is currently no continuous UDP health probe, TCP-to-UDP automatic
-  return, or seamless switching of an active client session. Site reconnection
-  still requires restarting the Client on a session failure.
+- There is no continuous UDP health probe, in-session TCP-to-UDP return,
+  or seamless switching of an active session. Client reconnects by default
+  after a failed or disconnected QUIC/TCP session, with 1s–30s
+  exponential backoff. Each retry starts over with QUIC in `auto`
+  mode and may use TCP only after a *new* initial QUIC handshake timeout.
+  Set `reconnect: false` or `--reconnect=false` to disable retries.
 - Only the primary WAN source/interface can be used by TCP. AF_XDP and
   MPQUIC dual-WAN scheduling remain UDP-only.
 - Like other TCP-over-TCP tunnels, nested retransmissions and head-of-line

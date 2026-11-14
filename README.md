@@ -75,7 +75,7 @@ A Client uses the authenticated tenant DNS name and mTLS file paths.
 A static Tunnel IP is optional; the Server can assign one dynamically.
 The standard MASQUE path, UDP/TCP
 ports, TUN name (`mq0`), WAN source selection, MTU/frame budget, transport
-fallback and bundled TCX eBPF policy are all automatic.
+fallback, session reconnection and bundled TCX eBPF policy are all automatic.
 
 ~~~yaml
 # /etc/mqvpn/client.yaml
@@ -134,6 +134,37 @@ VPN instances on one host still need separate TUNs/routing domains.
 **TCP fallback** is attempted on the initial QUIC timeout by default
 when the server has enabled TCP fallback; forced TCP uses the primary WAN
 only. The transport never downgrades on authentication failures.
+
+## Automatic Client reconnect (enabled by default)
+
+Client is a long-running VPN daemon. When the first dial fails, a QUIC
+session ends, or a TCP fallback session closes, the Client cleans up
+the completed session and **automatically reconnects**. Backoff uses
+1s → 2s → 4s → 8s → 16s → 30s and stays capped at 30s. After a
+session lasts at least one minute, the next reconnect restarts at 1s.
+The retry wait is interrupted immediately by SIGINT/SIGTERM.
+
+Each attempt resolves the current Server IP again, discovers WAN
+source/MTU, authenticates with mTLS, renegotiates a Tunnel IP, and
+reapplies authorized Server-pushed routes. The previous session's
+managed routes, underlay host pin, sockets, TUN descriptor and TCX
+attachments are released before the next attempt. IP leases are
+session-scoped; the assigned Tunnel IP may change after reconnect.
+TCP fallback **still occurs only if the initial QUIC handshake times
+out**, never on a post-handshake error or an authentication failure.
+A new retry always starts with QUIC unless `transport: tcp` was selected.
+
+~~~yaml
+# Optional in client.yaml; default is true
+reconnect: true
+# reconnect: false   # one connection attempt and exit on disconnect
+~~~
+
+CLI: `--reconnect=false` disables automatic retries. Configuration
+syntax and mTLS identity files are validated before starting retries.
+Connection failures are logged with the next backoff. This is
+re-establishment of a new VPN session, **not seamless in-session
+migration or guaranteed preservation of transport flows**.
 
 ## Server-assigned Tunnel IP leases (optional)
 

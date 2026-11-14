@@ -34,3 +34,15 @@ func TestClientRejectsInvalidTCModeBeforeDial(t *testing.T) {
 		t.Fatalf("expected invalid TC eBPF mode error: %v",err)
 	}
 }
+
+func TestClientReconnectValidationFailsBeforeDial(t *testing.T){
+	logger:=slog.New(slog.NewTextHandler(io.Discard,nil))
+	for _,args:=range [][]string{
+		{"--server","vpn.example.com","--reconnect","--tc-mode","invalid"},
+		{"--server","not-a-host","--reconnect=false"},
+	}{
+		if err:=RunClient(context.Background(),args,logger);err==nil{
+			t.Fatalf("invalid configuration started reconnect loop: %v",args)
+		}
+	}
+}

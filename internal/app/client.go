@@ -47,6 +47,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	acceptRoutes:=fs.Bool("accept-routes",true,"apply authenticated Server-pushed routes (default true)")
+	reconnect:=fs.Bool("reconnect",true,"automatically reconnect on session loss or initial connection failure (default true)")
 	if err := fs.Parse(args); err != nil { return err }
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
@@ -89,6 +90,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			if !explicit["tc-stats"] && file.TC.Stats!=nil {*tcStats=*file.TC.Stats}
 		}
 		if !explicit["accept-routes"] && file.AcceptRoutes!=nil {*acceptRoutes=*file.AcceptRoutes}
+		if !explicit["reconnect"] && file.Reconnect!=nil {*reconnect=*file.Reconnect}
 	}
 	if fs.NArg()!=0{return errors.New("unexpected positional client arguments")}
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) { return fmt.Errorf("invalid --max-frame %d", *maxFrame) }
@@ -112,19 +114,47 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
 		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,acceptRoutes:*acceptRoutes,
 	}
-	if *transportMode=="tcp" {
-		if *wan2!=""||*wan2Iface!="" {return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")}
-		return runTCPFallback(ctx,tcpOptions,logger)
+	if *transportMode=="tcp" && (*wan2!=""||*wan2Iface!="") {
+		return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")
 	}
-	pool, err := certPool(*caFile)
+	// Configuration and identity-file failures are not transient network
+	// outages. Validate them once before starting the retry supervisor.
+	if _,err:=certPool(*caFile);err!=nil{return err}
+	if _,err:=keyPair(*certFile,*keyFile);err!=nil{return err}
+	options:=clientSessionOptions{
+		tcp:tcpOptions,transport:*transportMode,udpDialTimeout:*udpTimeout,
+		secondaryWANIP:*wan2,secondaryWANInterface:*wan2Iface,
+	}
+	return runClientSupervisor(ctx,*reconnect,logger,func(sessionCtx context.Context)error{
+		return runClientSession(sessionCtx,options,logger)
+	})
+}
+
+type clientSessionOptions struct {
+	tcp clientTCPOptions
+	transport string
+	udpDialTimeout time.Duration
+	secondaryWANIP string
+	secondaryWANInterface string
+}
+
+// runClientSession owns exactly one transport and TUN session. On every
+// return its defers close the transport, TUN/TCX attachment and session
+// routes before the reconnect supervisor starts another attempt.
+func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Logger)error{
+	if o.transport=="tcp" {
+		return runTCPFallback(ctx,o.tcp,logger)
+	}
+	endpoint:=o.tcp.endpoint
+	pool, err := certPool(o.tcp.caFile)
 	if err != nil { return err }
-	cert, err := keyPair(*certFile, *keyFile)
+	cert, err := keyPair(o.tcp.certFile, o.tcp.keyFile)
 	if err != nil { return err }
 	serverAddr, err := net.ResolveUDPAddr("udp", endpoint.dialAddress)
 	if err != nil { return fmt.Errorf("resolve QUIC peer: %w", err) }
-	base, selectedIP, err := wan.Listen(ctx, *wan1, *wan1Iface, serverAddr)
+	base, selectedIP, err := wan.Listen(ctx, o.tcp.wanIP, o.tcp.wanInterface, serverAddr)
 	if err != nil { return err }
-	logger.Info("primary WAN bound", "source_ip", selectedIP, "interface", *wan1Iface, "local", base.LocalAddr())
+	logger.Info("primary WAN bound", "source_ip", selectedIP, "interface", o.tcp.wanInterface, "local", base.LocalAddr())
 	tr := &quic.Transport{Conn: base}
 	qconf := &quic.Config{
 		EnableDatagrams: true,
@@ -140,16 +170,16 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		RootCAs: pool,
 		Certificates: []tls.Certificate{cert},
 	}
-	dialCtx,cancelDial:=context.WithTimeout(ctx,*udpTimeout)
+	dialCtx,cancelDial:=context.WithTimeout(ctx,o.udpDialTimeout)
 	conn, err := tr.Dial(dialCtx, serverAddr, tlsConf, qconf)
 	fallbackAllowed:=eligibleTCPFallback(ctx,dialCtx,err)
 	cancelDial()
 	if err != nil {
 		_ = tr.Close()
-		if *transportMode=="auto" && fallbackAllowed {
-			logger.Warn("QUIC UDP handshake timed out; trying authenticated TCP fallback","timeout",*udpTimeout)
-			if *wan2!=""||*wan2Iface!="" {logger.Warn("TCP fallback uses primary WAN only; secondary WAN unavailable over TCP")}
-			if tcpErr:=runTCPFallback(ctx,tcpOptions,logger);tcpErr!=nil{
+		if o.transport=="auto" && fallbackAllowed {
+			logger.Warn("QUIC UDP handshake timed out; trying authenticated TCP fallback","timeout",o.udpDialTimeout)
+			if o.secondaryWANIP!=""||o.secondaryWANInterface!="" {logger.Warn("TCP fallback uses primary WAN only; secondary WAN unavailable over TCP")}
+			if tcpErr:=runTCPFallback(ctx,o.tcp,logger);tcpErr!=nil{
 				return errors.Join(fmt.Errorf("QUIC dial: %w",err),fmt.Errorf("TCP fallback: %w",tcpErr))
 			}
 			return nil
@@ -179,7 +209,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
-	if dynamicAddressRequested(*tunAddress){request.Header.Set(tunnelAddressHeader,"auto")}
+	if dynamicAddressRequested(o.tcp.tunAddress){request.Header.Set(tunnelAddressHeader,"auto")}
 	stream, err := h3.OpenRequestStream(ctx)
 	if err != nil { return err }
 	defer stream.Close()
@@ -193,22 +223,22 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if response.Header.Get("Capsule-Protocol") != "?1" {
 		return errors.New("missing successful Capsule-Protocol response")
 	}
-	effectiveAddress,err:=resolveClientTunnelAddress(*tunAddress,response.Header.Get(tunnelAddressHeader))
+	effectiveAddress,err:=resolveClientTunnelAddress(o.tcp.tunAddress,response.Header.Get(tunnelAddressHeader))
 	if err!=nil{return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w",err)}
 	var pushedRoutes []netip.Prefix
-	if *acceptRoutes {
+	if o.tcp.acceptRoutes {
 		pushedRoutes,err=routepush.Decode(response.Header.Get(routepush.Header))
 		if err!=nil{return fmt.Errorf("CONNECT-ETHERNET pushed routes: %w",err)}
 	}
 	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName,"tunnel_address",effectiveAddress)
 
-	if *wan2 != "" || *wan2Iface != "" {
+	if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {
 		if !conn.ConnectionState().SupportsMultipath {
 			return errors.New("peer did not negotiate IETF Multipath QUIC")
 		}
-		otherUDP, secondIP, err := wan.Listen(ctx, *wan2, *wan2Iface, serverAddr)
+		otherUDP, secondIP, err := wan.Listen(ctx, o.secondaryWANIP, o.secondaryWANInterface, serverAddr)
 		if err != nil { return err }
-		logger.Info("secondary WAN bound", "source_ip", secondIP, "interface", *wan2Iface, "local", otherUDP.LocalAddr())
+		logger.Info("secondary WAN bound", "source_ip", secondIP, "interface", o.secondaryWANInterface, "local", otherUDP.LocalAddr())
 		secondIPForMTU=secondIP
 		second = &quic.Transport{Conn: otherUDP}
 		path, err := conn.AddPath(second)
@@ -224,38 +254,38 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	// have been selected. A slower WAN must not silently receive overlarge
 	// inner DATAGRAMs from the shared TUN.
 	var underlays []mtu.Underlay
-	if *tunMTU==0 {
-		primary,err:=wan.SourceUnderlay(selectedIP,*wan1Iface)
+	if o.tcp.tunMTU==0 {
+		primary,err:=wan.SourceUnderlay(selectedIP,o.tcp.wanInterface)
 		if err!=nil{return fmt.Errorf("primary WAN MTU: %w",err)}
 		underlays=append(underlays,primary)
 		if second!=nil {
-			secondary,err:=wan.SourceUnderlay(secondIPForMTU,*wan2Iface)
+			secondary,err:=wan.SourceUnderlay(secondIPForMTU,o.secondaryWANInterface)
 			if err!=nil{return fmt.Errorf("secondary WAN MTU: %w",err)}
 			underlays=append(underlays,secondary)
 		}
 	}
-	budget,err:=mtu.Plan(*tunName,effectiveAddress,*tunMTU,*maxFrame,underlays)
+	budget,err:=mtu.Plan(o.tcp.tunName,effectiveAddress,o.tcp.tunMTU,o.tcp.maxFrame,underlays)
 	if err!=nil{return err}
-	guard,err:=routepush.ProtectServer(serverAddr.IP,selectedIP,*wan1Iface,*tunName,pushedRoutes,second!=nil)
+	guard,err:=routepush.ProtectServer(serverAddr.IP,selectedIP,o.tcp.wanInterface,o.tcp.tunName,pushedRoutes,second!=nil)
 	if err!=nil{return fmt.Errorf("protect VPN server underlay route: %w",err)}
 	defer func(){if err:=guard.Close();err!=nil{logger.Warn("cleanup pushed routes","error",err)}}()
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
 	openTUN:=tun.Open
-	if dynamicAddressRequested(*tunAddress){openTUN=tun.OpenRouted}
-	dev, err := openTUN(*tunName,effectiveAddress,budget.TUNMTU)
+	if dynamicAddressRequested(o.tcp.tunAddress){openTUN=tun.OpenRouted}
+	dev, err := openTUN(o.tcp.tunName,effectiveAddress,budget.TUNMTU)
 	if err != nil { return err }
-	if err:=guard.Install(*tunName,pushedRoutes);err!=nil {
+	if err:=guard.Install(o.tcp.tunName,pushedRoutes);err!=nil {
 		_ = dev.Close()
 		return fmt.Errorf("apply authenticated Server routes: %w",err)
 	}
 	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed","routes",routepush.Encode(pushedRoutes),"server_ip",serverAddr.IP)}
-	tcAttachment,err:=attachConfiguredTC(*tunName,tcConfig,budget.TUNMTU,logger)
+	tcAttachment,err:=attachConfiguredTC(o.tcp.tunName,o.tcp.tcConfig,budget.TUNMTU,logger)
 	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}
 	defer reportAndCloseTC(tcAttachment,logger)
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
-	logger.Info("L3 route-based TUN forwarding started", "tun", *tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)
+	logger.Info("L3 route-based TUN forwarding started", "tun", o.tcp.tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)
 	err = p2mp.ClientPump(ctx, dev, stream, budget.MaxFrame, logger)
 	close(done)
 	return err
