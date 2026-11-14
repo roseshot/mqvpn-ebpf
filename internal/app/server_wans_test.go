@@ -28,7 +28,7 @@ func TestServerWANMultiAddressValidation(t *testing.T) {
 		t.Fatalf("valid four-address wildcard config rejected: %v", err)
 	}
 	for _, tc := range []struct {
-		name string
+		name   string
 		change func(*ServerConfig)
 	}{
 		{"specific-listen", func(c *ServerConfig) { c.Listen = "192.0.2.1:8443" }},
