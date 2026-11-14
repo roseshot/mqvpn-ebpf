@@ -136,14 +136,16 @@ echo "PASS native HA: first Server tunnel established with authenticated tenant 
 kill "${pids[0]}" 2>/dev/null || true
 wait "${pids[0]}" 2>/dev/null || true
 recovered=0
-for attempt in $(seq 1 110); do
+# QUIC idle timeout is 30s; allow time for actual session expiry, cleanup,
+# reconnect backoff and the backup TLS/CONNECT handshake on loaded CI hosts.
+for attempt in $(seq 1 180); do
   if grep -q 'backend_index=2' "$work/client.log" &&
      ip netns exec "$client" ping -n -c 1 -W 1 10.77.0.1 >/dev/null 2>&1; then
     recovered=1
     break
   fi
   kill -0 "$client_pid" 2>/dev/null || fail "Client exited rather than recovering"
-  sleep 0.25
+  sleep 0.5
 done
 (( recovered )) || fail "standby session not established after primary failed"
 echo "PASS native HA: Server death caused a clean Client reconnect to backup QUIC/TUN"
