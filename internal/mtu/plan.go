@@ -24,15 +24,15 @@ const (
 
 type Underlay struct {
 	Name string
-	MTU int
+	MTU  int
 	// IPv6 means the *outer* WAN IP family (not the VPN TUN IP family).
 	IPv6 bool
 }
 
 type Result struct {
-	TUNMTU int
-	MaxFrame int
-	Auto bool
+	TUNMTU      int
+	MaxFrame    int
+	Auto        bool
 	LimitingWAN string
 }
 
@@ -88,7 +88,7 @@ func Plan(name, address string, requestedMTU, requestedFrame int, paths []Underl
 	if result.MaxFrame == 0 {
 		result.MaxFrame = result.TUNMTU + tun.EthernetOverhead
 	}
-	if result.MaxFrame > 65535 || result.TUNMTU + tun.EthernetOverhead > result.MaxFrame {
+	if result.MaxFrame > 65535 || result.TUNMTU+tun.EthernetOverhead > result.MaxFrame {
 		return Result{}, fmt.Errorf("max_frame %d cannot carry TUN MTU %d + %d bytes Ethernet", result.MaxFrame, result.TUNMTU, tun.EthernetOverhead)
 	}
 	if err := tun.Validate(name, address, result.TUNMTU, result.MaxFrame); err != nil {

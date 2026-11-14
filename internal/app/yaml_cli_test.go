@@ -20,16 +20,24 @@ func TestPeerYAMLChangesHotReloadWithoutSharedListenerRestart(t *testing.T) {
 		b, err := configfile.Marshal(peerFile, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
 			ID: "peer-1", CertificateSHA256: hex.EncodeToString(sum[:]), Routes: routes,
 		}}})
-		if err != nil { t.Fatal(err) }
-		if err := os.WriteFile(peerFile, b, 0600); err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(peerFile, b, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	write([]string{"10.77.0.2/32"})
 	cfg.Instances[0].Peers = peerFile
 	first, err := prepareServer(cfg)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	write([]string{"10.77.0.2/32", "192.168.20.0/24"})
 	second, err := prepareServer(cfg)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	a, b := first.instances["edge-a"], second.instances["edge-a"]
 	if a.staticHash != b.staticHash || a.peerHash == b.peerHash || first.listen != second.listen {
 		t.Fatal("peer update invalidated shared QUIC listener")

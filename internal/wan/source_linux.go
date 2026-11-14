@@ -26,18 +26,22 @@ func ResolveSource(sourceIP, interfaceName string, peer *net.UDPAddr) (net.IP, e
 		}
 	}
 	if interfaceName == "" {
-		if explicit != nil {return explicit,nil}
+		if explicit != nil {
+			return explicit, nil
+		}
 		// Connected UDP sockets perform a route/source lookup without sending
 		// a packet. Unlike a static default-route guess, this respects policy
 		// routes and a pinned destination IP chosen by the client.
-		probe,err:=net.DialUDP("udp",nil,peer)
-		if err!=nil{return nil,fmt.Errorf("resolve WAN source via kernel route to %s: %w",peer.IP,err)}
-		defer probe.Close()
-		chosen:=probe.LocalAddr().(*net.UDPAddr).IP
-		if chosen==nil||chosen.IsUnspecified()||chosen.IsMulticast(){
-			return nil,fmt.Errorf("kernel did not select a unicast WAN source for %s",peer.IP)
+		probe, err := net.DialUDP("udp", nil, peer)
+		if err != nil {
+			return nil, fmt.Errorf("resolve WAN source via kernel route to %s: %w", peer.IP, err)
 		}
-		return chosen,nil
+		defer probe.Close()
+		chosen := probe.LocalAddr().(*net.UDPAddr).IP
+		if chosen == nil || chosen.IsUnspecified() || chosen.IsMulticast() {
+			return nil, fmt.Errorf("kernel did not select a unicast WAN source for %s", peer.IP)
+		}
+		return chosen, nil
 	}
 	iface, err := net.InterfaceByName(interfaceName)
 	if err != nil {
@@ -50,16 +54,22 @@ func ResolveSource(sourceIP, interfaceName string, peer *net.UDPAddr) (net.IP, e
 	var matches []net.IP
 	for _, addr := range addrs {
 		cidr, ok := addr.(*net.IPNet)
-		if !ok { continue }
+		if !ok {
+			continue
+		}
 		ip := cidr.IP
 		if (ip.To4() != nil) != v4 || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
 			continue
 		}
 		if explicit != nil {
-			if ip.Equal(explicit) { return explicit, nil }
+			if ip.Equal(explicit) {
+				return explicit, nil
+			}
 			continue
 		}
-		if ip.IsLoopback() != peer.IP.IsLoopback() { continue }
+		if ip.IsLoopback() != peer.IP.IsLoopback() {
+			continue
+		}
 		matches = append(matches, ip)
 	}
 	if explicit != nil {
@@ -72,6 +82,8 @@ func ResolveSource(sourceIP, interfaceName string, peer *net.UDPAddr) (net.IP, e
 }
 
 func networkName(v4 bool) string {
-	if v4 { return "IPv4" }
+	if v4 {
+		return "IPv4"
+	}
 	return "IPv6"
 }

@@ -28,9 +28,9 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 	}
 	// This one path may use os/exec to invoke only the checked
 	// resolvconf binary. All other production code remains subprocess-free.
-	allowedResolvconf := filepath.Join(root,"internal","dnspush","resolvconf_linux.go")
+	allowedResolvconf := filepath.Join(root, "internal", "dnspush", "resolvconf_linux.go")
 	bannedImports := map[string]bool{
-		"os/exec":                true,
+		"os/exec":                  true,
 		"golang.org/x/sys/execabs": true,
 	}
 	bannedCalls := map[string]bool{
@@ -57,7 +57,7 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if bannedImports[pkg] && !(path==allowedResolvconf && pkg=="os/exec") {
+				if bannedImports[pkg] && !(path == allowedResolvconf && pkg == "os/exec") {
 					t.Errorf("%s: production code must not import %s; use Go modules or syscalls instead", path, pkg)
 				}
 			}
@@ -81,10 +81,10 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 				// Only the DNS fallback may use the direct exec package.
 				// Any other use or any other executable-launching method
 				// requires an explicit architecture review.
-				if qualifier.Name=="exec" && (selector.Sel.Name=="Command" ||
-					selector.Sel.Name=="CommandContext" || selector.Sel.Name=="LookPath") {
-					if path!=allowedResolvconf || selector.Sel.Name=="Command" {
-						t.Errorf("%s: unsupported process invocation %s",set.Position(call.Pos()),name)
+				if qualifier.Name == "exec" && (selector.Sel.Name == "Command" ||
+					selector.Sel.Name == "CommandContext" || selector.Sel.Name == "LookPath") {
+					if path != allowedResolvconf || selector.Sel.Name == "Command" {
+						t.Errorf("%s: unsupported process invocation %s", set.Position(call.Pos()), name)
 					}
 				}
 				return true

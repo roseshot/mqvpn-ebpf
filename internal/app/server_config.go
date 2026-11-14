@@ -23,112 +23,150 @@ const defaultServerListen = "0.0.0.0:443"
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
 // All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
 type ServerInstance struct {
-	Name       string `yaml:"name"`
-	ServerName string `yaml:"server_name"`
-	TUN        string `yaml:"tun"`
-	Address    string `yaml:"address"`
-	TunnelPool string `yaml:"tunnel_pool,omitempty"`
-	PushRoutes []string `yaml:"push_routes,omitempty"`
-	PushDNS []string `yaml:"push_dns,omitempty"`
-	MTU        int    `yaml:"mtu,omitempty"`
-	Peers      string `yaml:"peers"`
-	Path       string `yaml:"path,omitempty"`
-	Cert       string `yaml:"cert"`
-	Key        string `yaml:"key"`
-	ClientCA   string `yaml:"client_ca"`
-	MaxFrame   int    `yaml:"max_frame,omitempty"`
+	Name       string         `yaml:"name"`
+	ServerName string         `yaml:"server_name"`
+	TUN        string         `yaml:"tun"`
+	Address    string         `yaml:"address"`
+	TunnelPool string         `yaml:"tunnel_pool,omitempty"`
+	PushRoutes []string       `yaml:"push_routes,omitempty"`
+	PushDNS    []string       `yaml:"push_dns,omitempty"`
+	MTU        int            `yaml:"mtu,omitempty"`
+	Peers      string         `yaml:"peers"`
+	Path       string         `yaml:"path,omitempty"`
+	Cert       string         `yaml:"cert"`
+	Key        string         `yaml:"key"`
+	ClientCA   string         `yaml:"client_ca"`
+	MaxFrame   int            `yaml:"max_frame,omitempty"`
 	TC         *tcebpf.Config `yaml:"tc,omitempty"`
 }
 
 // TCPFallbackConfig enables a separate TCP/443 TLS listener. It shares the
 // authenticated SNI instance registry, but not the UDP socket or MPQUIC.
 type TCPFallbackConfig struct {
-	Enabled bool `yaml:"enabled"`
-	Listen string `yaml:"listen,omitempty"`
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen,omitempty"`
 }
 
 type ServerConfig struct {
-	TCPFallback TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
-	Listen    string           `yaml:"listen,omitempty"`
-	WANInterfaces []string `yaml:"wan_interfaces,omitempty"`
-	XDP       *xdp.Config      `yaml:"xdp,omitempty"`
-	Instances []ServerInstance `yaml:"instances"`
+	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
+	Listen        string            `yaml:"listen,omitempty"`
+	WANInterfaces []string          `yaml:"wan_interfaces,omitempty"`
+	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
+	Instances     []ServerInstance  `yaml:"instances"`
 }
 
 func loadServerConfig(path string) (ServerConfig, error) {
 	var cfg ServerConfig
-	if err := configfile.Read(path, &cfg); err != nil { return ServerConfig{}, err }
-	if err := cfg.Validate(); err != nil { return ServerConfig{}, err }
+	if err := configfile.Read(path, &cfg); err != nil {
+		return ServerConfig{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return ServerConfig{}, err
+	}
 	return cfg, nil
 }
 
 func (c *ServerConfig) Validate() error {
-	if c.Listen == "" { c.Listen = defaultServerListen }
-	if c.TCPFallback.Enabled && c.TCPFallback.Listen=="" {
-		c.TCPFallback.Listen="0.0.0.0:443"
+	if c.Listen == "" {
+		c.Listen = defaultServerListen
 	}
-	if !c.TCPFallback.Enabled && c.TCPFallback.Listen!="" {
+	if c.TCPFallback.Enabled && c.TCPFallback.Listen == "" {
+		c.TCPFallback.Listen = "0.0.0.0:443"
+	}
+	if !c.TCPFallback.Enabled && c.TCPFallback.Listen != "" {
 		return errors.New("tcp_fallback.listen requires tcp_fallback.enabled: true")
 	}
 	if c.TCPFallback.Enabled {
-		_, tcpPort, err:=net.SplitHostPort(c.TCPFallback.Listen)
-		if err!=nil {return fmt.Errorf("invalid TCP fallback listen %q: %w",c.TCPFallback.Listen,err)}
-		n,err:=strconv.Atoi(tcpPort)
-		if err!=nil||n<1||n>65535{return fmt.Errorf("invalid TCP fallback port %q",tcpPort)}
+		_, tcpPort, err := net.SplitHostPort(c.TCPFallback.Listen)
+		if err != nil {
+			return fmt.Errorf("invalid TCP fallback listen %q: %w", c.TCPFallback.Listen, err)
+		}
+		n, err := strconv.Atoi(tcpPort)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("invalid TCP fallback port %q", tcpPort)
+		}
 	}
 	_, port, err := net.SplitHostPort(c.Listen)
-	if err != nil { return fmt.Errorf("invalid shared listen %q: %w", c.Listen, err) }
+	if err != nil {
+		return fmt.Errorf("invalid shared listen %q: %w", c.Listen, err)
+	}
 	n, err := strconv.Atoi(port)
-	if err != nil || n < 1 || n > 65535 { return fmt.Errorf("invalid shared listen UDP port %q", port) }
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("invalid shared listen UDP port %q", port)
+	}
 	if c.XDP != nil {
 		normalized, err := c.XDP.Normalize()
-		if err != nil { return fmt.Errorf("XDP: %w", err) }
+		if err != nil {
+			return fmt.Errorf("XDP: %w", err)
+		}
 		c.XDP = &normalized
 	}
-	if len(c.Instances) == 0 { return errors.New("at least one VPN instance is required") }
-	if len(c.Instances) > 128 { return errors.New("maximum 128 VPN instances") }
-	seenWAN:=map[string]bool{}
-	for _,name:=range c.WANInterfaces {
-		if strings.TrimSpace(name)!=name || name=="" || seenWAN[name] {
-			return fmt.Errorf("invalid or duplicate wan_interfaces entry %q",name)
+	if len(c.Instances) == 0 {
+		return errors.New("at least one VPN instance is required")
+	}
+	if len(c.Instances) > 128 {
+		return errors.New("maximum 128 VPN instances")
+	}
+	seenWAN := map[string]bool{}
+	for _, name := range c.WANInterfaces {
+		if strings.TrimSpace(name) != name || name == "" || seenWAN[name] {
+			return fmt.Errorf("invalid or duplicate wan_interfaces entry %q", name)
 		}
-		seenWAN[name]=true
+		seenWAN[name] = true
 	}
 	names, tuns, sni := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i := range c.Instances {
 		inst := &c.Instances[i]
-		if inst.Path == "" { inst.Path = defaultPath }
+		if inst.Path == "" {
+			inst.Path = defaultPath
+		}
 		if inst.Name == "" || inst.ServerName == "" || inst.TUN == "" ||
 			inst.Peers == "" || inst.Cert == "" || inst.Key == "" || inst.ClientCA == "" {
 			return fmt.Errorf("instance %d requires name, server_name, tun, address, peers, cert, key and client_ca", i)
 		}
-		if err:=mtu.ValidateRequest(inst.TUN,inst.Address,inst.MTU,inst.MaxFrame);err!=nil{
-			return fmt.Errorf("instance %s: %w",inst.Name,err)
+		if err := mtu.ValidateRequest(inst.TUN, inst.Address, inst.MTU, inst.MaxFrame); err != nil {
+			return fmt.Errorf("instance %s: %w", inst.Name, err)
 		}
-		routes,err:=routepush.Parse(inst.PushRoutes)
-		if err!=nil{return fmt.Errorf("instance %s push_routes: %w",inst.Name,err)}
-		if len(routes)>0 {
-			inst.PushRoutes=make([]string,len(routes))
-			for i,p:=range routes {inst.PushRoutes[i]=p.String()}
+		routes, err := routepush.Parse(inst.PushRoutes)
+		if err != nil {
+			return fmt.Errorf("instance %s push_routes: %w", inst.Name, err)
 		}
-		dns,err:=dnspush.Parse(inst.PushDNS)
-		if err!=nil{return fmt.Errorf("instance %s push_dns: %w",inst.Name,err)}
-		if len(dns)>0 {
-			inst.PushDNS=make([]string,len(dns))
-			for i,ip:=range dns{inst.PushDNS[i]=ip.String()}
+		if len(routes) > 0 {
+			inst.PushRoutes = make([]string, len(routes))
+			for i, p := range routes {
+				inst.PushRoutes[i] = p.String()
+			}
 		}
-		if inst.TC==nil {
-			defaultTC:=tcebpf.DefaultConfig()
-			inst.TC=&defaultTC
+		dns, err := dnspush.Parse(inst.PushDNS)
+		if err != nil {
+			return fmt.Errorf("instance %s push_dns: %w", inst.Name, err)
+		}
+		if len(dns) > 0 {
+			inst.PushDNS = make([]string, len(dns))
+			for i, ip := range dns {
+				inst.PushDNS[i] = ip.String()
+			}
+		}
+		if inst.TC == nil {
+			defaultTC := tcebpf.DefaultConfig()
+			inst.TC = &defaultTC
 		} else {
-			next,err:=inst.TC.Normalize()
-			if err!=nil{return fmt.Errorf("instance %s TC eBPF: %w",inst.Name,err)}
-			inst.TC=&next // Preserve explicit mode: off; nil means default auto.
+			next, err := inst.TC.Normalize()
+			if err != nil {
+				return fmt.Errorf("instance %s TC eBPF: %w", inst.Name, err)
+			}
+			inst.TC = &next // Preserve explicit mode: off; nil means default auto.
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
-		if err := validateInstanceIdentity(inst.ServerName,len(c.Instances)==1); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
-		if err:=validateMasquePath(inst.Path);err!=nil{return fmt.Errorf("instance %s MASQUE path: %w",inst.Name,err)}
-		if inst.MaxFrame != 0 && (inst.MaxFrame < 64 || inst.MaxFrame > 65535) { return fmt.Errorf("instance %s invalid max_frame", inst.Name) }
+		if err := validateInstanceIdentity(inst.ServerName, len(c.Instances) == 1); err != nil {
+			return fmt.Errorf("instance %s: %w", inst.Name, err)
+		}
+		if err := validateMasquePath(inst.Path); err != nil {
+			return fmt.Errorf("instance %s MASQUE path: %w", inst.Name, err)
+		}
+		if inst.MaxFrame != 0 && (inst.MaxFrame < 64 || inst.MaxFrame > 65535) {
+			return fmt.Errorf("instance %s invalid max_frame", inst.Name)
+		}
 		if names[inst.Name] || tuns[inst.TUN] || sni[inst.ServerName] {
 			return fmt.Errorf("duplicate instance name, TUN or TLS server_name in %s", inst.Name)
 		}
@@ -160,11 +198,13 @@ func validateSNI(s string) error {
 // IP SAN certificates are supported only when no SNI demultiplexing is
 // necessary. An IP TLS ClientHello does not carry a usable SNI extension.
 // Multi-instance listeners must use distinct DNS identities.
-func validateInstanceIdentity(identity string,single bool)error{
-	if ip,err:=netip.ParseAddr(identity);err==nil{
-		if !single{return fmt.Errorf("IP server_name %q requires exactly one instance",identity)}
-		if !ip.IsValid()||ip.Zone()!=""||ip.IsUnspecified()||ip.IsMulticast()||ip.IsLoopback() {
-			return fmt.Errorf("IP server_name %q must be a unicast address without zone",identity)
+func validateInstanceIdentity(identity string, single bool) error {
+	if ip, err := netip.ParseAddr(identity); err == nil {
+		if !single {
+			return fmt.Errorf("IP server_name %q requires exactly one instance", identity)
+		}
+		if !ip.IsValid() || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() {
+			return fmt.Errorf("IP server_name %q must be a unicast address without zone", identity)
 		}
 		return nil
 	}

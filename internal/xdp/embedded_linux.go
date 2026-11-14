@@ -19,10 +19,14 @@ var embeddedXDP []byte
 func LoadSpec(object string) (*ebpf.CollectionSpec, error) {
 	if object != "" {
 		spec, err := ebpf.LoadCollectionSpec(object)
-		if err != nil { return nil, fmt.Errorf("external XDP ELF %q: %w", object, err) }
+		if err != nil {
+			return nil, fmt.Errorf("external XDP ELF %q: %w", object, err)
+		}
 		return spec, nil
 	}
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(embeddedXDP))
-	if err != nil { return nil, fmt.Errorf("embedded XDP ELF: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("embedded XDP ELF: %w", err)
+	}
 	return spec, nil
 }

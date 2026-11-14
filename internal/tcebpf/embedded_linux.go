@@ -20,10 +20,14 @@ var embeddedTC []byte
 func LoadSpec(object string) (*ebpf.CollectionSpec, error) {
 	if object != "" {
 		spec, err := ebpf.LoadCollectionSpec(object)
-		if err != nil { return nil, fmt.Errorf("external TCX ELF %q: %w", object, err) }
+		if err != nil {
+			return nil, fmt.Errorf("external TCX ELF %q: %w", object, err)
+		}
 		return spec, nil
 	}
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(embeddedTC))
-	if err != nil { return nil, fmt.Errorf("embedded TCX ELF: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("embedded TCX ELF: %w", err)
+	}
 	return spec, nil
 }

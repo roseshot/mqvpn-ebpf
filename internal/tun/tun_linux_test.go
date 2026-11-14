@@ -11,214 +11,332 @@ import (
 )
 
 type fakeOps struct {
-	link *netlink.Dummy
-	addr *netlink.Addr
-	order []string
+	link   *netlink.Dummy
+	addr   *netlink.Addr
+	order  []string
 	failOn string
-	other []netlink.Addr
+	other  []netlink.Addr
 }
-func(f *fakeOps)fail(step string)error{
-	f.order=append(f.order,step)
-	if f.failOn==step{return errors.New("permission denied")}
+
+func (f *fakeOps) fail(step string) error {
+	f.order = append(f.order, step)
+	if f.failOn == step {
+		return errors.New("permission denied")
+	}
 	return nil
 }
-func(f *fakeOps)ByName(name string)(netlink.Link,error){
-	if err:=f.fail("find");err!=nil{return nil,err}
-	return f.link,nil
+func (f *fakeOps) ByName(name string) (netlink.Link, error) {
+	if err := f.fail("find"); err != nil {
+		return nil, err
+	}
+	return f.link, nil
 }
-func(f *fakeOps)SetMTU(_ netlink.Link,mtu int)error{
-	if err:=f.fail("mtu");err!=nil{return err}
-	f.link.MTU=mtu
+func (f *fakeOps) SetMTU(_ netlink.Link, mtu int) error {
+	if err := f.fail("mtu"); err != nil {
+		return err
+	}
+	f.link.MTU = mtu
 	return nil
 }
-func(f *fakeOps)ReplaceAddr(_ netlink.Link,addr *netlink.Addr)error{
-	if err:=f.fail("address");err!=nil{return err}
-	f.addr=addr
+func (f *fakeOps) ReplaceAddr(_ netlink.Link, addr *netlink.Addr) error {
+	if err := f.fail("address"); err != nil {
+		return err
+	}
+	f.addr = addr
 	return nil
 }
-func(f *fakeOps)SetUp(_ netlink.Link)error{
-	if err:=f.fail("up");err!=nil{return err}
-	f.link.Flags|=net.FlagUp
+func (f *fakeOps) SetUp(_ netlink.Link) error {
+	if err := f.fail("up"); err != nil {
+		return err
+	}
+	f.link.Flags |= net.FlagUp
 	return nil
 }
-func(f *fakeOps)ListAddrs(_ netlink.Link)([]netlink.Addr,error){
-	if err:=f.fail("list");err!=nil{return nil,err}
-	if f.addr==nil{return append([]netlink.Addr(nil),f.other...),nil}
-	return append([]netlink.Addr{*f.addr},f.other...),nil
+func (f *fakeOps) ListAddrs(_ netlink.Link) ([]netlink.Addr, error) {
+	if err := f.fail("list"); err != nil {
+		return nil, err
+	}
+	if f.addr == nil {
+		return append([]netlink.Addr(nil), f.other...), nil
+	}
+	return append([]netlink.Addr{*f.addr}, f.other...), nil
 }
-func(f *fakeOps)DeleteAddr(_ netlink.Link,addr *netlink.Addr)error{
-	if err:=f.fail("delete");err!=nil{return err}
-	if f.addr!=nil && f.addr.IPNet.String()==addr.IPNet.String(){f.addr=nil}
+func (f *fakeOps) DeleteAddr(_ netlink.Link, addr *netlink.Addr) error {
+	if err := f.fail("delete"); err != nil {
+		return err
+	}
+	if f.addr != nil && f.addr.IPNet.String() == addr.IPNet.String() {
+		f.addr = nil
+	}
 	return nil
 }
-func(f *fakeOps)SetDown(l netlink.Link)error{
-	if err:=f.fail("down");err!=nil{return err}
-	l.Attrs().Flags&^=net.FlagUp
+func (f *fakeOps) SetDown(l netlink.Link) error {
+	if err := f.fail("down"); err != nil {
+		return err
+	}
+	l.Attrs().Flags &^= net.FlagUp
 	return nil
 }
-func(f *fakeOps)DeleteLink(l netlink.Link)error{
-	if err:=f.fail("delete-link");err!=nil{return err}
-	if f.link==l{f.link=nil}
+func (f *fakeOps) DeleteLink(l netlink.Link) error {
+	if err := f.fail("delete-link"); err != nil {
+		return err
+	}
+	if f.link == l {
+		f.link = nil
+	}
 	return nil
 }
-func TestValidateName(t *testing.T){
-	for _,name:=range []string{"mq0","tun-main","tun.3"}{if err:=validateName(name);err!=nil{t.Fatal(err)}}
-	for _,name:=range []string{"","bad name","abcdefghijklmnop","bad/name"}{
-		if err:=validateName(name);err==nil{t.Fatalf("invalid name %q accepted",name)}
+func TestValidateName(t *testing.T) {
+	for _, name := range []string{"mq0", "tun-main", "tun.3"} {
+		if err := validateName(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"", "bad name", "abcdefghijklmnop", "bad/name"} {
+		if err := validateName(name); err == nil {
+			t.Fatalf("invalid name %q accepted", name)
+		}
 	}
 }
-func TestValidateAddress(t *testing.T){
-	for _,tc:=range []struct{cidr string;mtu,frame int}{
-		{"10.77.0.1/24",1100,1160},
-		{"fd77::1/64",1280,1300},
-		{"198.51.100.42/32",1500,1514},
-		{"10.77.0.1/24",1360,1374}, // TUN MTU 1360: IPv4 TCP MSS ~1320
-		{"10.77.0.1/24",1400,1414}, // IPv4 MSS 1360 (without options)
-		{"fd77::1/64",1420,1434},  // IPv6 MSS 1360 (without options)
+func TestValidateAddress(t *testing.T) {
+	for _, tc := range []struct {
+		cidr       string
+		mtu, frame int
 	}{
-		if err:=ValidateAddress(tc.cidr,tc.mtu,tc.frame);err!=nil{t.Fatal(err)}
+		{"10.77.0.1/24", 1100, 1160},
+		{"fd77::1/64", 1280, 1300},
+		{"198.51.100.42/32", 1500, 1514},
+		{"10.77.0.1/24", 1360, 1374}, // TUN MTU 1360: IPv4 TCP MSS ~1320
+		{"10.77.0.1/24", 1400, 1414}, // IPv4 MSS 1360 (without options)
+		{"fd77::1/64", 1420, 1434},   // IPv6 MSS 1360 (without options)
+	} {
+		if err := ValidateAddress(tc.cidr, tc.mtu, tc.frame); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _,tc:=range []struct{cidr string;mtu,frame int}{
-		{"",1100,1160},{"10.77.0.1",1100,1160},
-		{"0.0.0.0/24",1100,1160},{"224.0.0.1/24",1100,1160},
-		{"127.0.0.1/8",1100,1160},{"fe80::1/64",1280,1300},
-		{"10.77.0.1/24",1200,1160},{"fd77::1/64",1100,1160},
-		{"fd77::1/64",1280,1160},
-		{"10.77.0.1/24",1360,1373}, // missing one byte of Ethernet overhead
-		{"10.77.0.1/24",1400,1400},
-		{"fd77::1/64",1420,1433},
+	for _, tc := range []struct {
+		cidr       string
+		mtu, frame int
 	}{
-		if err:=ValidateAddress(tc.cidr,tc.mtu,tc.frame);err==nil{t.Fatalf("accepted %+v",tc)}
+		{"", 1100, 1160}, {"10.77.0.1", 1100, 1160},
+		{"0.0.0.0/24", 1100, 1160}, {"224.0.0.1/24", 1100, 1160},
+		{"127.0.0.1/8", 1100, 1160}, {"fe80::1/64", 1280, 1300},
+		{"10.77.0.1/24", 1200, 1160}, {"fd77::1/64", 1100, 1160},
+		{"fd77::1/64", 1280, 1160},
+		{"10.77.0.1/24", 1360, 1373}, // missing one byte of Ethernet overhead
+		{"10.77.0.1/24", 1400, 1400},
+		{"fd77::1/64", 1420, 1433},
+	} {
+		if err := ValidateAddress(tc.cidr, tc.mtu, tc.frame); err == nil {
+			t.Fatalf("accepted %+v", tc)
+		}
 	}
 }
-func TestSetupCreatesReadyAddressAndAllowsKernelConnectedRoute(t *testing.T){
-	for _,cidr:=range []string{"10.77.0.1/24","fd77::1/64"}{
-		mtu:=1100
-		if cidr=="fd77::1/64"{mtu=1280}
-		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-		if err:=setupInterface("mq0",cidr,mtu,f);err!=nil{t.Fatal(err)}
-		if f.addr==nil||f.addr.Flags!=0{t.Fatalf("expected normal Linux address flags for %s: %d",cidr,f.addr.Flags)}
-		if got:=len(f.order);got!=6{t.Fatalf("expected six link/address/readiness calls, got %v",f.order)}
-		if f.order[1]!="mtu"||f.order[2]!="address"||f.order[3]!="up"{t.Fatalf("wrong readiness order: %v",f.order)}
+func TestSetupCreatesReadyAddressAndAllowsKernelConnectedRoute(t *testing.T) {
+	for _, cidr := range []string{"10.77.0.1/24", "fd77::1/64"} {
+		mtu := 1100
+		if cidr == "fd77::1/64" {
+			mtu = 1280
+		}
+		f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+		if err := setupInterface("mq0", cidr, mtu, f); err != nil {
+			t.Fatal(err)
+		}
+		if f.addr == nil || f.addr.Flags != 0 {
+			t.Fatalf("expected normal Linux address flags for %s: %d", cidr, f.addr.Flags)
+		}
+		if got := len(f.order); got != 6 {
+			t.Fatalf("expected six link/address/readiness calls, got %v", f.order)
+		}
+		if f.order[1] != "mtu" || f.order[2] != "address" || f.order[3] != "up" {
+			t.Fatalf("wrong readiness order: %v", f.order)
+		}
 	}
 }
 func TestConfiguredAddressDoesNotDisableNormalIPv4Broadcast(t *testing.T) {
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-	if err:=setupInterface("mq0","10.77.0.1/24",1360,f);err!=nil{t.Fatal(err)}
-	if f.addr.Broadcast!=nil{t.Fatalf("IP broadcast unexpectedly forced to %s",f.addr.Broadcast)}
-}
-
-func TestSetupErrorsOnFailedConfiguration(t *testing.T){
-	for _,step:=range []string{"find","mtu","address","up","list"}{
-		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}},failOn:step}
-		if err:=setupInterface("mq0","10.77.0.1/24",1100,f);err==nil{t.Fatalf("%s failure ignored",step)}
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+	if err := setupInterface("mq0", "10.77.0.1/24", 1360, f); err != nil {
+		t.Fatal(err)
+	}
+	if f.addr.Broadcast != nil {
+		t.Fatalf("IP broadcast unexpectedly forced to %s", f.addr.Broadcast)
 	}
 }
-func TestOpenValidatesBeforeDeviceCreation(t *testing.T){
-	if _,err:=Open("mq0","not-cidr",1100);err==nil{t.Fatal("invalid address reached /dev/net/tun")}
+
+func TestSetupErrorsOnFailedConfiguration(t *testing.T) {
+	for _, step := range []string{"find", "mtu", "address", "up", "list"} {
+		f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}, failOn: step}
+		if err := setupInterface("mq0", "10.77.0.1/24", 1100, f); err == nil {
+			t.Fatalf("%s failure ignored", step)
+		}
+	}
+}
+func TestOpenValidatesBeforeDeviceCreation(t *testing.T) {
+	if _, err := Open("mq0", "not-cidr", 1100); err == nil {
+		t.Fatal("invalid address reached /dev/net/tun")
+	}
 }
 
 func TestSetupRoutedTUNAvoidsSubnetBroadcast(t *testing.T) {
-	for _,tc:=range []struct{cidr,local,peer string; mtu int}{
-		{"10.77.0.1/24","10.77.0.1/32","10.77.0.0/24",1400},
-		{"10.77.0.0/24","10.77.0.0/32","10.77.0.1/24",1400},
-		{"10.77.0.255/24","10.77.0.255/32","10.77.0.0/24",1400},
-		{"10.77.0.0/31","10.77.0.0/32","10.77.0.1/31",1400},
-		{"fd77::/64","fd77::/128","fd77::1/64",1400},
+	for _, tc := range []struct {
+		cidr, local, peer string
+		mtu               int
 	}{
-		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-		if err:=setupRoutedInterface("mq0",tc.cidr,tc.mtu,f);err!=nil{t.Fatalf("%s: %v",tc.cidr,err)}
-		if f.addr==nil || f.addr.IPNet.String()!=tc.local || f.addr.Peer==nil || f.addr.Peer.String()!=tc.peer {
-			t.Fatalf("%s: unexpected local/peer %+v",tc.cidr,f.addr)
+		{"10.77.0.1/24", "10.77.0.1/32", "10.77.0.0/24", 1400},
+		{"10.77.0.0/24", "10.77.0.0/32", "10.77.0.1/24", 1400},
+		{"10.77.0.255/24", "10.77.0.255/32", "10.77.0.0/24", 1400},
+		{"10.77.0.0/31", "10.77.0.0/32", "10.77.0.1/31", 1400},
+		{"fd77::/64", "fd77::/128", "fd77::1/64", 1400},
+	} {
+		f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+		if err := setupRoutedInterface("mq0", tc.cidr, tc.mtu, f); err != nil {
+			t.Fatalf("%s: %v", tc.cidr, err)
 		}
-		if f.addr.IP.To4()!=nil && !f.addr.Broadcast.Equal(net.IPv4zero){
-			t.Fatalf("%s: broadcast not explicitly disabled: %s",tc.cidr,f.addr.Broadcast)
+		if f.addr == nil || f.addr.IPNet.String() != tc.local || f.addr.Peer == nil || f.addr.Peer.String() != tc.peer {
+			t.Fatalf("%s: unexpected local/peer %+v", tc.cidr, f.addr)
+		}
+		if f.addr.IP.To4() != nil && !f.addr.Broadcast.Equal(net.IPv4zero) {
+			t.Fatalf("%s: broadcast not explicitly disabled: %s", tc.cidr, f.addr.Broadcast)
 		}
 	}
 	// Static TUN addresses use connected-prefix semantics.
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-	if err:=setupInterface("mq0","10.77.0.1/24",1400,f);err!=nil{t.Fatal(err)}
-	if f.addr.Peer!=nil {t.Fatal("static TUN unexpectedly has a peer route")}
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+	if err := setupInterface("mq0", "10.77.0.1/24", 1400, f); err != nil {
+		t.Fatal(err)
+	}
+	if f.addr.Peer != nil {
+		t.Fatal("static TUN unexpectedly has a peer route")
+	}
 }
 
-func TestDynamicRoutedLeaseCleanupOnlyRemovesExactAddress(t *testing.T){
-	for _,lease:=range []string{"10.77.0.0/24","10.77.0.255/24","fd77::/64","10.77.0.0/31"}{
-		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-		if err:=setupRoutedInterface("mq0",lease,1400,f);err!=nil{t.Fatal(err)}
-		if err:=releaseRoutedAddress("mq0","10.77.0.9/24",f);err!=nil{t.Fatal(err)}
-		if lease!="10.77.0.9/24" && f.addr==nil{t.Fatalf("removed unrelated lease %s",lease)}
-		if err:=releaseRoutedAddress("mq0",lease,f);err!=nil{t.Fatalf("release %s: %v",lease,err)}
-		if f.addr!=nil{t.Fatalf("routed lease %s remained on persistent TUN",lease)}
+func TestDynamicRoutedLeaseCleanupOnlyRemovesExactAddress(t *testing.T) {
+	for _, lease := range []string{"10.77.0.0/24", "10.77.0.255/24", "fd77::/64", "10.77.0.0/31"} {
+		f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+		if err := setupRoutedInterface("mq0", lease, 1400, f); err != nil {
+			t.Fatal(err)
+		}
+		if err := releaseRoutedAddress("mq0", "10.77.0.9/24", f); err != nil {
+			t.Fatal(err)
+		}
+		if lease != "10.77.0.9/24" && f.addr == nil {
+			t.Fatalf("removed unrelated lease %s", lease)
+		}
+		if err := releaseRoutedAddress("mq0", lease, f); err != nil {
+			t.Fatalf("release %s: %v", lease, err)
+		}
+		if f.addr != nil {
+			t.Fatalf("routed lease %s remained on persistent TUN", lease)
+		}
 	}
 	// A static connected-prefix address must not be removed by dynamic
 	// cleanup even if it has the same local IP and CIDR.
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-	if err:=setupInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
-	if err:=releaseRoutedAddress("mq0","10.77.0.2/24",f);err!=nil{t.Fatal(err)}
-	if f.addr==nil{t.Fatal("static administrator address removed")}
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+	if err := setupInterface("mq0", "10.77.0.2/24", 1400, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseRoutedAddress("mq0", "10.77.0.2/24", f); err != nil {
+		t.Fatal(err)
+	}
+	if f.addr == nil {
+		t.Fatal("static administrator address removed")
+	}
 }
-func TestDynamicRoutedLeaseCleanupPropagatesFailure(t *testing.T){
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0"}}}
-	if err:=setupRoutedInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
-	f.failOn="delete"
-	if err:=releaseRoutedAddress("mq0","10.77.0.2/24",f);err==nil{t.Fatal("cleanup permission failure not reported")}
-	if f.addr==nil{t.Fatal("address removed after failed cleanup")}
+func TestDynamicRoutedLeaseCleanupPropagatesFailure(t *testing.T) {
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0"}}}
+	if err := setupRoutedInterface("mq0", "10.77.0.2/24", 1400, f); err != nil {
+		t.Fatal(err)
+	}
+	f.failOn = "delete"
+	if err := releaseRoutedAddress("mq0", "10.77.0.2/24", f); err == nil {
+		t.Fatal("cleanup permission failure not reported")
+	}
+	if f.addr == nil {
+		t.Fatal("address removed after failed cleanup")
+	}
 }
 
-func TestClientSessionRestoresPreexistingTUNState(t *testing.T){
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1300}}}
-	original,err:=netlink.ParseAddr("10.77.0.9/24")
-	if err!=nil{t.Fatal(err)}
-	f.addr=original
-	other,err:=netlink.ParseAddr("2001:db8::9/64")
-	if err!=nil{t.Fatal(err)}
-	f.other=[]netlink.Addr{*other}
-	before,err:=captureLinkState("mq0",f)
-	if err!=nil{t.Fatal(err)}
-	if err:=setupRoutedInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
-	if err:=restoreClientLink("mq0","10.77.0.2/24",true,before,7,f);err!=nil{t.Fatal(err)}
-	if f.addr==nil||f.addr.IPNet.String()!="10.77.0.9/24"{
-		t.Fatalf("original local IP not restored: %+v",f.addr)
+func TestClientSessionRestoresPreexistingTUNState(t *testing.T) {
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0", Index: 7, MTU: 1300}}}
+	original, err := netlink.ParseAddr("10.77.0.9/24")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if f.link==nil||f.link.MTU!=1300||f.link.Flags&net.FlagUp!=0 {
-		t.Fatalf("TUN link state leaked after disconnect: %+v",f.link)
+	f.addr = original
+	other, err := netlink.ParseAddr("2001:db8::9/64")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(f.other)!=1||f.other[0].IPNet.String()!="2001:db8::9/64" {
+	f.other = []netlink.Addr{*other}
+	before, err := captureLinkState("mq0", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setupRoutedInterface("mq0", "10.77.0.2/24", 1400, f); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreClientLink("mq0", "10.77.0.2/24", true, before, 7, f); err != nil {
+		t.Fatal(err)
+	}
+	if f.addr == nil || f.addr.IPNet.String() != "10.77.0.9/24" {
+		t.Fatalf("original local IP not restored: %+v", f.addr)
+	}
+	if f.link == nil || f.link.MTU != 1300 || f.link.Flags&net.FlagUp != 0 {
+		t.Fatalf("TUN link state leaked after disconnect: %+v", f.link)
+	}
+	if len(f.other) != 1 || f.other[0].IPNet.String() != "2001:db8::9/64" {
 		t.Fatal("unrelated TUN address changed")
 	}
 }
 
-func TestClientSessionReleasesStaticOrDynamicAddresses(t *testing.T){
-	for _,routed:=range []bool{false,true}{
-		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1350,Flags:net.FlagUp}}}
-		before,err:=captureLinkState("mq0",f)
-		if err!=nil{t.Fatal(err)}
-		var configure func(string,string,int,linkOps)error=setupInterface
-		if routed{configure=setupRoutedInterface}
-		if err:=configure("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
-		if err:=restoreClientLink("mq0","10.77.0.2/24",routed,before,7,f);err!=nil{t.Fatal(err)}
-		if f.addr!=nil||f.link==nil||f.link.MTU!=1350||f.link.Flags&net.FlagUp==0{
-			t.Fatalf("Client TUN state not released (routed=%t): %+v %+v",routed,f.addr,f.link)
+func TestClientSessionReleasesStaticOrDynamicAddresses(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0", Index: 7, MTU: 1350, Flags: net.FlagUp}}}
+		before, err := captureLinkState("mq0", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var configure func(string, string, int, linkOps) error = setupInterface
+		if routed {
+			configure = setupRoutedInterface
+		}
+		if err := configure("mq0", "10.77.0.2/24", 1400, f); err != nil {
+			t.Fatal(err)
+		}
+		if err := restoreClientLink("mq0", "10.77.0.2/24", routed, before, 7, f); err != nil {
+			t.Fatal(err)
+		}
+		if f.addr != nil || f.link == nil || f.link.MTU != 1350 || f.link.Flags&net.FlagUp == 0 {
+			t.Fatalf("Client TUN state not released (routed=%t): %+v %+v", routed, f.addr, f.link)
 		}
 	}
 }
-func TestClientSessionCleanupFailurePropagates(t *testing.T){
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1300}}}
-	before,err:=captureLinkState("mq0",f)
-	if err!=nil{t.Fatal(err)}
-	if err:=setupInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
-	f.failOn="delete"
-	if err:=restoreClientLink("mq0","10.77.0.2/24",false,before,7,f);err==nil{
+func TestClientSessionCleanupFailurePropagates(t *testing.T) {
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0", Index: 7, MTU: 1300}}}
+	before, err := captureLinkState("mq0", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setupInterface("mq0", "10.77.0.2/24", 1400, f); err != nil {
+		t.Fatal(err)
+	}
+	f.failOn = "delete"
+	if err := restoreClientLink("mq0", "10.77.0.2/24", false, before, 7, f); err == nil {
 		t.Fatal("cleanup failed silently")
 	}
 }
-func TestClientSessionRemovesOnlyNewlyCreatedTUN(t *testing.T){
-	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1400}}}
-	if err:=restoreClientLink("mq0","10.77.0.2/24",false,linkSnapshot{},7,f);err!=nil{t.Fatal(err)}
-	if f.link!=nil{t.Fatal("session-created interface not deleted")}
-	f=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:9,MTU:1400}}}
-	if err:=restoreClientLink("mq0","10.77.0.2/24",false,linkSnapshot{},7,f);err==nil{
+func TestClientSessionRemovesOnlyNewlyCreatedTUN(t *testing.T) {
+	f := &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0", Index: 7, MTU: 1400}}}
+	if err := restoreClientLink("mq0", "10.77.0.2/24", false, linkSnapshot{}, 7, f); err != nil {
+		t.Fatal(err)
+	}
+	if f.link != nil {
+		t.Fatal("session-created interface not deleted")
+	}
+	f = &fakeOps{link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "mq0", Index: 9, MTU: 1400}}}
+	if err := restoreClientLink("mq0", "10.77.0.2/24", false, linkSnapshot{}, 7, f); err == nil {
 		t.Fatal("deleted a replacement interface with a different index")
 	}
-	if f.link==nil{t.Fatal("replacement interface was deleted")}
+	if f.link == nil {
+		t.Fatal("replacement interface was deleted")
+	}
 }

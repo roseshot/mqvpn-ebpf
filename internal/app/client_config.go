@@ -6,39 +6,41 @@ import "github.com/roseshot/mqvpn-ebpf/internal/configfile"
 // the authenticated DNS identity. connect_ip optionally pins the underlay
 // destination without changing TLS SNI. No old URL/SNI aliases are accepted.
 type clientFileConfig struct {
-	Server string `yaml:"server,omitempty"`
-	Path string `yaml:"path,omitempty"`
-	Address string `yaml:"address,omitempty"`
-	CA string `yaml:"ca,omitempty"`
-	Cert string `yaml:"cert,omitempty"`
-	Key string `yaml:"key,omitempty"`
-	TUN string `yaml:"tun,omitempty"`
-	ConnectIP string `yaml:"connect_ip,omitempty"`
-	SourceIP string `yaml:"source_ip,omitempty"`
-	SourceInterface string `yaml:"source_interface,omitempty"`
-	WAN2IP string `yaml:"wan2_ip,omitempty"`
-	WAN2Interface string `yaml:"wan2_interface,omitempty"`
-	MTU int `yaml:"mtu,omitempty"`
-	MaxFrame int `yaml:"max_frame,omitempty"`
-	Transport string `yaml:"transport,omitempty"`
-	UDPDialTimeout string `yaml:"udp_dial_timeout,omitempty"`
-	TCPPort int `yaml:"tcp_port,omitempty"`
-	TC *clientFileTC `yaml:"tc,omitempty"`
-	AcceptRoutes *bool `yaml:"accept_routes,omitempty"`
-	AcceptDNS *bool `yaml:"accept_dns,omitempty"`
-	DNSRoutes *bool `yaml:"dns_routes,omitempty"`
-	Reconnect *bool `yaml:"reconnect,omitempty"`
+	Server          string        `yaml:"server,omitempty"`
+	Path            string        `yaml:"path,omitempty"`
+	Address         string        `yaml:"address,omitempty"`
+	CA              string        `yaml:"ca,omitempty"`
+	Cert            string        `yaml:"cert,omitempty"`
+	Key             string        `yaml:"key,omitempty"`
+	TUN             string        `yaml:"tun,omitempty"`
+	ConnectIP       string        `yaml:"connect_ip,omitempty"`
+	SourceIP        string        `yaml:"source_ip,omitempty"`
+	SourceInterface string        `yaml:"source_interface,omitempty"`
+	WAN2IP          string        `yaml:"wan2_ip,omitempty"`
+	WAN2Interface   string        `yaml:"wan2_interface,omitempty"`
+	MTU             int           `yaml:"mtu,omitempty"`
+	MaxFrame        int           `yaml:"max_frame,omitempty"`
+	Transport       string        `yaml:"transport,omitempty"`
+	UDPDialTimeout  string        `yaml:"udp_dial_timeout,omitempty"`
+	TCPPort         int           `yaml:"tcp_port,omitempty"`
+	TC              *clientFileTC `yaml:"tc,omitempty"`
+	AcceptRoutes    *bool         `yaml:"accept_routes,omitempty"`
+	AcceptDNS       *bool         `yaml:"accept_dns,omitempty"`
+	DNSRoutes       *bool         `yaml:"dns_routes,omitempty"`
+	Reconnect       *bool         `yaml:"reconnect,omitempty"`
 }
 
 type clientFileTC struct {
-	Mode string `yaml:"mode,omitempty"`
-	Object string `yaml:"object,omitempty"`
+	Mode     string `yaml:"mode,omitempty"`
+	Object   string `yaml:"object,omitempty"`
 	MSSClamp string `yaml:"mss_clamp,omitempty"`
-	Stats *bool `yaml:"stats,omitempty"`
+	Stats    *bool  `yaml:"stats,omitempty"`
 }
 
-func loadClientFile(path string) (clientFileConfig,error) {
+func loadClientFile(path string) (clientFileConfig, error) {
 	var cfg clientFileConfig
-	if err:=configfile.Read(path,&cfg);err!=nil{return clientFileConfig{},err}
-	return cfg,nil
+	if err := configfile.Read(path, &cfg); err != nil {
+		return clientFileConfig{}, err
+	}
+	return cfg, nil
 }

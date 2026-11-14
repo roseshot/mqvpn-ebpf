@@ -715,3 +715,29 @@ The unconditional Dependabot auto-merge policy remains unchanged.
   no measured N200/I226 throughput, no real multi-tenant E2E test yet.
 
 Protocol reference: https://datatracker.ietf.org/doc/draft-ietf-masque-connect-ethernet/
+
+## Go 1.27 maintenance and CI
+
+This repository targets Go **1.27.4** and commits a canonical `go.sum`.
+Builds and tests run in read-only module mode (`-mod=readonly`) to
+prevent dependency changes during CI. The Go hygiene job enforces
+`gofmt` for all application and test sources, `go mod tidy -diff`,
+and `go mod verify`. Other CI jobs cover native CGO-disabled builds,
+`go vet`, the race detector, Linux TUN integration and eBPF.
+
+Local commands:
+
+~~~sh
+make fmt-check  # verify formatting without modifying files
+make mod-check  # inspect module changes and verify checksums
+make test       # CGO-free tests using checked-in dependencies
+make fmt        # format source and tests intentionally
+make modernize  # opt-in go fix and gofmt; review diff before committing
+~~~
+
+Both QUIC and TCP Clients use the same TUN/route/TCX/DNS resource
+setup and rollback logic; the reconnect supervisor never overlaps
+sessions. The QUIC path monitor uses `sync.WaitGroup.Go` and is joined
+before a session returns. Linux's optional `resolvconf` fallback is
+still the sole explicitly restricted subprocess exception: it cannot
+be replaced with a kernel interface-DNS syscall on Linux.

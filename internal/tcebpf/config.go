@@ -33,11 +33,15 @@ func (c Config) Normalize() (Config, error) {
 	switch c.Mode {
 	case "":
 		c.Mode = "auto"
-		if c.MSSClamp == "" { c.MSSClamp = "auto" }
+		if c.MSSClamp == "" {
+			c.MSSClamp = "auto"
+		}
 	case "off":
 		return Config{Mode: "off", MSSClamp: "off"}, nil
 	case "auto", "required":
-		if c.MSSClamp == "" { c.MSSClamp = "auto" }
+		if c.MSSClamp == "" {
+			c.MSSClamp = "auto"
+		}
 	default:
 		return Config{}, fmt.Errorf("invalid TC eBPF mode %q (off|auto|required)", c.Mode)
 	}
@@ -60,17 +64,29 @@ type Limits struct {
 
 // EffectiveLimits never increases the MTU-derived TCP MSS limit.
 func EffectiveLimits(mtu int, raw string) (Limits, error) {
-	if mtu < 576 || mtu > 65535 { return Limits{}, fmt.Errorf("invalid TUN MTU %d", mtu) }
+	if mtu < 576 || mtu > 65535 {
+		return Limits{}, fmt.Errorf("invalid TUN MTU %d", mtu)
+	}
 	c, err := (Config{Mode: "auto", MSSClamp: raw}).Normalize()
-	if err != nil { return Limits{}, err }
+	if err != nil {
+		return Limits{}, err
+	}
 	r := Limits{MTU: uint32(mtu)}
-	if c.MSSClamp == "off" { return r, nil }
+	if c.MSSClamp == "off" {
+		return r, nil
+	}
 	v4, v6 := mtu-40, mtu-60
-	if v4 <= 0 || v6 <= 0 { return Limits{}, fmt.Errorf("invalid TUN MTU %d for TCP MSS", mtu) }
+	if v4 <= 0 || v6 <= 0 {
+		return Limits{}, fmt.Errorf("invalid TUN MTU %d for TCP MSS", mtu)
+	}
 	if c.MSSClamp != "auto" {
 		target, _ := strconv.Atoi(c.MSSClamp)
-		if v4 > target { v4 = target }
-		if v6 > target { v6 = target }
+		if v4 > target {
+			v4 = target
+		}
+		if v6 > target {
+			v6 = target
+		}
 	}
 	r.MSS4, r.MSS6, r.Clamp = uint16(v4), uint16(v6), 1
 	return r, nil
