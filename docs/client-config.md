@@ -154,6 +154,10 @@ Server-side configuration and the four-WAN test are documented in
 still caps active MPQUIC paths at **64**, independent of the unbounded
 configuration list.
 
+## High availability across Server backends
+
+For two independent Server processes, set `ha.mode: active_standby` or `active_active` and list their physical IPs under `ha.backends`. Every backend uses the same authenticated `server` identity. Client-managed HA switches on reconnect and keeps **one** TUN/session at a time; active/active means **different Clients are distributed across the fleet**. Alternatively, use `ha.controller: haproxy` and a stable TCP VIP with `transport: tcp`. See [High availability](high-availability.md) for configuration, HAProxy examples, failback timing and limits.
+
 ## Optional YAML fields
 
 | Key | Purpose |
