@@ -224,7 +224,8 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	compression := acceptCompression(r.Header.Get(compressionHeader))
-	session, err := instance.hub.AttachWithCompression(r.Context(), rule, streamer.HTTPStream(), requestDynamic, compression)
+	fragmentation := acceptFraming(r.Header.Get(framingHeader))
+	session, err := instance.hub.AttachWithFeatures(r.Context(), rule, streamer.HTTPStream(), requestDynamic, compression, fragmentation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -241,6 +242,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if compression {
 		w.Header().Set(compressionHeader, compressionZstd)
+	}
+	if fragmentation {
+		w.Header().Set(framingHeader, framingValue)
 	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)

@@ -16,13 +16,19 @@ import (
 // ClientPump retains the legacy frame format for callers that did not
 // negotiate the optional zstd-v1 capability.
 func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, logger *slog.Logger) error {
-	return ClientPumpWithCompression(ctx, device, stream, maxFrame, false, logger)
+	return ClientPumpWithFeatures(ctx, device, stream, maxFrame, false, false, logger)
 }
 
 // ClientPumpWithCompression forwards all valid IP traffic without imposing
 // port- or DSCP-based ACLs. RTP marked DSCP EF and SIP signalling use a
 // bounded priority queue, and are never compressed.
 func ClientPumpWithCompression(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, compression bool, logger *slog.Logger) error {
+	return ClientPumpWithFeatures(ctx, device, stream, maxFrame, compression, false, logger)
+}
+
+// ClientPumpWithFeatures uses negotiated Zstd and fragmentation without
+// changing legacy call sites or the SIP/RTP priority policy.
+func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, compression, fragmentation bool, logger *slog.Logger) error {
 	if maxFrame < 64 || maxFrame > 65535 {
 		return fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
@@ -30,6 +36,8 @@ func ClientPumpWithCompression(ctx context.Context, device io.ReadWriteCloser, s
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	codec := l3.Codec{Compression: compression, MaxFrame: maxFrame}
+	fragmenter := &l3.Fragmenter{Enabled: fragmentation}
+	reassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
 	urgent, normal := make(chan []byte, 64), make(chan []byte, 192)
 	ends := make(chan error, 3)
 	var workers sync.WaitGroup
@@ -82,9 +90,21 @@ func ClientPumpWithCompression(ctx context.Context, device io.ReadWriteCloser, s
 			if err != nil {
 				continue
 			}
-			if err := stream.SendDatagram(payload); err != nil {
-				// QUIC DATAGRAM has no retransmission guarantee.
-				logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
+			parts, err := fragmenter.Split(payload)
+			if err != nil {
+				logger.DebugContext(ctx, "client DATAGRAM fragmentation rejected", "error", err)
+				continue
+			}
+			for _, part := range parts {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := stream.SendDatagram(part); err != nil {
+					// Fragmentation has no automatic retransmission.
+					// Abort the rest of the incomplete frame on failure.
+					logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
+					break
+				}
 			}
 		}
 	}()
@@ -97,7 +117,11 @@ func ClientPumpWithCompression(ctx context.Context, device io.ReadWriteCloser, s
 				ends <- err
 				return
 			}
-			pkt, err := codec.Unwrap(payload)
+			frame, complete, err := reassembler.Accept(payload)
+			if err != nil || !complete {
+				continue
+			}
+			pkt, err := codec.Unwrap(frame)
 			if err != nil {
 				continue
 			}

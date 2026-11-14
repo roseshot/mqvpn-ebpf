@@ -105,13 +105,28 @@ outer packet without fragmentation. In a typical Ethernet-underlay path
 with IP MTU 1500 this often fits, but PPPoE, VLAN tunnels, MPLS, WireGuard
 and other extra encapsulation can reduce available PMTU.
 
-QUIC RFC 9221 DATAGRAMs **cannot be fragmented into multiple frames**.
-Path MTU discovery (DPLPMTUD) must have established a sufficiently
-large packet size on the used MPQUIC path. The daemon only derives an initial TUN MTU from **local WAN link MTU**;
-it does not negotiate an inner TUN MTU from measured path PMTU or
-implement DATAGRAM fragmentation / inner PMTU adaptation. A large
-DATAGRAM may still be rejected/dropped even with a 1400 link-based
-default. Do not confuse this value with a proven path PMTU.
+QUIC RFC 9221 DATAGRAMs **cannot be automatically fragmented by QUIC**.
+When both peers negotiate authenticated `Mqvpn-Framing: frag-v1`, the
+VPN performs **application-layer fragmentation**: a large inner IP packet
+(after optional stateless Zstd encoding) is split into several independent
+CONNECT-ETHERNET DATAGRAM payloads of at most **1024 bytes**, each below
+a conservative wire-size budget. The receiver reassembles them using an
+authenticated per-session packet ID, with bounded memory and expiry.
+Ordinary SIP/RTP small packets are neither compressed nor fragmented.
+
+This is **not** QUIC retransmission or measured PMTU discovery. Loss of
+any fragment loses the original inner packet, so sustained packet loss or
+paths that cannot carry even the 1024-byte DATAGRAM payload can still
+disrupt traffic. The initial version caps each frame at 16 fragments.
+Legacy peers with no `frag-v1` negotiation retain the original framing
+and must continue to obey actual DATAGRAM limits. Auto TUN MTU still
+uses the local-WAN conservative heuristic and defaults to at most 1400;
+selecting TUN MTU 1500 remains an **explicit** configuration choice.
+
+Example after upgrading both ends: `mtu: 1500` and
+`max_frame: 1514` on the Server, and
+`--tun-mtu 1500 --max-frame 1514` on the Client.
+See [fragmentation](fragmentation.md) for capacity, security and SIP notes.
 
 ## Example: 1360 TUN MTU
 

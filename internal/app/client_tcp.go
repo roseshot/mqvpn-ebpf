@@ -106,6 +106,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "connect-ethernet")
 	request.Header.Set("Capsule-Protocol", "?1")
+	request.Header.Set(framingHeader, framingValue)
 	compressionOffered := localCompressionAvailable()
 	if compressionOffered {
 		request.Header.Set(compressionHeader, compressionZstd)
@@ -131,6 +132,10 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
+	if err != nil {
+		return err
+	}
+	fragmentation, err := negotiatedFraming(response.Header.Get(framingHeader), true)
 	if err != nil {
 		return err
 	}
@@ -187,6 +192,6 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		return err
 	}
 	logger.InfoContext(ctx, "TCP fallback VPN session established", "remote", dialAddress, "tenant", o.endpoint.serverName, "tunnel_address", effectiveAddress)
-	err = p2mp.ClientPumpWithCompression(ctx, pumpDevice, stream, budget.MaxFrame, compression, logger)
+	err = p2mp.ClientPumpWithFeatures(ctx, pumpDevice, stream, budget.MaxFrame, compression, fragmentation, logger)
 	return classifyClientCleanup(err)
 }
