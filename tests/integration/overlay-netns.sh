@@ -68,7 +68,7 @@ done
 ip -n "$server_ns" addr add 192.0.2.1/30 dev wan0
 ip -n "$client_ns" addr add 192.0.2.2/30 dev wan0
 
-"$root/scripts/gen-dev-certs.sh" "$work/certs" vpn.ci.example >"$work/certs.log" 2>&1
+bash "$root/scripts/gen-dev-certs.sh" "$work/certs" vpn.ci.example >"$work/certs.log" 2>&1
 cert="$work/certs"
 fingerprint="$(openssl x509 -in "$cert/client.crt" -outform DER | sha256sum | awk '{print $1}')"
 cat >"$work/peers.yaml" <<EOF
