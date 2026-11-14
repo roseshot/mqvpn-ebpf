@@ -32,6 +32,7 @@ type clientFileConfig struct {
 	AcceptDNS       *bool         `yaml:"accept_dns,omitempty"`
 	DNSRoutes       *bool         `yaml:"dns_routes,omitempty"`
 	Reconnect       *bool         `yaml:"reconnect,omitempty"`
+	HA              *clientHAConfig `yaml:"ha,omitempty"`
 }
 
 type clientFileTC struct {
