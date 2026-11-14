@@ -20,6 +20,14 @@ type realtimeDatagramSender interface {
 	SendRealtimeDatagram([]byte) error
 }
 
+// RealtimeDatagram carries the authenticated companion generation with its
+// frame. Fragment IDs restart for every new QUIC connection, so fragments
+// from distinct companions must never share reassembly state.
+type RealtimeDatagram struct {
+	Payload    []byte
+	Generation uint64
+}
+
 type realtimeSendStream struct {
 	Stream
 	sender realtimeDatagramSender
@@ -60,7 +68,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	var workers sync.WaitGroup
 	workers.Add(3)
 	realtime, hasRealtime := stream.(interface {
-		ReceiveRealtimeDatagram(context.Context) ([]byte, error)
+		ReceiveRealtimeDatagram(context.Context) (RealtimeDatagram, error)
 	})
 	if hasRealtime {
 		workers.Add(1)
@@ -169,12 +177,19 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 		go func() {
 			defer workers.Done()
 			stickyReassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+			var generation uint64
 			for {
 				frame, err := realtime.ReceiveRealtimeDatagram(ctx)
 				if err != nil {
 					return
 				}
-				payload, complete, err := stickyReassembler.Accept(frame)
+				if frame.Generation != generation {
+					// A retired connection may have left a partial
+					// frame under an ID reused by the new companion.
+					stickyReassembler = &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+					generation = frame.Generation
+				}
+				payload, complete, err := stickyReassembler.Accept(frame.Payload)
 				if err != nil || !complete {
 					continue
 				}
