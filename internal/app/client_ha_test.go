@@ -116,6 +116,11 @@ func TestHAActiveStandbyFailureRotationAndFailback(t *testing.T) {
 	if index, _ := s.selected(); index != 1 {
 		t.Fatalf("lost long-running primary retried rather than failing over: %d", index)
 	}
+	s.index = 0
+	s.complete(0, nil, time.Hour)
+	if index, _ := s.selected(); index != 1 {
+		t.Fatalf("clean primary EOF retried the retired primary: %d", index)
+	}
 }
 
 func TestHAActiveActiveStableClientDistribution(t *testing.T) {
