@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
-mode="$(printf '%s' "$1")"
+mode="${1:-}"
 [[ "$mode" == vxlan || "$mode" == bgp ]] || { echo "usage: $0 vxlan|bgp" >&2; exit 2; }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
