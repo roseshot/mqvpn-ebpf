@@ -274,9 +274,9 @@ def run(role, local, peer, marker, profile):
 
 if __name__ == "__main__":
     try:
-        require(len(sys.argv) == 7,
+        require(len(sys.argv) == 6,
                 "usage: wan_probe.py listen|send local peer marker regional|poor")
-        _, role, local, peer, marker, profile, unused = sys.argv
+        _, role, local, peer, marker, profile = sys.argv
         require(role in ("listen", "send") and profile in PROFILES,
                 "bad WAN test role/profile")
         run(role, local, peer, marker, profile)
