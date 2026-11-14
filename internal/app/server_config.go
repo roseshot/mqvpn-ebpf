@@ -40,6 +40,15 @@ type ServerInstance struct {
 	TC         *tcebpf.Config `yaml:"tc,omitempty"`
 }
 
+// serverWAN exposes one locally assigned Server underlay IP. All IPs
+// share one wildcard QUIC listener, preserving a single MPQUIC connection
+// even when its paths have different remote IP addresses. The interface
+// identifies the local MTU and must own the advertised address.
+type serverWAN struct {
+	IP        string `yaml:"ip"`
+	Interface string `yaml:"interface"`
+}
+
 // TCPFallbackConfig enables a separate TCP/443 TLS listener. It shares the
 // authenticated SNI instance registry, but not the UDP socket or MPQUIC.
 type TCPFallbackConfig struct {
@@ -51,6 +60,7 @@ type ServerConfig struct {
 	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen        string            `yaml:"listen,omitempty"`
 	WANInterfaces []string          `yaml:"wan_interfaces,omitempty"`
+	WANs          []serverWAN       `yaml:"wans,omitempty"`
 	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
 	Instances     []ServerInstance  `yaml:"instances"`
 }
@@ -106,6 +116,34 @@ func (c *ServerConfig) Validate() error {
 	}
 	if len(c.Instances) > 128 {
 		return errors.New("maximum 128 VPN instances")
+	}
+	// Distinct WAN destination addresses require one wildcard UDP
+	// listener. Separate QUIC listeners would create separate connections
+	// and would not provide a multipath session.
+	if len(c.WANs) != 0 {
+		if len(c.WANInterfaces) != 0 {
+			return errors.New("server wans and legacy wan_interfaces cannot be combined")
+		}
+		host, _, _ := net.SplitHostPort(c.Listen)
+		if host != "" && host != "0.0.0.0" && host != "::" {
+			return errors.New("server wans requires a wildcard shared UDP listen address")
+		}
+		seenIPs, seenDevices := map[netip.Addr]bool{}, map[string]bool{}
+		for i, path := range c.WANs {
+			ip, err := netip.ParseAddr(path.IP)
+			if err != nil || ip.IsUnspecified() || ip.IsMulticast() ||
+				ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.Zone() != "" {
+				return fmt.Errorf("server WAN %d invalid advertised IP %q", i+1, path.IP)
+			}
+			if path.Interface == "" || strings.TrimSpace(path.Interface) != path.Interface {
+				return fmt.Errorf("server WAN %d requires a valid interface", i+1)
+			}
+			if seenIPs[ip.Unmap()] || seenDevices[path.Interface] {
+				return fmt.Errorf("server WAN %d duplicate IP or interface", i+1)
+			}
+			seenIPs[ip.Unmap()] = true
+			seenDevices[path.Interface] = true
+		}
 	}
 	seenWAN := map[string]bool{}
 	for _, name := range c.WANInterfaces {
