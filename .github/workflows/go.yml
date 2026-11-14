@@ -17,6 +17,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lifecycle-format-export:
+    name: Export Go 1.27 peer lifecycle format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Export canonical changed source
+        run: |
+          mapfile -t files < <(gofmt -l internal/p2mp | LC_ALL=C sort)
+          echo "gofmt changes: ${#files[@]}"
+          for path in "${files[@]}"; do
+            echo "__MQVPN_P2MP_FMT_BEGIN__ $path"
+            gofmt "$path" | base64 -w76
+            echo "__MQVPN_P2MP_FMT_END__ $path"
+          done
+
   hygiene:
     name: Go format and module integrity
     runs-on: ubuntu-latest

@@ -25,12 +25,47 @@ type Session struct {
 	stream        Stream
 	tx            chan []byte
 	done          chan struct{}
+	txDone        chan struct{}
+	// txMu serializes the nonblocking enqueue with session revocation,
+	// so an already-detached peer cannot enqueue into an orphaned queue.
+	txMu          sync.Mutex
 	ctx           context.Context
 	cancel        context.CancelFunc
 	tunnelAddress netip.Prefix
 }
 
 func (s *Session) ID() string { return s.rule.ID }
+
+// stop is called only while holding Hub.mu and only after removing this
+// session from Hub.peers. It fences new queue writes before canceling the
+// packet sender. A SendDatagram already in progress is transport-owned.
+func (s *Session) stop() {
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	s.cancel()
+	close(s.done)
+}
+
+// enqueue never blocks on a slow peer and cannot queue more datagrams once
+// stop has finished. A full or retired queue is counted as a drop by Hub.
+func (s *Session) enqueue(payload []byte) bool {
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	if s.ctx.Err() != nil {
+		return false
+	}
+	select {
+	case <-s.done:
+		return false
+	default:
+	}
+	select {
+	case s.tx <- payload:
+		return true
+	default:
+		return false
+	}
+}
 func (s *Session) TunnelAddress() string {
 	if !s.tunnelAddress.IsValid() {
 		return ""
@@ -95,10 +130,17 @@ func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream,
 	if rule == nil || stream == nil {
 		return nil, errors.New("peer and stream required")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("attach canceled VPN peer: %w", err)
+	}
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
 		return nil, errors.New("VPN instance is stopping")
+	}
+	if err := ctx.Err(); err != nil {
+		h.mu.Unlock()
+		return nil, fmt.Errorf("attach canceled VPN peer: %w", err)
 	}
 	// An authorization result may have been computed just before a reload.
 	// Verify it against the live config while holding the same lock as reload.
@@ -134,17 +176,25 @@ func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream,
 		return nil, fmt.Errorf("peer %s must request a dynamic tunnel IP", rule.ID)
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 256), done: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
+	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 256), done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
 	h.peers[rule.ID] = s
 	h.mu.Unlock()
 	go func() {
+		defer close(s.txDone)
 		for {
-			select {
-			case <-ctx.Done():
+			// A closed done channel may be selected alongside buffered
+			// packets. Check before and after dequeue so retired queues
+			// are not deliberately drained into the old transport.
+			if s.ctx.Err() != nil {
 				return
-			case <-s.done:
+			}
+			select {
+			case <-s.ctx.Done():
 				return
 			case payload := <-s.tx:
+				if s.ctx.Err() != nil {
+					return
+				}
 				if err := s.stream.SendDatagram(payload); err != nil {
 					h.drops.Add(1)
 					h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
@@ -165,19 +215,26 @@ func (h *Hub) Detach(s *Session) {
 	defer h.mu.Unlock()
 	if h.peers[s.ID()] == s {
 		delete(h.peers, s.ID())
-		s.cancel()
-		close(s.done)
+		s.stop()
 	}
 }
 
 func (h *Hub) Receive(ctx context.Context, s *Session) error {
 	for {
+		if s.ctx.Err() != nil || ctx.Err() != nil {
+			return nil
+		}
 		payload, err := s.stream.ReceiveDatagram(s.ctx)
 		if err != nil {
 			if s.ctx.Err() != nil || ctx.Err() != nil || errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
+		}
+		// Some stream implementations can deliver a packet concurrently
+		// with cancellation. Never inject that packet after revocation.
+		if s.ctx.Err() != nil || ctx.Err() != nil {
+			return nil
 		}
 		h.ingress(s, payload)
 	}
@@ -216,6 +273,20 @@ func (h *Hub) writeTUN(packet []byte) {
 // Ingress never examines a peer's inner source or port. Network policy is
 // owned by the Linux IP stack and firewall after writing to the TUN.
 func (h *Hub) ingress(origin *Session, payload []byte) {
+	// Forwarding is deliberately independent of the inner IP source.
+	// Still enforce the authenticated *session* boundary: a stream
+	// from a revoked peer must not inject packets into the shared TUN.
+	if origin == nil || origin.ctx.Err() != nil {
+		h.drops.Add(1)
+		return
+	}
+	h.mu.RLock()
+	active := h.peers[origin.ID()] == origin && !h.closed
+	h.mu.RUnlock()
+	if !active {
+		h.drops.Add(1)
+		return
+	}
 	packet, err := l3.Unwrap(payload)
 	if err != nil || len(packet)+l3.EthernetLen > h.maxFrame {
 		h.drops.Add(1)
@@ -294,13 +365,11 @@ func (h *Hub) send(s *Session, packet []byte) {
 		h.drops.Add(1)
 		return
 	}
-	select {
-	case <-s.done:
-		h.drops.Add(1)
-	case s.tx <- payload:
-	default:
-		// Only bounded I/O queue pressure can drop an otherwise valid
-		// packet. This is not a protocol/group/source traffic policy.
+	// A retired session cannot receive a late enqueue even when both its
+	// closed done channel and buffered tx channel would be selectable.
+	if !s.enqueue(payload) {
+		// Only bounded I/O queue pressure or retired-session cleanup
+		// drops an otherwise valid packet. Not an inner IP traffic ACL.
 		h.drops.Add(1)
 	}
 }
@@ -350,8 +419,7 @@ func (h *Hub) replaceConfig(next *Config, pool *TunnelPool, updatePool bool) err
 		rule, ok := accepted[id]
 		if !ok || rule.Fingerprint != s.rule.Fingerprint || rule.DynamicTunnelIP != s.rule.DynamicTunnelIP {
 			delete(h.peers, id)
-			s.cancel()
-			close(s.done)
+			s.stop()
 			h.log.InfoContext(s.ctx, "peer session revoked by config reload", "peer", id)
 		}
 	}
@@ -372,7 +440,6 @@ func (h *Hub) CloseSessions() {
 	h.closed = true
 	for id, s := range h.peers {
 		delete(h.peers, id)
-		s.cancel()
-		close(s.done)
+		s.stop()
 	}
 }

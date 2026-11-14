@@ -785,3 +785,21 @@ arbitrary context values into log fields. There is no global
 format and level, while nil loggers use a deterministic info-level
 stderr fallback. Startup logging-option errors are structured stderr
 records; CLI data output is deliberately not logged.
+
+## P2MP peer session revocation
+
+Server forwarding enforces **session ownership**, independently of packet
+content policy. Detaching, certificate revocation and instance shutdown
+remove an authenticated peer from the hub, cancel its context and close
+its outbound queue access in a synchronized step. Datagrams received by
+a slow transport *after* a revoked context are ignored, and packets
+from an old peer session cannot be injected after another connection
+reuses the same peer ID. Queued outbound frames are not intentionally
+drained into a retired stream.
+
+Detachment does not wait synchronously for a network
+`SendDatagram` call already in progress, since that call has no
+context-cancelable signature. The old sender exits once an in-flight
+transport call finishes; session teardown does not block new peers or
+hot reload on a stalled writer. These guarantees are covered by
+revocation, late-receive, same-peer reattach and blocked-transport tests.
