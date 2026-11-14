@@ -61,8 +61,8 @@ func TestZstdRejectsMalformedFrames(t *testing.T) {
 			t.Fatal("accepted malformed zstd frame")
 		}
 	}
-	invalid := append([]byte(nil),frame...)
-	invalid[15],invalid[16] = 0,20
+	invalid := append([]byte(nil), frame...)
+	invalid[15], invalid[16] = 0, 20
 	if _, err := codec.Unwrap(invalid); err == nil {
 		t.Fatal("accepted lying decoded length")
 	}
