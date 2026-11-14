@@ -2,8 +2,8 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp || "$mode" == wan4-latency ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp|wan4-latency" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp || "$mode" == wan4-latency || "$mode" == wan4-sticky ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp|wan4-latency|wan4-sticky" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,10 +13,10 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
-if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
 fi
-if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
+if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   for tool in iperf3 tc ss; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
   done
@@ -78,7 +78,7 @@ done
 ip -n "$server_ns" addr add 192.0.2.1/30 dev wan0
 ip -n "$client_ns" addr add 192.0.2.2/30 dev wan0
 
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   # Four physically distinct WAN veth pairs. The first Client path
   # dials 192.0.2.1; additional QUIC paths dial *different Server IPs*
   # on the corresponding independent links, within the same connection.
@@ -130,7 +130,7 @@ tcp_fallback:
 TCPCFG
 )"
 fi
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   server_listen="0.0.0.0:8443"
   server_wans="$(cat <<'WANCFG'
 wans:
@@ -205,7 +205,7 @@ if [[ "$is_crypto" == true ]]; then
   start_crypto_capture "$client_ns" client wan0 "$capture_filter"
 fi
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   client_wan_flags=(
     --use-server-wans=true
     --wan 192.0.2.2@wan0=192.0.2.1
@@ -216,6 +216,8 @@ if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; t
 fi
 scheduler_client_flags=()
 if [[ "$mode" == wan4-latency ]]; then scheduler_client_flags=(--path-scheduler low_latency); fi
+sticky_client_flags=()
+if [[ "$mode" == wan4-sticky ]]; then sticky_client_flags=(--sticky-voip); fi
 crypto_client_flags=()
 client_env=()
 client_transport=quic
@@ -228,7 +230,7 @@ ip netns exec "$client_ns" env "${client_env[@]}" "$root/bin/mqvpn-client" \
   --server vpn.ci.example:8443 --connect-ip 192.0.2.1 \
   --tun mq0 --tun-address 10.77.0.2/30 \
   --tun-mtu 1500 --max-frame 1514 \
-  "${client_wan_flags[@]}" "${scheduler_client_flags[@]}" \
+  "${client_wan_flags[@]}" "${scheduler_client_flags[@]}" "${sticky_client_flags[@]}" \
   --ca "$cert/ca.crt" --cert "$cert/client.crt" --key "$cert/client.key" \
   --tc-mode off --transport "$client_transport" --tcp-port 8443 \
   "${crypto_client_flags[@]}" --reconnect=false \
@@ -527,9 +529,9 @@ fi
 # Four independent WAN paths, all carrying the same mTLS MPQUIC session.
 # Confirm three additional AddPath+Probe completions before fault injection.
 # Differentiated netem conditions prove traffic actually uses each link.
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   profile=poor
-  if [[ "$mode" == wan4-latency ]]; then profile=latency; fi
+  if [[ "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then profile=latency; fi
   validated=0
   for attempt in $(seq 1 140); do
     count="$(grep -c 'QUIC WAN path validated' "$work/client.log" || true)"
@@ -563,6 +565,55 @@ if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; t
     done
   done
   echo "four-WAN netem active: WAN0 10ms/0%, WAN1 35ms/0.5%, WAN2 70ms/1%, WAN3 120ms/3%"
+  if [[ "$mode" == wan4-sticky ]]; then
+    command -v tcpdump >/dev/null || fail "tcpdump required for sticky WAN proof"
+    # The standalone realtime QUIC flow may only appear on one WAN.
+    # Begin captures after path validation but before SIP/RTP traffic.
+    sticky_ready=0
+    for attempt in $(seq 1 150); do
+      if grep -q 'sticky realtime established.*wan_index=1' "$work/client.log"; then
+        sticky_ready=1
+        break
+      fi
+      sleep 0.1
+    done
+    (( sticky_ready )) || fail "realtime companion failed to attach to WAN0"
+    for side in server client; do
+      if [[ "$side" == server ]]; then ns="$server_ns"; else ns="$client_ns"; fi
+      for index in 0 1 2 3; do
+        start_crypto_capture "$ns" "$side" "wan$index" "udp port 8443"
+      done
+    done
+    run_wan_voice "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 sticky-before-s2c
+    run_wan_voice "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 sticky-before-c2s
+    # Fail both directions of WAN0; the realtime session reconnects
+    # on WAN1 while the original MPQUIC bulk connection remains open.
+    for ns in "$server_ns" "$client_ns"; do
+      ip netns exec "$ns" tc qdisc replace dev wan0 root netem loss 100% limit 120
+    done
+    switched=0
+    for attempt in $(seq 1 270); do
+      if grep -q 'sticky realtime established.*wan_index=2' "$work/client.log"; then
+        switched=1
+        break
+      fi
+      sleep 0.1
+    done
+    (( switched )) || fail "sticky WAN0 outage failed to trigger WAN1 companion"
+    echo "PASS sticky realtime session moved from WAN0 to WAN1 only after WAN0 failure"
+    run_wan_voice "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 sticky-after-s2c
+    run_wan_voice "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 sticky-after-c2s
+    # Ordinary non-EF ICMP load must retain multiple WANs.
+    ip netns exec "$client_ns" ping -n -i 0.02 -c 140 -W 1 10.77.0.1 >/dev/null || true
+    ip netns exec "$server_ns" ping -n -i 0.02 -c 140 -W 1 10.77.0.2 >/dev/null || true
+    for pid in $capture_pids; do kill -TERM "$pid" 2>/dev/null || true; done
+    for pid in $capture_pids; do wait "$pid" || true; done
+    python3 "$root/tests/integration/verify_sticky_wire.py" "$work" ||
+      fail "realtime QUIC five-tuple rotated between physical WANs"
+    echo "PASS four WAN sticky VoIP: SIP/RTP/RTCP before and after failure with independent bulk MPQUIC"
+    exit 0
+  fi
+
   # Generate RTT measurements after netem is active, without
   # changing the preexisting round-robin WAN4 regression.
   if [[ "$mode" == wan4-latency ]]; then

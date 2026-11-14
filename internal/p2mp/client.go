@@ -13,6 +13,30 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/qos"
 )
 
+// realtimeDatagramSender is supplied by the opt-in dual-session QUIC
+// transport. It sends classified realtime frames on the single-WAN
+// companion connection, never on the round-robin bulk connection.
+type realtimeDatagramSender interface {
+	SendRealtimeDatagram([]byte) error
+}
+
+// RealtimeDatagram carries the authenticated companion generation with its
+// frame. Fragment IDs restart for every new QUIC connection, so fragments
+// from distinct companions must never share reassembly state.
+type RealtimeDatagram struct {
+	Payload    []byte
+	Generation uint64
+}
+
+type realtimeSendStream struct {
+	Stream
+	sender realtimeDatagramSender
+}
+
+func (r realtimeSendStream) SendDatagram(data []byte) error {
+	return r.sender.SendRealtimeDatagram(data)
+}
+
 // ClientPump retains the legacy frame format for callers that did not
 // negotiate the optional zstd-v1 capability.
 func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, logger *slog.Logger) error {
@@ -43,6 +67,13 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	ends := make(chan error, 3)
 	var workers sync.WaitGroup
 	workers.Add(3)
+	realtime, hasRealtime := stream.(interface {
+		ReceiveRealtimeDatagram(context.Context) (RealtimeDatagram, error)
+	})
+	if hasRealtime {
+		workers.Add(1)
+	}
+	var writeMu sync.Mutex
 
 	go func() {
 		defer workers.Done()
@@ -91,7 +122,13 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if err != nil {
 				continue
 			}
-			_, reductions, err := sendEncodedFrame(ctx, stream, fragmenter, payload)
+			out := stream
+			if qos.Priority(pkt) {
+				if sticky, ok := stream.(realtimeDatagramSender); ok {
+					out = realtimeSendStream{Stream: stream, sender: sticky}
+				}
+			}
+			_, reductions, err := sendEncodedFrame(ctx, out, fragmenter, payload)
 			if reductions > 0 {
 				logger.InfoContext(ctx, "client DATAGRAM size budget reduced",
 					"budget", fragmenter.Budget(), "reductions", reductions)
@@ -118,7 +155,9 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if err != nil {
 				continue
 			}
+			writeMu.Lock()
 			n, err := device.Write(pkt)
+			writeMu.Unlock()
 			if err != nil {
 				ends <- err
 				return
@@ -130,6 +169,45 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			voice.Observe(pkt)
 		}
 	}()
+
+	// Realtime companion frames use a separate fragment-ID namespace.
+	// Both receivers synchronize writes to the same Linux TUN and share
+	// the threadsafe VoIP monitor, but never merge partial fragments.
+	if hasRealtime {
+		go func() {
+			defer workers.Done()
+			stickyReassembler := &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+			var generation uint64
+			for {
+				frame, err := realtime.ReceiveRealtimeDatagram(ctx)
+				if err != nil {
+					return
+				}
+				if frame.Generation != generation {
+					// A retired connection may have left a partial
+					// frame under an ID reused by the new companion.
+					stickyReassembler = &l3.Reassembler{Enabled: fragmentation, MaxFrame: maxFrame}
+					generation = frame.Generation
+				}
+				payload, complete, err := stickyReassembler.Accept(frame.Payload)
+				if err != nil || !complete {
+					continue
+				}
+				pkt, err := codec.Unwrap(payload)
+				if err != nil {
+					continue
+				}
+				writeMu.Lock()
+				n, err := device.Write(pkt)
+				writeMu.Unlock()
+				if err != nil || n != len(pkt) {
+					ends <- fmt.Errorf("realtime TUN write: %w (len %d/%d)", err, n, len(pkt))
+					return
+				}
+				voice.Observe(pkt)
+			}
+		}()
+	}
 
 	var result error
 	select {

@@ -24,6 +24,7 @@ type clientFileConfig struct {
 	MaxFrame        int           `yaml:"max_frame,omitempty"`
 	Transport       string        `yaml:"transport,omitempty"`
 	PathScheduler   string        `yaml:"path_scheduler,omitempty"`
+	StickyVoIP      *bool         `yaml:"sticky_voip,omitempty"`
 	UDPDialTimeout  string        `yaml:"udp_dial_timeout,omitempty"`
 	TCPPort         int           `yaml:"tcp_port,omitempty"`
 	TC              *clientFileTC `yaml:"tc,omitempty"`

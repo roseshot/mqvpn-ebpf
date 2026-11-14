@@ -24,6 +24,8 @@ type Stream interface {
 type Session struct {
 	rule        *Rule
 	stream      Stream
+	sticky      bool
+	isRealtime  bool
 	tx          chan []byte
 	priorityTx  chan []byte
 	codec       l3.Codec
@@ -95,6 +97,7 @@ type Hub struct {
 	log        *slog.Logger
 	mu         sync.RWMutex
 	peers      map[string]*Session
+	realtime   map[string]*Session
 	tunnelPool *TunnelPool
 	closed     bool
 	writer     sync.Mutex
@@ -111,7 +114,7 @@ func New(device io.ReadWriteCloser, cfg *Config, maxFrame int, logger *slog.Logg
 		return nil, fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
 	logger = logging.Ensure(logger)
-	return &Hub{device: device, cfg: cfg, maxFrame: maxFrame, log: logger, peers: make(map[string]*Session)}, nil
+	return &Hub{device: device, cfg: cfg, maxFrame: maxFrame, log: logger, peers: make(map[string]*Session), realtime: make(map[string]*Session)}, nil
 }
 
 // Authentication is applied only while establishing a tunnel session.
@@ -154,6 +157,14 @@ func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stre
 // AttachWithFeatures uses independent authenticated capability negotiation
 // for zstd-v1 and frag-v1. Reassembly state is never shared across peers.
 func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression, fragmentation bool) (*Session, error) {
+	return h.AttachWithTrafficRole(ctx, rule, stream, requestDynamic, compression, fragmentation, false, false)
+}
+
+// AttachWithTrafficRole binds one authenticated primary peer and, only after
+// the primary negotiated sticky mode, one independently authenticated
+// single-WAN realtime companion. A companion can never replace or allocate
+// a primary tunnel lease. Legacy sessions retain their single-stream behavior.
+func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression, fragmentation, sticky, realtime bool) (*Session, error) {
 	if rule == nil || stream == nil {
 		return nil, errors.New("peer and stream required")
 	}
@@ -182,12 +193,31 @@ func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream,
 		h.mu.Unlock()
 		return nil, fmt.Errorf("peer %s authentication changed during reload", rule.ID)
 	}
-	if _, exists := h.peers[rule.ID]; exists {
+	if realtime {
+		base := h.peers[rule.ID]
+		if !sticky || requestDynamic || base == nil || !base.sticky ||
+			base.rule.Fingerprint != rule.Fingerprint {
+			h.mu.Unlock()
+			return nil, fmt.Errorf("peer %s has no authorized sticky primary session", rule.ID)
+		}
+		if previous := h.realtime[rule.ID]; previous != nil {
+			// A dead WAN may prevent the server from receiving QUIC
+			// CONNECTION_CLOSE. A fresh mTLS-authenticated companion
+			// atomically takes over the same peer's realtime slot;
+			// its retired predecessor can no longer inject or enqueue
+			// packets. No old, stale connection may block failover.
+			delete(h.realtime, rule.ID)
+			previous.stop()
+		}
+	} else if _, exists := h.peers[rule.ID]; exists {
 		h.mu.Unlock()
 		return nil, fmt.Errorf("peer %s already connected", rule.ID)
 	}
 	var lease netip.Prefix
-	if requestDynamic {
+	if realtime {
+		// Companion uses the primary's address and TUN; never allocates a
+		// second dynamic lease or changes the authenticated session route.
+	} else if requestDynamic {
 		if !rule.DynamicTunnelIP || h.tunnelPool == nil {
 			h.mu.Unlock()
 			return nil, fmt.Errorf("peer %s not authorized for dynamic tunnel IP", rule.ID)
@@ -203,8 +233,12 @@ func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream,
 		return nil, fmt.Errorf("peer %s must request a dynamic tunnel IP", rule.ID)
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, fragmenter: l3.Fragmenter{Enabled: fragmentation}, reassembler: l3.Reassembler{Enabled: fragmentation, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
-	h.peers[rule.ID] = s
+	s := &Session{rule: rule, stream: stream, sticky: sticky, isRealtime: realtime, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, fragmenter: l3.Fragmenter{Enabled: fragmentation}, reassembler: l3.Reassembler{Enabled: fragmentation, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
+	if realtime {
+		h.realtime[rule.ID] = s
+	} else {
+		h.peers[rule.ID] = s
+	}
 	h.mu.Unlock()
 	go func() {
 		defer close(s.txDone)
@@ -244,9 +278,17 @@ func (h *Hub) Detach(s *Session) {
 		return
 	}
 	h.mu.Lock()
-	active := h.peers[s.ID()] == s
+	active := h.peers[s.ID()] == s || h.realtime[s.ID()] == s
 	if active {
-		delete(h.peers, s.ID())
+		if s.isRealtime {
+			delete(h.realtime, s.ID())
+		} else {
+			delete(h.peers, s.ID())
+			if companion := h.realtime[s.ID()]; companion != nil {
+				delete(h.realtime, s.ID())
+				companion.stop()
+			}
+		}
 		s.stop()
 	}
 	h.mu.Unlock()
@@ -286,6 +328,15 @@ func (h *Hub) Receive(ctx context.Context, s *Session) error {
 		// with cancellation. Never inject that packet after revocation.
 		if s.ctx.Err() != nil || ctx.Err() != nil {
 			return nil
+		}
+		if s.isRealtime && IsStickyHeartbeat(payload) {
+			// A liveness round trip must traverse the pinned WAN in BOTH
+			// directions. Echo a fixed 9-byte token, never write it to TUN
+			// or send it through the round-robin primary session.
+			if err := s.stream.SendDatagram(payload); err != nil {
+				return fmt.Errorf("realtime pinned-WAN heartbeat response: %w", err)
+			}
+			continue
 		}
 		h.ingress(s, payload)
 	}
@@ -332,7 +383,8 @@ func (h *Hub) ingress(origin *Session, payload []byte) {
 		return
 	}
 	h.mu.RLock()
-	active := h.peers[origin.ID()] == origin && !h.closed
+	active := !h.closed && (h.peers[origin.ID()] == origin ||
+		(origin.isRealtime && h.realtime[origin.ID()] == origin && h.peers[origin.ID()] != nil))
 	h.mu.RUnlock()
 	if !active {
 		h.drops.Add(1)
@@ -409,7 +461,10 @@ func (h *Hub) fanout(origin *Session, packet []byte) {
 	h.mu.RLock()
 	targets := make([]*Session, 0, len(h.peers))
 	for _, s := range h.peers {
-		if s != origin {
+		// A realtime companion is a distinct session for the SAME peer.
+		// Never reflect multicast back to its primary session: fanout is
+		// based on authenticated peer identity, not session pointers.
+		if origin == nil || s.ID() != origin.ID() {
 			targets = append(targets, s)
 		}
 	}
@@ -421,6 +476,20 @@ func (h *Hub) fanout(origin *Session, packet []byte) {
 
 func (h *Hub) send(s *Session, packet []byte) {
 	priority := qos.Priority(packet)
+	if priority && s.sticky {
+		// Strict sticky policy: NEVER route realtime data via the normal
+		// round-robin MPQUIC connection, even while the dedicated WAN is
+		// reconnecting. A bounded drop is safer than path-flapping/late
+		// reordered media; the next healthy companion resumes delivery.
+		h.mu.RLock()
+		companion := h.realtime[s.ID()]
+		h.mu.RUnlock()
+		if companion == nil {
+			h.drops.Add(1)
+			return
+		}
+		s = companion
+	}
 	// TUN buffers are reused immediately after this callback returns.
 	// Queue an owned packet; encode it on the sender goroutine instead.
 	queued := append([]byte(nil), packet...)
@@ -478,6 +547,10 @@ func (h *Hub) replaceConfig(next *Config, pool *TunnelPool, updatePool bool) err
 		rule, ok := accepted[id]
 		if !ok || rule.Fingerprint != s.rule.Fingerprint || rule.DynamicTunnelIP != s.rule.DynamicTunnelIP {
 			delete(h.peers, id)
+			if companion := h.realtime[id]; companion != nil {
+				delete(h.realtime, id)
+				companion.stop()
+			}
 			s.stop()
 			h.log.InfoContext(s.ctx, "peer session revoked by config reload", "peer", id)
 		}
@@ -497,6 +570,10 @@ func (h *Hub) CloseSessions() {
 		return
 	}
 	h.closed = true
+	for id, s := range h.realtime {
+		delete(h.realtime, id)
+		s.stop()
+	}
 	for id, s := range h.peers {
 		delete(h.peers, id)
 		s.stop()
