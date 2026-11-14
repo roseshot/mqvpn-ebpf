@@ -347,10 +347,38 @@ PY
   exit 0
 fi
 
+run_wan_voice() {
+  local receiver_ns="$1" transmitter_ns="$2" receiver_ip="$3" transmitter_ip="$4" label="$5"
+  local marker="$work/wan-${profile}-$label.ready"
+  ip netns exec "$receiver_ns" python3 "$root/tests/integration/wan_probe.py" \
+    listen "$receiver_ip" "$transmitter_ip" "$marker" "${profile}" \
+    >"$work/wan-${profile}-$label-receiver.log" 2>&1 &
+  local probe_pid="$!"
+  pids="$pids $probe_pid"
+  local up=0
+  for attempt in $(seq 1 120); do
+    if [[ -f "$marker" ]]; then up=1; break; fi
+    kill -0 "$probe_pid" 2>/dev/null ||
+      fail "impaired RTP receiver stopped before signaling"
+    sleep 0.05
+  done
+  (( up )) || fail "impaired RTP receiver failed to start"
+  timeout 65s ip netns exec "$transmitter_ns" python3 "$root/tests/integration/wan_probe.py" \
+    send "$transmitter_ip" "$receiver_ip" "$marker" "${profile}" \
+    >"$work/wan-${profile}-$label-sender.log" 2>&1 ||
+    fail "WAN ${profile} $label SIP/RTP sender"
+  wait "$probe_pid" ||
+    fail "WAN ${profile} $label SIP/RTP receiver"
+  cat "$work/wan-${profile}-$label-receiver.log"
+  cat "$work/wan-${profile}-$label-sender.log"
+}
+
+
 # Four independent WAN paths, all carrying the same mTLS MPQUIC session.
 # Confirm three additional AddPath+Probe completions before fault injection.
 # Differentiated netem conditions prove traffic actually uses each link.
 if [[ "$mode" == wan4 ]]; then
+  profile=poor
   validated=0
   for attempt in $(seq 1 140); do
     count="$(grep -c 'QUIC WAN path validated' "$work/client.log" || true)"
@@ -421,31 +449,6 @@ if [[ "$mode" == wan-regional || "$mode" == wan-poor ]]; then
   done
   echo "netem enabled: profile=$profile delay=$delay jitter=$jitter loss=$loss rate=$bandwidth per direction"
 
-  run_wan_voice() {
-    local receiver_ns="$1" transmitter_ns="$2" receiver_ip="$3" transmitter_ip="$4" label="$5"
-    local marker="$work/wan-$profile-$label.ready"
-    ip netns exec "$receiver_ns" python3 "$root/tests/integration/wan_probe.py" \
-      listen "$receiver_ip" "$transmitter_ip" "$marker" "$profile" \
-      >"$work/wan-$profile-$label-receiver.log" 2>&1 &
-    local probe_pid="$!"
-    pids="$pids $probe_pid"
-    local up=0
-    for attempt in $(seq 1 120); do
-      if [[ -f "$marker" ]]; then up=1; break; fi
-      kill -0 "$probe_pid" 2>/dev/null ||
-        fail "impaired RTP receiver stopped before signaling"
-      sleep 0.05
-    done
-    (( up )) || fail "impaired RTP receiver failed to start"
-    timeout 65s ip netns exec "$transmitter_ns" python3 "$root/tests/integration/wan_probe.py" \
-      send "$transmitter_ip" "$receiver_ip" "$marker" "$profile" \
-      >"$work/wan-$profile-$label-sender.log" 2>&1 ||
-      fail "WAN $profile $label SIP/RTP sender"
-    wait "$probe_pid" ||
-      fail "WAN $profile $label SIP/RTP receiver"
-    cat "$work/wan-$profile-$label-receiver.log"
-    cat "$work/wan-$profile-$label-sender.log"
-  }
 
   # Moderate-loss profile also retains the prior mixed TCP/UDP pressure.
   # UDP sender and TCP sender run in both directions during both calls.
