@@ -1,22 +1,28 @@
-# VPN instance customer-a (mq0). The destination prefixes are private to it.
+# Peer IDs are authorization identities inside ONE Server tenant.
+# By default, id is matched exactly against the verified Client cert CN;
+# certificate_cn overrides that mapping for a friendly internal peer ID.
+# No per-certificate SHA-256 fingerprint is needed for new deployments.
+# A trusted Client CA is necessary but not sufficient: only listed peers
+# receive P2MP destination ownership.
 peers:
   - id: customer-a-site-1
-    certificate_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    certificate_cn: site-1 # omit if the cert CN itself is customer-a-site-1
     routes:
       - 10.77.0.2/32
       - 192.168.20.0/24
+    # An omitted push_routes / push_dns inherits the Server instance default.
   - id: customer-a-site-2
-    certificate_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    certificate_cn: site-2
     routes:
       - 10.77.0.3/32
       - 192.168.30.0/24
+    # Override default route pushes for just this Client:
+    push_routes: [192.168.10.0/24]
+    push_dns: [] # explicit empty list suppresses inherited DNS push
 
-# Dynamic client Tunnel IP example (inside a server instance configured with
-# tunnel_pool: 10.77.0.0/24):
+# Dynamic Client tunnel-IP example, with a matching Server tunnel_pool:
 # peers:
-#   - id: dynamic-client
-#     certificate_sha256: "PUT_CLIENT_CERT_SHA256_HERE"
+#   - id: dynamic-client # Client certificate CN=dynamic-client
 #     dynamic_tunnel_ip: true
-#     routes: [192.168.20.0/24]  # optional LAN behind the peer, not in pool
-# A dynamic-only peer may omit routes. The server forwards its leased /32 or
-# /128 host address to the active authenticated session.
+#     routes: [192.168.20.0/24]
+# Dynamic-only peers may omit routes and use their authenticated leased IP.
