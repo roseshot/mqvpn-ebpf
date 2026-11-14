@@ -65,7 +65,11 @@ cleanup() {
     fi
   done
   for bridge_name in "${bridges[@]}"; do ip link del "$bridge_name" 2>/dev/null || true; done
-  for space in "${spaces[@]}"; do rm -rf "/run/frr/$space"; done
+  for space in "${spaces[@]}"; do
+    rm -rf "/run/frr/$space"
+    # Only the process-unique test namespace, never /etc/frr itself.
+    rm -rf "/etc/frr/$space"
+  done
   rm -rf "$work"
   exit "$status"
 }
@@ -329,18 +333,47 @@ done
 (( converged )) || fail "20 remote loopback routes not installed by $mode (missing=$missing)"
 echo "PASS five-site $mode: 20/20 remote prefixes installed in Linux FIB by FRR"
 
-for i in 0 1 2 3 4; do
-  if [[ "$mode" == bgp ]]; then
-    ip netns exec "${nodes[i]}" vtysh -N "${spaces[i]}" \
-      -c "show bgp ipv4 unicast summary" >"$work/site$i-summary.log" ||
-      fail "BGP summary unavailable at site$i"
-  else
-    ip netns exec "${nodes[i]}" vtysh -N "${spaces[i]}" \
-      -c "show ip ospf neighbor" >"$work/site$i-summary.log" ||
-      fail "OSPF neighbor summary unavailable at site$i"
-  fi
-  [[ -s "$work/site$i-summary.log" ]] || fail "site$i routing summary empty"
+# Daemons were started with explicit per-daemon -f files. Only create the
+# vtysh configuration namespace AFTER they have loaded those configs:
+# if frr.conf existed before startup, FRR could ignore -f and start
+# without BGP/OSPF settings. Empty, FRR-valid comments avoid the
+# misleading "Can't open vtysh.conf" / "frr.conf processing failure: 11"
+# messages without hiding stderr or changing the running configuration.
+for space in "${spaces[@]}"; do
+  install -d -m 0750 -o frr -g frr "/etc/frr/$space"
+  printf '!\n' >"/etc/frr/$space/vtysh.conf"
+  printf '!\n' >"/etc/frr/$space/frr.conf"
+  chown frr:frr "/etc/frr/$space/vtysh.conf" "/etc/frr/$space/frr.conf"
+  chmod 0640 "/etc/frr/$space/vtysh.conf" "/etc/frr/$space/frr.conf"
 done
+
+# Query live daemon state as JSON and assert each expected neighbor
+# individually. A nonempty summary/zero vtysh exit code alone could mask
+# an Idle BGP peer or a 2-Way/Exchange OSPF adjacency.
+for i in 0 1 2 3 4; do
+  neighbors=()
+  if (( i == 0 )); then
+    neighbors=("${tunnel[@]:1}")
+  else
+    neighbors=("${tunnel[0]}")
+  fi
+  if [[ "$mode" == bgp ]]; then
+    command="show bgp ipv4 unicast summary json"
+  else
+    command="show ip ospf neighbor json"
+  fi
+  if ! ip netns exec "${nodes[i]}" vtysh -N "${spaces[i]}" \
+      -c "$command" >"$work/site$i-neighbors.json" 2>"$work/site$i-vtysh.log"; then
+    fail "$mode live neighbor query failed at site$i"
+  fi
+  # Even warnings indicate that vtysh configuration is incomplete; never
+  # discard them just to make an integration check appear green.
+  [[ ! -s "$work/site$i-vtysh.log" ]] || fail "$mode vtysh configuration warning at site$i"
+  python3 "$root/tests/integration/check_frr_neighbors.py" "$mode" \
+    "$work/site$i-neighbors.json" "${neighbors[@]}" ||
+    fail "$mode neighbor state assertion at site$i"
+done
+echo "PASS five-site $mode: all 8 expected bidirectional FRR adjacencies are Established/Full with clean vtysh configuration"
 
 # Cross-site traffic must pass through the real Server TUN forwarding path;
 # there are no Client↔Client physical WAN links.

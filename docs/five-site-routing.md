@@ -48,9 +48,11 @@ redirects and reverse-path filtering for the test.
 
 Each scenario first checks that each Client's sampled QUIC WAN count
 is fully established. It then checks that all **20 directed remote loopback routes** in
-the Linux FIB were installed by FRR (`proto bgp` or `proto ospf`), and
-then performs **20 source-bound cross-site ICMP tests** across the encrypted
-overlay. The test reports failures and daemon logs instead of silently
+the Linux FIB were installed by FRR (`proto bgp` or `proto ospf`).
+Additionally, it requires all four Server-to-Client and four Client-to-Server
+BGP adjacencies to be `Established`, or all eight OSPF adjacencies to be
+`Full`. It then performs **20 source-bound cross-site ICMP tests** across
+the encrypted overlay. The test reports failures and daemon logs instead of silently
 passing when neighbors or routes fail to converge. Certificates, namespaces
 and FRR runtime sockets are test-only and cleaned up.
 
@@ -73,3 +75,20 @@ GitHub Actions supplies `WAN_SEED` from `github.run_id`; the same run
 can be repeated locally by using the printed seed. BGP and OSPF use
 different deterministic subsets from that seed. Each run checks all
 20 BGP and 20 OSPF learned routes and forwarding directions.
+
+## FRR per-namespace configuration and assertion hygiene
+
+The test starts `zebra` and `bgpd` or `ospfd` under separate `-N`
+namespaces using explicit generated per-daemon `-f` configurations.
+**Only after the daemons have loaded those files and routing has converged**,
+the script provisions each namespace's `/etc/frr/<namespace>/vtysh.conf`
+and `frr.conf` as minimal FRR-valid comment files. Creating `frr.conf`
+before daemon startup could enable integrated-configuration mode and cause
+FRR to ignore the individual `-f` files. Test-only directories are
+removed by the cleanup trap.
+
+The script fails on any unexpected `vtysh` stderr instead of hiding it.
+Its JSON output is parsed by `tests/integration/check_frr_neighbors.py`:
+missing or Idle BGP peers, non-Full OSPF neighbors, and invalid JSON all
+cause a failure. The helper has separate negative-case unit tests that CI
+runs before the privileged five-site scenarios.

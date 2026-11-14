@@ -153,7 +153,8 @@ jobs:
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
           bash -n tests/integration/five-site-frr.sh
-          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py
+          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py tests/integration/check_frr_neighbors.py tests/integration/test_frr_neighbors.py
+          python3 -m unittest discover -s tests/integration -p 'test_frr_neighbors.py' -v
       - name: Build actual mqvpn binaries
         run: make release
       - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
