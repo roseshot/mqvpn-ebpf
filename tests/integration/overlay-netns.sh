@@ -213,9 +213,13 @@ crypto_client_flags=()
 client_env=()
 client_transport=quic
 if [[ "$is_crypto" == true ]]; then
-  crypto_client_flags=(--test-tls-keylog-file "$work/tls.keys")
-  client_env=(MQVPN_UNSAFE_TEST_KEYLOG=I_ACKNOWLEDGE_TLS_SECRETS)
-  if [[ "$mode" == crypto-tcp ]]; then client_transport=tcp; fi
+  # TEMPORARY DIAGNOSTIC: prove whether QUIC KeyLogWriter affects
+  # MPQUIC path validation. Will be removed after observing CI.
+  if [[ "$mode" == crypto-tcp ]]; then
+    crypto_client_flags=(--test-tls-keylog-file "$work/tls.keys")
+    client_env=(MQVPN_UNSAFE_TEST_KEYLOG=I_ACKNOWLEDGE_TLS_SECRETS)
+    client_transport=tcp
+  fi
 fi
 ip netns exec "$client_ns" env "${client_env[@]}" "$root/bin/mqvpn-client" \
   --server vpn.ci.example:8443 --connect-ip 192.0.2.1 \
