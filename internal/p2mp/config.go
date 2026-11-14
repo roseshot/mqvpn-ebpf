@@ -36,9 +36,9 @@ type FileConfig struct {
 
 type Rule struct {
 	ID              string
-	Fingerprint     [32]byte  // only populated for deprecated SHA256 peer rules
+	Fingerprint     [32]byte // only populated for deprecated SHA256 peer rules
 	CertificateCN   string
-	PushRoutes      []string  // nil => inherit instance-wide defaults
+	PushRoutes      []string // nil => inherit instance-wide defaults
 	PushDNS         []string
 	Routes          []netip.Prefix
 	DynamicTunnelIP bool
