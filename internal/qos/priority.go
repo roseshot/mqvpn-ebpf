@@ -148,3 +148,94 @@ func ipv6Transport(pkt []byte) (proto byte, offset int, ok bool) {
 	}
 	return 0, 0, false
 }
+
+// Class separates interactive realtime traffic, assured delivery, and bulk.
+// Only Realtime is eligible for the single-WAN sticky QUIC companion.
+// Assured never changes the existing connection-wide MPQUIC path scheduler.
+type Class uint8
+
+const (
+	BestEffort Class = iota
+	Assured
+	Realtime
+)
+
+// Classify respects caller-supplied IPv4/IPv6 DSCP without trusting
+// malformed IP headers. SIP/EF is strict realtime; AF1x–AF4x, CS5,
+// CS6 and CS7 share an assured bulk-MPQUIC queue.
+func Classify(pkt []byte) Class {
+	if Priority(pkt) {
+		return Realtime
+	}
+	if len(pkt) == 0 {
+		return BestEffort
+	}
+	var dscp byte
+	switch pkt[0] >> 4 {
+	case 4:
+		if len(pkt) < 20 || pkt[0]&0x0f < 5 ||
+			len(pkt) < int(pkt[0]&0x0f)*4 ||
+			len(pkt) != int(pkt[2])<<8|int(pkt[3]) {
+			return BestEffort
+		}
+		dscp = pkt[1] >> 2
+	case 6:
+		if len(pkt) < 40 || len(pkt) != 40+(int(pkt[4])<<8|int(pkt[5])) {
+			return BestEffort
+		}
+		dscp = (((pkt[0] & 0x0f) << 4) | pkt[1]>>4) >> 2
+	default:
+		return BestEffort
+	}
+	switch dscp {
+	case 10, 12, 14, 18, 20, 22, 26, 28, 30, 34, 36, 38, 40, 48, 56:
+		return Assured
+	default:
+		return BestEffort
+	}
+}
+
+// Weighted schedule bounds the service gap for every continuously queued
+// class: four realtime, two assured, one best-effort packet per seven
+// selections. Unused slots are immediately borrowed by active queues.
+var qosSchedule = [...]Class{Realtime, Realtime, Assured, Realtime, Assured, Realtime, BestEffort}
+
+// NextTier uses a cyclic, bounded weighted service order. No lane can
+// monopolize the sender while the other lanes are backlogged. A return
+// value of false indicates cancellation; channels remain open for lifetime.
+func NextTier(ctx context.Context, realtime, assured, bestEffort <-chan []byte, cursor *int) ([]byte, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	for i := 0; i < len(qosSchedule); i++ {
+		idx := (*cursor + i) % len(qosSchedule)
+		var queue <-chan []byte
+		switch qosSchedule[idx] {
+		case Realtime:
+			queue = realtime
+		case Assured:
+			queue = assured
+		default:
+			queue = bestEffort
+		}
+		select {
+		case pkt := <-queue:
+			*cursor = (idx + 1) % len(qosSchedule)
+			return pkt, true
+		default:
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return nil, false
+	case pkt := <-realtime:
+		*cursor = 1
+		return pkt, true
+	case pkt := <-assured:
+		*cursor = 3
+		return pkt, true
+	case pkt := <-bestEffort:
+		*cursor = 0
+		return pkt, true
+	}
+}
