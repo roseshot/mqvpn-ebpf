@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"strings"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
