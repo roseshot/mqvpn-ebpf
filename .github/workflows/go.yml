@@ -151,7 +151,7 @@ jobs:
           sudo modprobe vxlan || true
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
-          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py
+          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py
       - name: Build actual mqvpn binaries
         run: make release
       - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
@@ -162,6 +162,8 @@ jobs:
         run: sudo bash tests/integration/overlay-netns.sh wan4
       - name: Four heterogeneous WANs with low-RTT scheduling and bounded RTP reorder
         run: sudo bash tests/integration/overlay-netns.sh wan4-latency
+      - name: Four-WAN strict Sticky SIP/RTP and WAN0 to WAN1 failover
+        run: sudo bash tests/integration/overlay-netns.sh wan4-sticky
       - name: VXLAN MTU 1450 over TUN (ARP, full-MTU DF, both directions)
         run: sudo bash tests/integration/overlay-netns.sh vxlan
       - name: TCP over QUIC TUN (256 KiB bidirectional integrity, both server roles)
