@@ -23,6 +23,10 @@ PACKETS = 250
 MEDIA_SECONDS = PACKETS * RTP_PERIOD
 SOCKET_WINDOW = 12.0
 PROFILES = {
+    # Four asymmetric WANs with connection-wide low-RTT scheduling.
+    # This should sharply reduce the 100+ reordered RTP packets seen
+    # with Round Robin; it is a CI regression ceiling, not a VoIP SLA.
+    "latency": {"loss": 12.0, "jitter_ms": 65.0, "gap_ms": 900.0, "reordered": 35},
     "congested": {"loss": 8.0, "jitter_ms": 100.0, "gap_ms": 700.0},
     # Smoke-test ceilings, not voice quality service-level agreements.
     "regional": {"loss": 25.0, "jitter_ms": 150.0, "gap_ms": 1200.0},
@@ -265,6 +269,9 @@ def run(role, local, peer, marker, profile):
             f"RTP receive jitter too high: {stats['jitter_ms']:.1f} ms")
     require(stats["max_gap_ms"] <= thresholds["gap_ms"],
             f"RTP interarrival gap too high: {stats['max_gap_ms']:.1f} ms")
+    if "reordered" in thresholds:
+        require(stats["reordered"] <= thresholds["reordered"],
+                f"RTP reordered packets too high: {stats['reordered']}")
     print(f"PASS WAN {profile} {role}: SIP INVITE/ACK/BYE, "
           f"RTP {stats['received']}/{PACKETS}, "
           f"loss={stats['loss_percent']:.1f}%, "
@@ -276,7 +283,7 @@ def run(role, local, peer, marker, profile):
 if __name__ == "__main__":
     try:
         require(len(sys.argv) == 6,
-                "usage: wan_probe.py listen|send local peer marker congested|regional|poor")
+                "usage: wan_probe.py listen|send local peer marker latency|congested|regional|poor")
         _, role, local, peer, marker, profile = sys.argv
         require(role in ("listen", "send") and profile in PROFILES,
                 "bad WAN test role/profile")
