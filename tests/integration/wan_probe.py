@@ -23,6 +23,7 @@ PACKETS = 250
 MEDIA_SECONDS = PACKETS * RTP_PERIOD
 SOCKET_WINDOW = 12.0
 PROFILES = {
+    "congested": {"loss": 8.0, "jitter_ms": 100.0, "gap_ms": 700.0},
     # Smoke-test ceilings, not voice quality service-level agreements.
     "regional": {"loss": 25.0, "jitter_ms": 150.0, "gap_ms": 1200.0},
     "poor": {"loss": 40.0, "jitter_ms": 260.0, "gap_ms": 2000.0},
@@ -275,7 +276,7 @@ def run(role, local, peer, marker, profile):
 if __name__ == "__main__":
     try:
         require(len(sys.argv) == 6,
-                "usage: wan_probe.py listen|send local peer marker regional|poor")
+                "usage: wan_probe.py listen|send local peer marker congested|regional|poor")
         _, role, local, peer, marker, profile = sys.argv
         require(role in ("listen", "send") and profile in PROFILES,
                 "bad WAN test role/profile")
