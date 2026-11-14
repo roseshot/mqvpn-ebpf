@@ -17,17 +17,17 @@ import (
 // PeerConfig identifies an authenticated session and the destination prefixes
 // that should be delivered to it. Routes are NOT kernel routes or traffic ACLs.
 type PeerConfig struct {
-	ID                string   `yaml:"id"`
+	ID string `yaml:"id"`
 	// By default a peer's id is matched against the verified Client certificate CN.
 	// certificate_cn permits a different human-friendly peer ID.
-	CertificateCN     string   `yaml:"certificate_cn,omitempty"`
+	CertificateCN string `yaml:"certificate_cn,omitempty"`
 	// Deprecated: kept solely for a rolling upgrade of existing clusters.
 	CertificateSHA256 string   `yaml:"certificate_sha256,omitempty"`
 	Routes            []string `yaml:"routes"`
 	// Nil means inherit the instance setting; [] explicitly suppresses it.
-	PushRoutes        []string `yaml:"push_routes,omitempty"`
-	PushDNS           []string `yaml:"push_dns,omitempty"`
-	DynamicTunnelIP   bool     `yaml:"dynamic_tunnel_ip,omitempty"`
+	PushRoutes      []string `yaml:"push_routes,omitempty"`
+	PushDNS         []string `yaml:"push_dns,omitempty"`
+	DynamicTunnelIP bool     `yaml:"dynamic_tunnel_ip,omitempty"`
 }
 
 type FileConfig struct {
@@ -36,9 +36,9 @@ type FileConfig struct {
 
 type Rule struct {
 	ID              string
-	Fingerprint     [32]byte // only populated for deprecated SHA256 peer rules
+	Fingerprint     [32]byte  // only populated for deprecated SHA256 peer rules
 	CertificateCN   string
-	PushRoutes      []string // nil => inherit instance-wide defaults
+	PushRoutes      []string  // nil => inherit instance-wide defaults
 	PushDNS         []string
 	Routes          []netip.Prefix
 	DynamicTunnelIP bool
