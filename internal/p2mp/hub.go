@@ -27,6 +27,8 @@ type Session struct {
 	tx         chan []byte
 	priorityTx chan []byte
 	codec      l3.Codec
+	fragmenter l3.Fragmenter
+	reassembler l3.Reassembler
 	done       chan struct{}
 	txDone     chan struct{}
 	// txMu serializes the nonblocking enqueue with session revocation,
@@ -140,6 +142,12 @@ func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream,
 // AttachWithCompression uses a per-session codec negotiated in the authenticated
 // HTTP CONNECT headers. Legacy peers keep the original CONNECT-ETHERNET format.
 func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression bool) (*Session, error) {
+	return h.AttachWithFeatures(ctx, rule, stream, requestDynamic, compression, false)
+}
+
+// AttachWithFeatures uses independent authenticated capability negotiation
+// for zstd-v1 and frag-v1. Reassembly state is never shared across peers.
+func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression, fragmentation bool) (*Session, error) {
 	if rule == nil || stream == nil {
 		return nil, errors.New("peer and stream required")
 	}
@@ -189,7 +197,7 @@ func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stre
 		return nil, fmt.Errorf("peer %s must request a dynamic tunnel IP", rule.ID)
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
+	s := &Session{rule: rule, stream: stream, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, fragmenter: l3.Fragmenter{Enabled: fragmentation}, reassembler: l3.Reassembler{Enabled: fragmentation, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
 	h.peers[rule.ID] = s
 	h.mu.Unlock()
 	go func() {
@@ -209,10 +217,20 @@ func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stre
 				h.drops.Add(1)
 				continue
 			}
-			if err := s.stream.SendDatagram(payload); err != nil {
+			parts, err := s.fragmenter.Split(payload)
+			if err != nil {
 				h.drops.Add(1)
-				h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
-			} else {
+				continue
+			}
+			for _, part := range parts {
+				if s.ctx.Err() != nil {
+					return
+				}
+				if err := s.stream.SendDatagram(part); err != nil {
+					h.drops.Add(1)
+					h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
+					break // A failed fragment makes this frame incomplete.
+				}
 				h.txFrames.Add(1)
 			}
 		}
@@ -301,7 +319,15 @@ func (h *Hub) ingress(origin *Session, payload []byte) {
 		h.drops.Add(1)
 		return
 	}
-	packet, err := origin.codec.Unwrap(payload)
+	frame, ready, err := origin.reassembler.Accept(payload)
+	if err != nil {
+		h.drops.Add(1)
+		return
+	}
+	if !ready {
+		return
+	}
+	packet, err := origin.codec.Unwrap(frame)
 	if err != nil || len(packet)+l3.EthernetLen > h.maxFrame {
 		h.drops.Add(1)
 		return
