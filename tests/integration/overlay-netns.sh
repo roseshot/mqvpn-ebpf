@@ -329,7 +329,7 @@ if [[ "$mode" == wan-regional || "$mode" == wan-poor ]]; then
   for ns in "$server_ns" "$client_ns"; do
     ip netns exec "$ns" tc qdisc replace dev wan0 root netem \
       delay "$delay" "$jitter" distribution normal \
-      loss "$loss" rate "$bandwidth" limit 3000
+      loss "$loss" rate "$bandwidth" limit 120
     ip netns exec "$ns" tc -s qdisc show dev wan0 |
       tee "$work/$ns-netem-before.log"
     ip netns exec "$ns" tc qdisc show dev wan0 | grep -q 'netem' ||
