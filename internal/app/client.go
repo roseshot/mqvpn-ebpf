@@ -35,6 +35,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	wan2 := fs.String("wan2-ip", "", "secondary WAN local source IPv4/IPv6 address (optional)")
 	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
 	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
+	var wanCLI clientWANFlags
+	fs.Var(&wanCLI, "wan", "WAN path SOURCE_IP@INTERFACE (repeat in priority order; first WAN is handshake path)")
 	tunName := fs.String("tun", "mq0", "Linux L3 TUN name (created and configured by daemon)")
 	tunAddress := fs.String("tun-address", "", "required local TUN host IPv4/IPv6 CIDR")
 	tunMTU := fs.Int("tun-mtu", 0, "TUN MTU (default auto, capped at 1400 based on WAN MTU)")
@@ -58,10 +60,16 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	var configuredWANs []clientWAN
 	if *configPath != "" {
 		file, err := loadClientFile(*configPath)
 		if err != nil {
 			return err
+		}
+		configuredWANs = file.WANs
+		if len(file.WANs) > 0 &&
+			(file.SourceIP != "" || file.SourceInterface != "" || file.WAN2IP != "" || file.WAN2Interface != "") {
+			return errors.New("client YAML wans cannot be combined with legacy source_ip / wan2_ip fields")
 		}
 		// Explicit CLI flags always override YAML. Unspecified settings
 		// retain their existing defaults, including TCP and TCX policies.
@@ -141,13 +149,14 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if *tcpPort < 1 || *tcpPort > 65535 {
 		return fmt.Errorf("invalid --tcp-port %d", *tcpPort)
 	}
-	// No WAN selector means follow the kernel's route to the server.
-	// Secondary WAN paths still require explicit selection.
-	if *wan2 != "" && *wan1 == *wan2 {
-		return errors.New("WAN source IPs must be different")
-	}
-	if *wan2Iface != "" && *wan2Iface == *wan1Iface {
-		return errors.New("primary and secondary WAN interfaces must be different")
+	// Default without a WAN selector follows the kernel route. A new
+	// ordered WAN list replaces legacy flags, not appends to them.
+	wans, err := planClientWANs(configuredWANs, wanCLI,
+		*wan1, *wan1Iface, *wan2, *wan2Iface,
+		explicit["source-ip"] || explicit["source-interface"] ||
+			explicit["wan2-ip"] || explicit["wan2-interface"])
+	if err != nil {
+		return err
 	}
 	endpoint, err := planClientEndpoint(*server, *pathFlag, *connectIP)
 	if err != nil {
@@ -156,12 +165,12 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	logger = logger.With("tun", *tunName)
 	logger.InfoContext(ctx, "VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName, "transport", *transportMode)
 	tcpOptions := clientTCPOptions{
-		endpoint: endpoint, wanIP: *wan1, wanInterface: *wan1Iface, tunName: *tunName, tcpPort: *tcpPort,
+		endpoint: endpoint, wanIP: wans[0].SourceIP, wanInterface: wans[0].Interface, tunName: *tunName, tcpPort: *tcpPort,
 		caFile: *caFile, certFile: *certFile, keyFile: *keyFile, maxFrame: *maxFrame,
 		tunAddress: *tunAddress, tunMTU: *tunMTU, tcConfig: tcConfig, acceptRoutes: *acceptRoutes, acceptDNS: *acceptDNS, dnsRoutes: *dnsRoutes,
 	}
-	if *transportMode == "tcp" && (*wan2 != "" || *wan2Iface != "") {
-		return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")
+	if *transportMode == "tcp" && len(wans) > 1 {
+		return errors.New("TCP fallback only supports one WAN; remove additional wans")
 	}
 	// Configuration and identity-file failures are not transient network
 	// outages. Validate them once before starting the retry supervisor.
@@ -173,7 +182,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	options := clientSessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
-		secondaryWANIP: *wan2, secondaryWANInterface: *wan2Iface,
+		wans: wans,
 	}
 	return runClientSupervisor(ctx, *reconnect, logger, func(sessionCtx context.Context) error {
 		return runClientSession(sessionCtx, options, logger)
@@ -184,8 +193,7 @@ type clientSessionOptions struct {
 	tcp                   clientTCPOptions
 	transport             string
 	udpDialTimeout        time.Duration
-	secondaryWANIP        string
-	secondaryWANInterface string
+	wans                  []clientWAN
 }
 
 // runClientSession owns exactly one transport and TUN session. On every
@@ -216,7 +224,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	tr := &quic.Transport{Conn: base}
 	qconf := &quic.Config{
 		EnableDatagrams:     true,
-		MaxPaths:            2,
+		MaxPaths:            max(2, len(o.wans)),
 		MultipathController: quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler()),
 		KeepAlivePeriod:     10 * time.Second,
 		MaxIdleTimeout:      30 * time.Second,
@@ -236,8 +244,8 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		_ = tr.Close()
 		if o.transport == "auto" && fallbackAllowed {
 			logger.WarnContext(ctx, "QUIC UDP handshake timed out; trying authenticated TCP fallback", "timeout", o.udpDialTimeout)
-			if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {
-				logger.WarnContext(ctx, "TCP fallback uses primary WAN only; secondary WAN unavailable over TCP")
+			if len(o.wans) > 1 {
+				logger.WarnContext(ctx, "TCP fallback uses primary WAN only; additional WAN paths unavailable over TCP")
 			}
 			if tcpErr := runTCPFallback(ctx, o.tcp, logger); tcpErr != nil {
 				return errors.Join(fmt.Errorf("QUIC dial: %w", err), fmt.Errorf("TCP fallback: %w", tcpErr))
@@ -246,15 +254,20 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		}
 		return fmt.Errorf("QUIC dial: %w", err)
 	}
-	var second *quic.Transport
-	var secondIPForMTU net.IP
+	var extraTransports []*quic.Transport
+	// Keep every socket until the QUIC connection has closed, including
+	// when adding or probing any later path fails.
 	defer func() {
 		_ = conn.CloseWithError(0, "shutdown")
-		if second != nil {
-			_ = second.Close()
+		for _, transport := range extraTransports {
+			_ = transport.Close()
 		}
 		_ = tr.Close()
 	}()
+	underlaySources := []struct {
+		ip    net.IP
+		iface string
+	}{{ip: selectedIP, iface: o.tcp.wanInterface}}
 
 	h3 := (&http3.Transport{EnableDatagrams: true}).NewClientConn(conn)
 	select {
@@ -335,53 +348,53 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	pushedRoutes = routepush.WithDNSHostRoutes(pushedRoutes, pushedDNS, o.tcp.dnsRoutes)
 	logger.InfoContext(ctx, "CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName, "tunnel_address", effectiveAddress)
 
-	if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {
-		if !conn.ConnectionState().SupportsMultipath {
-			return errors.New("peer did not negotiate IETF Multipath QUIC")
-		}
-		otherUDP, secondIP, err := wan.Listen(ctx, o.secondaryWANIP, o.secondaryWANInterface, serverAddr)
+	if len(o.wans) > 1 && !conn.ConnectionState().SupportsMultipath {
+		return errors.New("peer did not negotiate IETF Multipath QUIC")
+	}
+	for index, link := range o.wans[1:] {
+		otherUDP, selectedSource, err := wan.Listen(ctx, link.SourceIP, link.Interface, serverAddr)
 		if err != nil {
-			return err
+			return fmt.Errorf("open WAN %d: %w", index+2, err)
 		}
-		logger.InfoContext(ctx, "secondary WAN bound", "source_ip", secondIP, "interface", o.secondaryWANInterface, "local", otherUDP.LocalAddr())
-		secondIPForMTU = secondIP
-		second = &quic.Transport{Conn: otherUDP}
-		path, err := conn.AddPath(second)
+		transport := &quic.Transport{Conn: otherUDP}
+		extraTransports = append(extraTransports, transport)
+		logger.InfoContext(ctx, "additional WAN bound", "wan_index", index+2,
+			"source_ip", selectedSource, "interface", link.Interface, "local", otherUDP.LocalAddr())
+		path, err := conn.AddPath(transport)
 		if err != nil {
-			return fmt.Errorf("add second path: %w", err)
+			return fmt.Errorf("add WAN %d path: %w", index+2, err)
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 		err = path.Probe(probeCtx)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("validate second WAN path: %w", err)
+			return fmt.Errorf("validate WAN %d path: %w", index+2, err)
 		}
 		pathID, _ := path.ID()
-		logger.InfoContext(ctx, "second QUIC path validated", "path_id", pathID, "source", otherUDP.LocalAddr())
+		logger.InfoContext(ctx, "QUIC WAN path validated", "wan_index", index+2,
+			"path_id", pathID, "source", otherUDP.LocalAddr())
+		underlaySources = append(underlaySources, struct {
+			ip    net.IP
+			iface string
+		}{ip: selectedSource, iface: link.Interface})
 	}
-	// Compute the final TUN/frame budget only after both MPQUIC WAN paths
-	// have been selected. A slower WAN must not silently receive overlarge
-	// inner DATAGRAMs from the shared TUN.
+	// Calculate the auto MTU from every validated underlay, so no slower
+	// or smaller WAN can silently exceed the shared TUN frame budget.
 	var underlays []mtu.Underlay
 	if o.tcp.tunMTU == 0 {
-		primary, err := wan.SourceUnderlay(selectedIP, o.tcp.wanInterface)
-		if err != nil {
-			return fmt.Errorf("primary WAN MTU: %w", err)
-		}
-		underlays = append(underlays, primary)
-		if second != nil {
-			secondary, err := wan.SourceUnderlay(secondIPForMTU, o.secondaryWANInterface)
+		for index, source := range underlaySources {
+			underlay, err := wan.SourceUnderlay(source.ip, source.iface)
 			if err != nil {
-				return fmt.Errorf("secondary WAN MTU: %w", err)
+				return fmt.Errorf("WAN %d MTU: %w", index+1, err)
 			}
-			underlays = append(underlays, secondary)
+			underlays = append(underlays, underlay)
 		}
 	}
 	budget, err := mtu.Plan(o.tcp.tunName, effectiveAddress, o.tcp.tunMTU, o.tcp.maxFrame, underlays)
 	if err != nil {
 		return err
 	}
-	guard, err := routepush.ProtectServer(serverAddr.IP, selectedIP, o.tcp.wanInterface, o.tcp.tunName, pushedRoutes, second != nil)
+	guard, err := routepush.ProtectServer(serverAddr.IP, selectedIP, o.tcp.wanInterface, o.tcp.tunName, pushedRoutes, len(o.wans) > 1)
 	if err != nil {
 		return fmt.Errorf("protect VPN server underlay route: %w", err)
 	}
