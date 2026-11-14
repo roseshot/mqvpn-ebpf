@@ -324,6 +324,15 @@ func (h *Hub) Receive(ctx context.Context, s *Session) error {
 		if s.ctx.Err() != nil || ctx.Err() != nil {
 			return nil
 		}
+		if s.isRealtime && IsStickyHeartbeat(payload) {
+			// A liveness round trip must traverse the pinned WAN in BOTH
+			// directions. Echo a fixed 9-byte token, never write it to TUN
+			// or send it through the round-robin primary session.
+			if err := s.stream.SendDatagram(payload); err != nil {
+				return fmt.Errorf("realtime pinned-WAN heartbeat response: %w", err)
+			}
+			continue
+		}
 		h.ingress(s, payload)
 	}
 }
