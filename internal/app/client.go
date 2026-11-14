@@ -37,6 +37,10 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
 	var wanCLI clientWANFlags
 	fs.Var(&wanCLI, "wan", "WAN path SOURCE_IP@INTERFACE[=SERVER_IP] (repeat; first is handshake path)")
+	haMode := fs.String("ha-mode", "", "HA mode: active_active or active_standby")
+	haController := fs.String("ha-controller", "", "HA controller: client or external/haproxy")
+	var haBackends clientHABackendFlags
+	fs.Var(&haBackends, "ha-backend", "authenticated Server backend IP (repeat; replaces YAML ha.backends)")
 	useServerWANs := fs.Bool("use-server-wans", false, "use authenticated Server ADD_ADDRESS announcements for secondary WAN destinations")
 	tunName := fs.String("tun", "mq0", "Linux L3 TUN name (created and configured by daemon)")
 	tunAddress := fs.String("tun-address", "", "required local TUN host IPv4/IPv6 CIDR")
@@ -65,12 +69,14 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	var configuredWANs []clientWAN
+	var haConfig *clientHAConfig
 	if *configPath != "" {
 		file, err := loadClientFile(*configPath)
 		if err != nil {
 			return err
 		}
 		configuredWANs = file.WANs
+		haConfig = file.HA
 		if !explicit["use-server-wans"] && file.UseServerWANs != nil {
 			*useServerWANs = *file.UseServerWANs
 		}
@@ -141,6 +147,20 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if fs.NArg() != 0 {
 		return errors.New("unexpected positional client arguments")
 	}
+	if explicit["ha-mode"] || explicit["ha-controller"] || explicit["ha-backend"] {
+		if haConfig == nil {
+			haConfig = &clientHAConfig{}
+		}
+		if explicit["ha-mode"] {
+			haConfig.Mode = *haMode
+		}
+		if explicit["ha-controller"] {
+			haConfig.Controller = *haController
+		}
+		if explicit["ha-backend"] {
+			haConfig.Backends = append([]string(nil), haBackends...)
+		}
+	}
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) {
 		return fmt.Errorf("invalid --max-frame %d", *maxFrame)
 	}
@@ -180,6 +200,22 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	haPlan, err := planClientHA(*server, *pathFlag, *connectIP, haConfig)
+	if err != nil {
+		return err
+	}
+	if haPlan != nil {
+		if !*reconnect {
+			return errors.New("HA requires reconnect: true to recover after session loss")
+		}
+		if haPlan.controller == clientHANative {
+			for _, link := range wans {
+				if link.ServerIP != "" {
+					return errors.New("client-managed HA cannot use fixed wans[].server_ip; use authenticated ADD_ADDRESS with use_server_wans instead")
+				}
+			}
+		}
+	}
 	logger = logger.With("tun", *tunName, "path_scheduler", normalizedScheduler)
 	logger.InfoContext(ctx, "VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName, "transport", *transportMode)
 	tcpOptions := clientTCPOptions{
@@ -195,7 +231,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if _, err := certPool(*caFile); err != nil {
 		return err
 	}
-	if _, err := keyPair(*certFile, *keyFile); err != nil {
+	clientIdentity, err := keyPair(*certFile, *keyFile)
+	if err != nil {
 		return err
 	}
 	keyLog, err := openTestTLSKeyLog(*testKeyLog)
@@ -210,6 +247,14 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	options := clientSessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
 		wans: wans, useServerWANs: *useServerWANs, pathScheduler: normalizedScheduler, stickyVoIP: *stickyVoIP,
+	}
+	if haPlan != nil {
+		return runClientHASupervisor(ctx, haPlan, clientIdentity.Certificate[0], logger,
+			func(sessionCtx context.Context, target clientEndpoint) error {
+				selected := options
+				selected.tcp.endpoint = target
+				return runClientSession(sessionCtx, selected, logger)
+			})
 	}
 	return runClientSupervisor(ctx, *reconnect, logger, func(sessionCtx context.Context) error {
 		return runClientSession(sessionCtx, options, logger)
@@ -386,7 +431,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("CONNECT-ETHERNET rejected: %s", response.Status)
+		return fmt.Errorf("%w: %s", errClientPeerDenied, response.Status)
 	}
 	if response.Header.Get("Capsule-Protocol") != "?1" {
 		return errors.New("missing successful Capsule-Protocol response")
