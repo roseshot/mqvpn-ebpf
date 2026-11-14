@@ -158,3 +158,32 @@ func TestCredentialIdentityPreservedAcrossCNReload(t *testing.T) {
 		t.Fatal("changing the authorized certificate CN must revoke the old session")
 	}
 }
+
+func TestMixedLegacyFingerprintAndCNMatchingFailsClosed(t *testing.T) {
+	der := testClientCertificateCN(t, "shared-cn")
+	digest := sha256.Sum256(der)
+	cnRule := PeerConfig{
+		ID: "cn-site", CertificateCN: "shared-cn",
+		Routes: []string{"10.77.0.2/32"},
+	}
+	legacyRule := PeerConfig{
+		ID: "legacy-site", CertificateSHA256: hex.EncodeToString(digest[:]),
+		Routes: []string{"10.77.0.3/32"},
+	}
+	for _, peers := range [][]PeerConfig{
+		{cnRule, legacyRule},
+		{legacyRule, cnRule},
+	} {
+		config, err := Parse(FileConfig{Peers: peers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matched := config.PeerByCertificate(der); matched != nil {
+			t.Fatalf("ambiguous certificate authorized %q depending on Peer YAML ordering", matched.ID)
+		}
+	}
+	legacyOnly, err := Parse(FileConfig{Peers: []PeerConfig{legacyRule}})
+	if err != nil || legacyOnly.PeerByCertificate(der) == nil {
+		t.Fatalf("legacy single-rule migration unexpectedly rejected: %v", err)
+	}
+}
