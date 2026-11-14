@@ -2,8 +2,8 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,10 +13,10 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
-if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed ]]; then
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
 fi
-if [[ "$mode" == mixed ]]; then
+if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor ]]; then
   for tool in iperf3 tc ss; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
   done
@@ -306,6 +306,154 @@ for side in ("server", "client"):
         print(f"PASS mixed {side} {proto}: {byte_count} receiver bytes", flush=True)
 PY
   echo "PASS mixed: full-duplex VoIP during bidirectional TCP and UDP on shaped WAN"
+  exit 0
+fi
+
+# Internet-impairment tests: use the two genuine WAN egress devices, NOT
+# mq0/TUN or VXLAN, so encrypted QUIC traffic sees real netem packet loss.
+# The test boots mTLS QUIC without impairment first, then applies netem.
+if [[ "$mode" == wan-regional || "$mode" == wan-poor ]]; then
+  if [[ "$mode" == wan-regional ]]; then
+    profile=regional
+    delay=40ms
+    jitter=10ms
+    loss=1%
+    bandwidth=20mbit
+  else
+    profile=poor
+    delay=120ms
+    jitter=40ms
+    loss=3%
+    bandwidth=10mbit
+  fi
+  for ns in "$server_ns" "$client_ns"; do
+    ip netns exec "$ns" tc qdisc replace dev wan0 root netem \
+      delay "$delay" "$jitter" distribution normal \
+      loss "$loss" rate "$bandwidth" limit 3000
+    ip netns exec "$ns" tc -s qdisc show dev wan0 |
+      tee "$work/$ns-netem-before.log"
+    ip netns exec "$ns" tc qdisc show dev wan0 | grep -q 'netem' ||
+      fail "wan0 netem qdisc was not installed"
+  done
+  echo "netem enabled: profile=$profile delay=$delay jitter=$jitter loss=$loss rate=$bandwidth per direction"
+
+  run_wan_voice() {
+    local receiver_ns="$1" transmitter_ns="$2" receiver_ip="$3" transmitter_ip="$4" label="$5"
+    local marker="$work/wan-$profile-$label.ready"
+    ip netns exec "$receiver_ns" python3 "$root/tests/integration/wan_probe.py" \
+      listen "$receiver_ip" "$transmitter_ip" "$marker" "$profile" \
+      >"$work/wan-$profile-$label-receiver.log" 2>&1 &
+    local probe_pid="$!"
+    pids="$pids $probe_pid"
+    local up=0
+    for attempt in $(seq 1 120); do
+      if [[ -f "$marker" ]]; then up=1; break; fi
+      kill -0 "$probe_pid" 2>/dev/null ||
+        fail "impaired RTP receiver stopped before signaling"
+      sleep 0.05
+    done
+    (( up )) || fail "impaired RTP receiver failed to start"
+    timeout 65s ip netns exec "$transmitter_ns" python3 "$root/tests/integration/wan_probe.py" \
+      send "$transmitter_ip" "$receiver_ip" "$marker" "$profile" \
+      >"$work/wan-$profile-$label-sender.log" 2>&1 ||
+      fail "WAN $profile $label SIP/RTP sender"
+    wait "$probe_pid" ||
+      fail "WAN $profile $label SIP/RTP receiver"
+    cat "$work/wan-$profile-$label-receiver.log"
+    cat "$work/wan-$profile-$label-sender.log"
+  }
+
+  # Moderate-loss profile also retains the prior mixed TCP/UDP pressure.
+  # UDP sender and TCP sender run in both directions during both calls.
+  if [[ "$profile" == regional ]]; then
+    load_pids=""
+    server_pids=""
+    for entry in "server:$server_ns:10.77.0.1" "client:$client_ns:10.77.0.2"; do
+      side="${entry%%:*}"
+      rest="${entry#*:}"
+      ns="${rest%%:*}"
+      address="${rest#*:}"
+      for proto in tcp udp; do
+        if [[ "$proto" == tcp ]]; then port=5201; else port=5202; fi
+        ip netns exec "$ns" iperf3 -s -1 -B "$address" -p "$port" \
+          >"$work/wan-$side-$proto-server.log" 2>&1 &
+        server_pids="$server_pids $!"
+        pids="$pids $!"
+      done
+    done
+    ready_load=0
+    for attempt in $(seq 1 120); do
+      if ip netns exec "$server_ns" ss -lntH | grep -q ':5201' &&
+         ip netns exec "$client_ns" ss -lntH | grep -q ':5201' &&
+         ip netns exec "$server_ns" ss -lntH | grep -q ':5202' &&
+         ip netns exec "$client_ns" ss -lntH | grep -q ':5202'; then
+        ready_load=1
+        break
+      fi
+      sleep 0.05
+    done
+    (( ready_load )) || fail "netem TCP/UDP iperf servers not ready"
+    for entry in "server:$server_ns:10.77.0.1:10.77.0.2" "client:$client_ns:10.77.0.2:10.77.0.1"; do
+      side="${entry%%:*}"
+      rest="${entry#*:}"
+      ns="${rest%%:*}"
+      rest="${rest#*:}"
+      local_ip="${rest%%:*}"
+      remote_ip="${rest#*:}"
+      timeout 60s ip netns exec "$ns" iperf3 -J -c "$remote_ip" \
+        -B "$local_ip" -p 5201 -t 35 -P 2 \
+        >"$work/wan-$side-tcp-client.json" 2>"$work/wan-$side-tcp-client.log" &
+      load_pids="$load_pids $!"
+      pids="$pids $!"
+      timeout 60s ip netns exec "$ns" iperf3 -J -c "$remote_ip" \
+        -B "$local_ip" -p 5202 -u -b 3M -l 1200 -t 35 \
+        >"$work/wan-$side-udp-client.json" 2>"$work/wan-$side-udp-client.log" &
+      load_pids="$load_pids $!"
+      pids="$pids $!"
+    done
+    sleep 0.5
+    for pid in $load_pids; do
+      kill -0 "$pid" 2>/dev/null ||
+        fail "WAN load process exited before voice start"
+    done
+    echo "WAN load active: TCP bulk and UDP 3M in both directions"
+  fi
+
+  run_wan_voice "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 s2c
+  run_wan_voice "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 c2s
+
+  if [[ "$profile" == regional ]]; then
+    for pid in $load_pids; do
+      kill -0 "$pid" 2>/dev/null ||
+        fail "WAN bulk load did not overlap complete voice calls"
+    done
+    for pid in $load_pids $server_pids; do
+      wait "$pid" || fail "WAN iperf process failed ($pid)"
+    done
+    python3 - "$work" <<'PY'
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+for side in ("server", "client"):
+    for proto in ("tcp", "udp"):
+        item = json.loads((root / f"wan-{side}-{proto}-client.json").read_text())
+        if "error" in item:
+            raise SystemExit(f"WAN {side}/{proto} failed: {item['error']}")
+        end = item.get("end", {})
+        result = end.get("sum_received", {})
+        n = result.get("bytes", 0)
+        if n < (100_000 if proto == "tcp" else 20_000):
+            raise SystemExit(f"WAN {side}/{proto}: too few receiver bytes ({n})")
+        print(f"WAN_THROUGHPUT side={side} proto={proto} bytes={n} "
+              f"bps={result.get('bits_per_second', 0):.0f}", flush=True)
+PY
+  fi
+  for ns in "$server_ns" "$client_ns"; do
+    echo "final netem counters: $ns"
+    ip netns exec "$ns" tc -s qdisc show dev wan0
+  done
+  echo "PASS WAN netem $profile: two full-duplex SIP/RTP calls with real delay, jitter and loss"
   exit 0
 fi
 
