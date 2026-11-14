@@ -34,9 +34,11 @@ type Session struct {
 	voip        qos.VoIPMonitor
 	done        chan struct{}
 	txDone      chan struct{}
-	// txMu serializes the nonblocking enqueue with session revocation,
-	// so an already-detached peer cannot enqueue into an orphaned queue.
+	// txMu fences enqueues and rxMu fences a final authorized TUN write
+	// against session retirement. Only the TUN write holds rxMu: no Hub
+	// mutex can be reacquired while it is held, avoiding lock inversion.
 	txMu          sync.Mutex
+	rxMu          sync.RWMutex
 	ctx           context.Context
 	cancel        context.CancelFunc
 	tunnelAddress netip.Prefix
@@ -49,10 +51,13 @@ func (s *Session) VoIPStats() qos.VoIPStats {
 	return s.voip.Snapshot()
 }
 
-// stop is called only while holding Hub.mu and only after removing this
-// session from Hub.peers. It fences new queue writes before canceling the
-// packet sender. A SendDatagram already in progress is transport-owned.
+// stop is called only while holding Hub.mu and after removing the session
+// from Hub.peers or Hub.realtime. Wait for any authorized TUN write to
+// complete before returning, and fence new writes and queue enqueues.
+// A SendDatagram already in progress is transport-owned.
 func (s *Session) stop() {
+	s.rxMu.Lock()
+	defer s.rxMu.Unlock()
 	s.txMu.Lock()
 	defer s.txMu.Unlock()
 	s.cancel()
@@ -414,7 +419,18 @@ func (h *Hub) ingress(origin *Session, payload []byte) {
 		// tunnel endpoint, without group allowlists, TTL rewriting or PPS caps.
 		h.fanout(origin, packet)
 	}
+	// The initial active check can be invalidated while a frame is
+	// decoded or waits for another peer's TUN write. Revocation acquires
+	// rxMu exclusively, so no retired session can start a local TUN
+	// write once its stop method has returned.
+	origin.rxMu.RLock()
+	if origin.ctx.Err() != nil {
+		origin.rxMu.RUnlock()
+		h.drops.Add(1)
+		return
+	}
 	h.writeTUN(packet)
+	origin.rxMu.RUnlock()
 }
 
 func (h *Hub) egress(packet []byte) {
