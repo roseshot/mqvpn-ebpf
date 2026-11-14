@@ -272,7 +272,7 @@ func newSharedHTTP3Server(mux *serverMux) *http3.Server {
 		EnableDatagrams: true,
 		QUICConfig: &quic.Config{
 			EnableDatagrams: true,
-			MaxPaths:        2,
+			MaxPaths:        int(^uint(0) >> 1), // Let mp-quic-go negotiate its supported maximum (64 in v0.3.1).
 			MultipathControllerFactory: func() quic.MultipathController {
 				return quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler())
 			},
