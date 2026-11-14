@@ -14,9 +14,14 @@ cert: /etc/mqvpn/client.pem
 key: /etc/mqvpn/client.key
 ~~~
 
-`server` is always the authenticated tenant DNS hostname, optionally
-with a QUIC UDP port (`tenant.vpn.example.com:8443`). An URL scheme,
-path, query, IP literal, and separate SNI field are not accepted.
+`server` is the authenticated tenant DNS hostname, optionally
+with a QUIC UDP port (`tenant.vpn.example.com:8443`). For a **single
+Server instance only**, `server` may also be a literal IPv4 or IPv6
+address with a matching Server certificate IP SAN. Go TLS omits SNI
+for IP literals, and the single Server instance is selected without
+SNI. With multiple instances, only DNS identities with SNI are
+permitted. URL schemes, embedded paths, queries and separate SNI
+fields are not accepted.
 `connect_ip` is the optional physical destination override without
 changing the certificate-verified DNS identity.
 
@@ -80,7 +85,12 @@ with a WAN host route before inserting overlapping TUN routes. A
 full-tunnel IPv4 `0.0.0.0/0` advertisement is installed as two
 `/1` routes; IPv6 `::/0` similarly uses two `/1` routes.
 Only daemon-owned routes are removed at session termination; existing
-administrator routes are never replaced. If dual-WAN MPQUIC receives
+administrator routes are never replaced. New Client-created TUNs are
+deleted at session end; pre-existing TUNs regain their original IP
+addresses, MTU and administrative UP/DOWN state. The Client does not
+install system DNS settings; it does not modify or reset DNS on
+disconnect. Cleanup failures stop retries instead of compounding stale
+kernel state. If dual-WAN MPQUIC receives
 a push that covers the Server public IP, Client rejects it instead
 of redirecting an underlay path through the tunnel.
 

@@ -183,3 +183,16 @@ func TestServerMasquePathDefaultAndCustom(t *testing.T){
 		if err:=cfg.Validate();err==nil{t.Fatalf("unsafe path %q accepted",bad)}
 	}
 }
+
+func TestSingleInstanceIPCertificateIdentity(t *testing.T){
+	for _,identity:=range []string{"198.51.100.7","2001:db8::7"}{
+		cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("only",identity,"mq0")}}
+		if err:=cfg.Validate();err!=nil{t.Fatalf("single IP identity %s: %v",identity,err)}
+		cfg.Instances=append(cfg.Instances,sampleInstance("second","other.example.test","mq1"))
+		if err:=cfg.Validate();err==nil{t.Fatalf("multi-instance IP identity %s accepted",identity)}
+	}
+	for _,ip:=range []string{"0.0.0.0","::","224.0.0.1","ff02::1","127.0.0.1","fe80::1%eth0"}{
+		cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("only",ip,"mq0")}}
+		if err:=cfg.Validate();err==nil{t.Fatalf("unusable IP identity %s accepted",ip)}
+	}
+}

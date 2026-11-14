@@ -15,6 +15,7 @@ type fakeOps struct {
 	addr *netlink.Addr
 	order []string
 	failOn string
+	other []netlink.Addr
 }
 func(f *fakeOps)fail(step string)error{
 	f.order=append(f.order,step)
@@ -42,12 +43,22 @@ func(f *fakeOps)SetUp(_ netlink.Link)error{
 }
 func(f *fakeOps)ListAddrs(_ netlink.Link)([]netlink.Addr,error){
 	if err:=f.fail("list");err!=nil{return nil,err}
-	if f.addr==nil{return nil,nil}
-	return []netlink.Addr{*f.addr},nil
+	if f.addr==nil{return append([]netlink.Addr(nil),f.other...),nil}
+	return append([]netlink.Addr{*f.addr},f.other...),nil
 }
 func(f *fakeOps)DeleteAddr(_ netlink.Link,addr *netlink.Addr)error{
 	if err:=f.fail("delete");err!=nil{return err}
 	if f.addr!=nil && f.addr.IPNet.String()==addr.IPNet.String(){f.addr=nil}
+	return nil
+}
+func(f *fakeOps)SetDown(l netlink.Link)error{
+	if err:=f.fail("down");err!=nil{return err}
+	l.Attrs().Flags&^=net.FlagUp
+	return nil
+}
+func(f *fakeOps)DeleteLink(l netlink.Link)error{
+	if err:=f.fail("delete-link");err!=nil{return err}
+	if f.link==l{f.link=nil}
 	return nil
 }
 func TestValidateName(t *testing.T){
@@ -152,4 +163,62 @@ func TestDynamicRoutedLeaseCleanupPropagatesFailure(t *testing.T){
 	f.failOn="delete"
 	if err:=releaseRoutedAddress("mq0","10.77.0.2/24",f);err==nil{t.Fatal("cleanup permission failure not reported")}
 	if f.addr==nil{t.Fatal("address removed after failed cleanup")}
+}
+
+func TestClientSessionRestoresPreexistingTUNState(t *testing.T){
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1300}}}
+	original,err:=netlink.ParseAddr("10.77.0.9/24")
+	if err!=nil{t.Fatal(err)}
+	f.addr=original
+	other,err:=netlink.ParseAddr("2001:db8::9/64")
+	if err!=nil{t.Fatal(err)}
+	f.other=[]netlink.Addr{*other}
+	before,err:=captureLinkState("mq0",f)
+	if err!=nil{t.Fatal(err)}
+	if err:=setupRoutedInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
+	if err:=restoreClientLink("mq0","10.77.0.2/24",true,before,7,f);err!=nil{t.Fatal(err)}
+	if f.addr==nil||f.addr.IPNet.String()!="10.77.0.9/24"{
+		t.Fatalf("original local IP not restored: %+v",f.addr)
+	}
+	if f.link==nil||f.link.MTU!=1300||f.link.Flags&net.FlagUp!=0 {
+		t.Fatalf("TUN link state leaked after disconnect: %+v",f.link)
+	}
+	if len(f.other)!=1||f.other[0].IPNet.String()!="2001:db8::9/64" {
+		t.Fatal("unrelated TUN address changed")
+	}
+}
+
+func TestClientSessionReleasesStaticOrDynamicAddresses(t *testing.T){
+	for _,routed:=range []bool{false,true}{
+		f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1350,Flags:net.FlagUp}}}
+		before,err:=captureLinkState("mq0",f)
+		if err!=nil{t.Fatal(err)}
+		var configure func(string,string,int,linkOps)error=setupInterface
+		if routed{configure=setupRoutedInterface}
+		if err:=configure("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
+		if err:=restoreClientLink("mq0","10.77.0.2/24",routed,before,7,f);err!=nil{t.Fatal(err)}
+		if f.addr!=nil||f.link==nil||f.link.MTU!=1350||f.link.Flags&net.FlagUp==0{
+			t.Fatalf("Client TUN state not released (routed=%t): %+v %+v",routed,f.addr,f.link)
+		}
+	}
+}
+func TestClientSessionCleanupFailurePropagates(t *testing.T){
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1300}}}
+	before,err:=captureLinkState("mq0",f)
+	if err!=nil{t.Fatal(err)}
+	if err:=setupInterface("mq0","10.77.0.2/24",1400,f);err!=nil{t.Fatal(err)}
+	f.failOn="delete"
+	if err:=restoreClientLink("mq0","10.77.0.2/24",false,before,7,f);err==nil{
+		t.Fatal("cleanup failed silently")
+	}
+}
+func TestClientSessionRemovesOnlyNewlyCreatedTUN(t *testing.T){
+	f:=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:7,MTU:1400}}}
+	if err:=restoreClientLink("mq0","10.77.0.2/24",false,linkSnapshot{},7,f);err!=nil{t.Fatal(err)}
+	if f.link!=nil{t.Fatal("session-created interface not deleted")}
+	f=&fakeOps{link:&netlink.Dummy{LinkAttrs:netlink.LinkAttrs{Name:"mq0",Index:9,MTU:1400}}}
+	if err:=restoreClientLink("mq0","10.77.0.2/24",false,linkSnapshot{},7,f);err==nil{
+		t.Fatal("deleted a replacement interface with a different index")
+	}
+	if f.link==nil{t.Fatal("replacement interface was deleted")}
 }

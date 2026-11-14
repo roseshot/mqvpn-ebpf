@@ -25,12 +25,15 @@ func planClientEndpoint(server,path,connectIP string)(clientEndpoint,error){
 	if server=="" || strings.ContainsAny(server,"/?#@\\%") || strings.Contains(server,"://") {
 		return clientEndpoint{},errors.New("server must be an authenticated DNS hostname[:port] (use path separately)")
 	}
+	// An unbracketed IPv6 literal has no port; otherwise use the
+	// standard URL authority representation with bracketed IPv6.
+	if ip,err:=netip.ParseAddr(server);err==nil && ip.Is6(){server="["+ip.String()+"]"}
 	u,err:=url.Parse("https://"+server)
 	if err!=nil || u.Host=="" || u.Opaque!="" || u.Path!="" || u.RawQuery!="" || u.Fragment!="" || u.User!=nil {
 		return clientEndpoint{},errors.New("server must be a DNS hostname[:port]")
 	}
 	host:=strings.ToLower(u.Hostname())
-	if err:=validateSNI(host);err!=nil{return clientEndpoint{},fmt.Errorf("server DNS identity: %w",err)}
+	if err:=validateClientIdentity(host);err!=nil{return clientEndpoint{},err}
 	if strings.HasSuffix(u.Host,":"){return clientEndpoint{},errors.New("server port cannot be empty")}
 	port:=u.Port()
 	if port!="" {
@@ -53,4 +56,17 @@ func planClientEndpoint(server,path,connectIP string)(clientEndpoint,error){
 		serverName:host,
 		requestURL:(&url.URL{Scheme:"https",Host:authority,Path:path}).String(),
 	},nil
+}
+
+// A literal IP is a TLS verification identity only when the peer presents
+// a matching x509 IP SAN; Go deliberately omits SNI for IP literals.
+func validateClientIdentity(host string)error{
+	if ip,err:=netip.ParseAddr(host);err==nil{
+		if ip.Zone()!=""||ip.IsUnspecified()||ip.IsMulticast()||ip.IsLoopback(){
+			return fmt.Errorf("invalid server IP identity %q",host)
+		}
+		return nil
+	}
+	if err:=validateSNI(host);err!=nil{return fmt.Errorf("server DNS identity: %w",err)}
+	return nil
 }

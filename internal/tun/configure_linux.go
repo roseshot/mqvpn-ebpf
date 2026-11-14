@@ -26,6 +26,8 @@ func(systemLinkOps)ReplaceAddr(l netlink.Link,a *netlink.Addr)error{return netli
 func(systemLinkOps)SetUp(l netlink.Link)error{return netlink.LinkSetUp(l)}
 func(systemLinkOps)ListAddrs(l netlink.Link)([]netlink.Addr,error){return netlink.AddrList(l,netlink.FAMILY_ALL)}
 func(systemLinkOps)DeleteAddr(l netlink.Link,a *netlink.Addr)error{return netlink.AddrDel(l,a)}
+func(systemLinkOps)SetDown(l netlink.Link)error{return netlink.LinkSetDown(l)}
+func(systemLinkOps)DeleteLink(l netlink.Link)error{return netlink.LinkDel(l)}
 
 func setupInterface(name,cidr string,mtu int,ops linkOps)error{
 	return setupInterfaceMode(name,cidr,mtu,ops,false)

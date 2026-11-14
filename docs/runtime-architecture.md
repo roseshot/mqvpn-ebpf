@@ -20,12 +20,14 @@ standard-library APIs and Go modules.
 | HTTP/1.1/TCP fallback capsules | `internal/capsule` | Pure Go framing |
 | Client reconnect supervisor | `internal/app/client_reconnect.go` | Context-aware serial attempts and capped exponential backoff |
 
-The Client reconnect supervisor uses sequential sessions. On disconnect,
-a session closes its TUN descriptor, TCX attachment, QUIC/TCP sockets
-and owned pushed routes before another attempt starts. In dynamic
-address mode the Client also deletes its matching routed local IP from a
-persistent pre-existing TUN, preserving unrelated addresses. A failed
-route/lease cleanup stops reconnection to avoid compounding stale state. Each attempt
+The Client reconnect supervisor uses sequential sessions. A TUN created
+for a Client session is deleted at disconnect. When attaching to an
+existing TUN, Client snapshots and restores the address set it touched,
+the previous MTU and the interface's original UP/DOWN state. Existing
+unrelated addresses are never removed. Managed pushed routes and WAN
+host routes are cleaned before another session. DNS is not configured
+or rewritten by this daemon. An incomplete route or TUN restoration
+stops auto-reconnect rather than stacking corrupt network state. Each attempt
 re-resolves the physical Server destination and renegotiates a dynamic
 Tunnel IP; a reconnect is not an in-place QUIC path handoff.
 

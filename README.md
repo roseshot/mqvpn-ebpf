@@ -135,6 +135,41 @@ VPN instances on one host still need separate TUNs/routing domains.
 when the server has enabled TCP fallback; forced TCP uses the primary WAN
 only. The transport never downgrades on authentication failures.
 
+## Single-instance IP SAN certificate mode
+
+If Server has exactly **one** configured instance, its `server_name`
+may be a literal IPv4 or IPv6 address, provided the Server certificate
+contains the matching **IP subjectAltName**. The Client uses the same
+IP in `server`; no DNS resolution or SNI extension is required. TLS
+1.3, Server IP SAN validation, client certificate verification and
+Peer fingerprint authorization remain enforced. Example:
+
+~~~yaml
+# Server, single instance only
+instances:
+  - name: site
+    server_name: 198.51.100.7  # must match certificate IP SAN
+    tun: mq0
+    address: 10.77.0.1/24
+    peers: /etc/mqvpn/peers.yaml
+    cert: /etc/mqvpn/server-ip.crt
+    key: /etc/mqvpn/server-ip.key
+    client_ca: /etc/mqvpn/ca.crt
+~~~
+
+~~~yaml
+# Client
+server: 198.51.100.7
+ca: /etc/mqvpn/ca.crt
+cert: /etc/mqvpn/client.crt
+key: /etc/mqvpn/client.key
+~~~
+
+IPv6 literals can use `server: "[2001:db8::7]"`, optionally followed
+by a port. **Multiple Server instances still require distinct DNS
+`server_name` identities and matching SNI**, and never use missing-SNI
+fallback, preventing cross-tenant routing.
+
 ## Automatic Client reconnect (enabled by default)
 
 Client is a long-running VPN daemon. When the first dial fails, a QUIC
@@ -146,9 +181,12 @@ The retry wait is interrupted immediately by SIGINT/SIGTERM.
 
 Each attempt resolves the current Server IP again, discovers WAN
 source/MTU, authenticates with mTLS, renegotiates a Tunnel IP, and
-reapplies authorized Server-pushed routes. The previous session's
-managed routes, underlay host pin, sockets, TUN descriptor and TCX
-attachments are released before the next attempt. IP leases are
+reapplies authorized Server-pushed routes. The previous session's managed
+routes, underlay host pin, sockets, TUN state and TCX attachments are
+released before the next attempt. A Client-created TUN is removed; an
+existing TUN has its previous addresses, MTU and administrative UP flag
+restored. No system DNS setting is installed by mqvpn, so none is
+changed or deleted. Cleanup failures prevent unsafe automatic retries. IP leases are
 session-scoped; the assigned Tunnel IP may change after reconnect.
 TCP fallback **still occurs only if the initial QUIC handshake times
 out**, never on a post-handshake error or an authentication failure.

@@ -85,3 +85,18 @@ func TestClientForwardsMulticastWithoutFiltering(t *testing.T){
 	case <-time.After(time.Second):t.Fatal("client shutdown stuck")
 	}
 }
+
+type closeErrorTUN struct{
+	*testTun
+	closeErr error
+}
+func(d *closeErrorTUN)Close()error{_ = d.testTun.Close();return d.closeErr}
+func TestClientPumpReportsCleanupError(t *testing.T){
+	failure:=errors.New("unable to restore TUN")
+	device:=&closeErrorTUN{testTun:newTestTun(),closeErr:failure}
+	stream:=&testDatagrams{in:make(chan []byte,2),out:make(chan []byte,2)}
+	ctx,cancel:=context.WithCancel(context.Background())
+	cancel()
+	err:=ClientPump(ctx,device,stream,1160,slog.New(slog.NewTextHandler(io.Discard,nil)))
+	if !errors.Is(err,failure){t.Fatalf("ClientPump swallowed TUN Close failure: %v",err)}
+}

@@ -20,10 +20,10 @@ import (
 // authorizeTCPRequest uses the SAME tenant SNI, current client CA, and peer
 // certificate fingerprint policy as the HTTP/3 CONNECT handler.
 func (m *serverMux) authorizeTCPRequest(r *http.Request) (*liveInstance,*p2mp.Rule,int,error) {
-	if r.TLS==nil || r.TLS.ServerName=="" {
-		return nil,nil,http.StatusMisdirectedRequest,errors.New("TLS SNI required")
+	if r.TLS==nil {
+		return nil,nil,http.StatusMisdirectedRequest,errors.New("TLS connection required")
 	}
-	inst:=m.Lookup(r.TLS.ServerName)
+	inst:=m.selectTenant(r.TLS.ServerName)
 	if inst==nil || !requestAuthorityMatchesSNI(r.Host,inst.prepared.spec.ServerName) {
 		return nil,nil,http.StatusMisdirectedRequest,errors.New("unknown VPN tenant")
 	}

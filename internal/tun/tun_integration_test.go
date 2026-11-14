@@ -166,3 +166,41 @@ func TestIntegrationPersistentTUNReleasesDynamicLeaseBeforeReconnect(t *testing.
 	_ = next.Close()
 	if err:=ReleaseRoutedAddress(name,second);err!=nil{t.Fatalf("remove second lease %s: %v",second,err)}
 }
+
+func TestIntegrationClientRestoresPersistentStaticAndDynamicTUN(t *testing.T){
+	if os.Geteuid()!=0{t.Fatal("requires root/CAP_NET_ADMIN")}
+	name:=fmt.Sprintf("mqrestore%x",os.Getpid())
+	if len(name)>=ifNameSize{t.Fatalf("test TUN name too long: %s",name)}
+	pid:=os.Getpid()
+	base:=int(byte(pid&0xfc))
+	old:=fmt.Sprintf("198.19.%d.%d/30",byte(pid>>8),base+1)
+	lease:=fmt.Sprintf("198.19.%d.%d/30",byte(pid>>8),base+2)
+	f,err:=OpenRouted(name,old,1360)
+	if err!=nil{t.Fatal(err)}
+	defer func(){if link,err:=netlink.LinkByName(name);err==nil{_ = netlink.LinkDel(link)}}()
+	_,_,errno:=syscall.Syscall(syscall.SYS_IOCTL,f.Fd(),0x400454cb,1)
+	if errno!=0{f.Close();t.Fatalf("persist TUN: %v",errno)}
+	if err:=f.Close();err!=nil{t.Fatal(err)}
+	link,err:=netlink.LinkByName(name)
+	if err!=nil{t.Fatal(err)}
+	oldMTU,oldUp:=link.Attrs().MTU,link.Attrs().Flags&net.FlagUp!=0
+	for _,routed:=range []bool{true,false}{
+		dev,err:=OpenClient(name,lease,1400,routed)
+		if err!=nil{t.Fatalf("open Client session routed=%t: %v",routed,err)}
+		if err:=dev.Close();err!=nil{t.Fatalf("restore Client session: %v",err)}
+		link,err:=netlink.LinkByName(name)
+		if err!=nil{t.Fatalf("persistent link destroyed: %v",err)}
+		if link.Attrs().MTU!=oldMTU||(link.Attrs().Flags&net.FlagUp!=0)!=oldUp {
+			t.Fatalf("original link state not restored: %+v",link.Attrs())
+		}
+		addrs,err:=netlink.AddrList(link,netlink.FAMILY_V4)
+		if err!=nil{t.Fatal(err)}
+		foundOld,foundLease:=false,false
+		for _,a:=range addrs{
+			if a.IPNet==nil{continue}
+			if a.IPNet.IP.Equal(net.ParseIP(strings.Split(old,"/")[0])){foundOld=true}
+			if a.IPNet.IP.Equal(net.ParseIP(strings.Split(lease,"/")[0])){foundLease=true}
+		}
+		if !foundOld||foundLease{t.Fatalf("persistent TUN addresses leaked: old=%t new=%t addrs=%+v",foundOld,foundLease,addrs)}
+	}
+}

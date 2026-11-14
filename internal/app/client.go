@@ -276,31 +276,27 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 	}()
 	logger.Info("effective VPN TUN MTU","mtu",budget.TUNMTU,"max_frame",budget.MaxFrame,
 		"auto",budget.Auto,"wan_links",underlays)
-	openTUN:=tun.Open
-	if dynamicAddressRequested(o.tcp.tunAddress){openTUN=tun.OpenRouted}
-	dev, err := openTUN(o.tcp.tunName,effectiveAddress,budget.TUNMTU)
-	if err != nil { return err }
-	if dynamicAddressRequested(o.tcp.tunAddress){
-		defer func(){
-			if err:=tun.ReleaseRoutedAddress(o.tcp.tunName,effectiveAddress);err!=nil{
-				result=errors.Join(result,fmt.Errorf("%w: cleanup leased TUN IP: %v",errUnsafeReconnect,err))
-				logger.Error("unsafe reconnect: dynamic Tunnel IP cleanup failed","error",err)
-			}
-		}()
-	}
+	dev,err:=tun.OpenClient(o.tcp.tunName,effectiveAddress,budget.TUNMTU,dynamicAddressRequested(o.tcp.tunAddress))
+	if err!=nil{return err}
 	if err:=guard.Install(o.tcp.tunName,pushedRoutes);err!=nil {
-		_ = dev.Close()
-		return fmt.Errorf("apply authenticated Server routes: %w",err)
+		closeErr:=dev.Close()
+		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("apply authenticated Server routes: %w",err),closeErr,errUnsafeReconnect)}
+		return errors.Join(fmt.Errorf("apply authenticated Server routes: %w",err),closeErr)
 	}
 	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed","routes",routepush.Encode(pushedRoutes),"server_ip",serverAddr.IP)}
 	tcAttachment,err:=attachConfiguredTC(o.tcp.tunName,o.tcp.tcConfig,budget.TUNMTU,logger)
-	if err!=nil{_ = dev.Close();return fmt.Errorf("attach client TUN TC eBPF: %w",err)}
+	if err!=nil{
+		closeErr:=dev.Close()
+		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
+		return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr)
+	}
 	defer reportAndCloseTC(tcAttachment,logger)
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
 	logger.Info("L3 route-based TUN forwarding started", "tun", o.tcp.tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)
 	err = p2mp.ClientPump(ctx, dev, stream, budget.MaxFrame, logger)
 	close(done)
+	if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
 	return err
 }
 

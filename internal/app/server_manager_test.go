@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"math/big"
+	"net"
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"testing"
@@ -172,4 +174,55 @@ func TestTCObjectReloadUpdatesOnlyInstanceHash(t *testing.T) {
 		t.Fatal("TC ELF replacement failed to trigger instance restart")
 	}
 	if first.listen!=second.listen{t.Fatal("TC ELF change modified shared UDP listener")}
+}
+
+func TestPreparedSingleIPCertAndTLSWithoutSNI(t *testing.T){
+	cfg,_:=testServerFiles(t)
+	cfg.Instances[0].ServerName="198.51.100.7"
+	// The certificate contains IP SAN only, deliberately no DNS SAN.
+	pub,private,err:=ed25519.GenerateKey(rand.Reader)
+	if err!=nil{t.Fatal(err)}
+	leaf:=&x509.Certificate{
+		SerialNumber:big.NewInt(37),
+		NotBefore:time.Now().Add(-time.Minute),
+		NotAfter:time.Now().Add(time.Hour),
+		BasicConstraintsValid:true,IsCA:true,
+		KeyUsage:x509.KeyUsageCertSign|x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth,x509.ExtKeyUsageClientAuth},
+		IPAddresses:[]net.IP{net.ParseIP("198.51.100.7")},
+	}
+	der,err:=x509.CreateCertificate(rand.Reader,leaf,leaf,pub,private)
+	if err!=nil{t.Fatal(err)}
+	pk,err:=x509.MarshalPKCS8PrivateKey(private)
+	if err!=nil{t.Fatal(err)}
+	for _,file:=range []struct{path string;content []byte}{
+		{cfg.Instances[0].Cert,pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:der})},
+		{cfg.Instances[0].Key,pem.EncodeToMemory(&pem.Block{Type:"PRIVATE KEY",Bytes:pk})},
+	}{if err:=os.WriteFile(file.path,file.content,0600);err!=nil{t.Fatal(err)}}
+	prepared,err:=prepareServer(cfg)
+	if err!=nil{t.Fatalf("IP SAN single instance preparation: %v",err)}
+	mux:=newServerMux()
+	live:=&liveInstance{prepared:prepared.instances["edge-a"]}
+	mux.Publish(map[string]*liveInstance{"edge-a":live})
+	root,err:=certPool(cfg.Instances[0].ClientCA)
+	if err!=nil{t.Fatal(err)}
+	cert,err:=keyPair(cfg.Instances[0].Cert,cfg.Instances[0].Key)
+	if err!=nil{t.Fatal(err)}
+	serverSide,clientSide:=net.Pipe()
+	defer serverSide.Close()
+	defer clientSide.Close()
+	_ = serverSide.SetDeadline(time.Now().Add(3*time.Second))
+	_ = clientSide.SetDeadline(time.Now().Add(3*time.Second))
+	served:=make(chan error,1)
+	go func(){
+		s:=tls.Server(serverSide,&tls.Config{MinVersion:tls.VersionTLS13,GetConfigForClient:mux.TLSConfigFor})
+		served<-s.Handshake()
+	}()
+	c:=tls.Client(clientSide,&tls.Config{MinVersion:tls.VersionTLS13,ServerName:"198.51.100.7",RootCAs:root,
+		Certificates:[]tls.Certificate{cert}})
+	if err:=c.Handshake();err!=nil{t.Fatalf("client must verify IP SAN without SNI: %v",err)}
+	if err:=<-served;err!=nil{t.Fatalf("server TLS mTLS failed: %v",err)}
+	if got:=c.ConnectionState().ServerName;got!=""{
+		t.Fatalf("IP identity unexpectedly emitted SNI %q",got)
+	}
 }

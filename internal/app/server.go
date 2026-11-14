@@ -93,8 +93,21 @@ func (m *serverMux) Lookup(name string) *liveInstance {
 	return m.bySNI[strings.ToLower(name)]
 }
 
+// selectTenant only permits an absent SNI for a sole IP-identity tenant.
+// DNS tenants and multi-tenant listeners still require an exact SNI match.
+func (m *serverMux) selectTenant(name string)*liveInstance{
+	if name!="" {return m.Lookup(name)}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.bySNI)!=1{return nil}
+	for _,inst:=range m.bySNI{
+		if net.ParseIP(inst.prepared.spec.ServerName)!=nil{return inst}
+	}
+	return nil
+}
+
 func (m *serverMux) TLSConfigFor(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-	instance := m.Lookup(hello.ServerName)
+	instance := m.selectTenant(hello.ServerName)
 	if instance == nil {
 		return nil, fmt.Errorf("unknown VPN SNI %q", hello.ServerName)
 	}
@@ -102,18 +115,21 @@ func (m *serverMux) TLSConfigFor(hello *tls.ClientHelloInfo) (*tls.Config, error
 	return instance.prepared.tlsConfig, nil
 }
 
-func requestAuthorityMatchesSNI(host, serverName string) bool {
+func requestAuthorityMatchesSNI(host,serverName string)bool{
 	// Extended CONNECT :authority may include the shared UDP port.
-	if h, _, err := net.SplitHostPort(host); err == nil { host = h }
-	return strings.EqualFold(strings.TrimSuffix(host, "."), serverName)
+	if h,_,err:=net.SplitHostPort(host);err==nil{host=h}
+	// Strip IPv6 address brackets only when net.SplitHostPort was not
+	// applicable (authority without an explicit port).
+	host=strings.TrimPrefix(strings.TrimSuffix(host,"]"),"[")
+	return strings.EqualFold(strings.TrimSuffix(host,"."),serverName)
 }
 
 func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.TLS == nil || r.TLS.ServerName == "" {
-		http.Error(w, "TLS SNI required", http.StatusMisdirectedRequest)
+	if r.TLS == nil {
+		http.Error(w, "TLS connection required", http.StatusMisdirectedRequest)
 		return
 	}
-	instance := m.Lookup(r.TLS.ServerName)
+	instance := m.selectTenant(r.TLS.ServerName)
 	if instance == nil || !requestAuthorityMatchesSNI(r.Host, instance.prepared.spec.ServerName) {
 		http.Error(w, "unknown VPN virtual host", http.StatusMisdirectedRequest)
 		return

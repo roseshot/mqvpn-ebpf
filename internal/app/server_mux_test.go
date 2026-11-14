@@ -2,6 +2,8 @@ package app
 
 import (
 	"crypto/tls"
+	"net"
+	"strings"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -67,5 +69,25 @@ func TestSharedPortChangeRequiresRestart(t *testing.T) {
 	if err := mgr.apply(next); err == nil {
 		// Initial next uses different literal listen than :4433, so error.
 		t.Fatal("shared listener bind change unexpectedly accepted")
+	}
+}
+
+func TestSingleInstanceIPCertificateWithoutSNI(t *testing.T){
+	for _,ip:=range []string{"198.51.100.7","2001:db8::7"}{
+		mux:=newServerMux()
+		live:=&liveInstance{prepared:preparedInstance{spec:ServerInstance{ServerName:ip},tlsConfig:&tls.Config{}}}
+		mux.Publish(map[string]*liveInstance{"only":live})
+		selected,err:=mux.TLSConfigFor(&tls.ClientHelloInfo{})
+		if err!=nil||selected!=live.prepared.tlsConfig{t.Fatalf("IP %s missing-SNI TLS: %v",ip,err)}
+		host:=ip
+		if strings.Contains(ip,":"){host="["+ip+"]"}
+		if !requestAuthorityMatchesSNI(host+":443",ip){t.Fatalf("IP authority rejected: %s",ip)}
+		req:=httptest.NewRequest(http.MethodConnect,"https://"+net.JoinHostPort(ip,"443")+defaultPath,nil)
+		req.TLS=&tls.ConnectionState{}
+		w:=httptest.NewRecorder()
+		mux.ServeHTTP(w,req)
+		if w.Code==http.StatusMisdirectedRequest{t.Fatalf("single IP SAN request denied before mTLS authentication: %s",ip)}
+		mux.Publish(map[string]*liveInstance{"only":live,"other":{prepared:preparedInstance{spec:ServerInstance{ServerName:"two.example.test"},tlsConfig:&tls.Config{}}}})
+		if _,err:=mux.TLSConfigFor(&tls.ClientHelloInfo{});err==nil{t.Fatalf("multi-instance missing-SNI accepted")}
 	}
 }

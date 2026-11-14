@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -117,7 +118,7 @@ func (c *ServerConfig) Validate() error {
 			inst.TC=&next // Preserve explicit mode: off; nil means default auto.
 		}
 		inst.ServerName = strings.ToLower(inst.ServerName)
-		if err := validateSNI(inst.ServerName); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
+		if err := validateInstanceIdentity(inst.ServerName,len(c.Instances)==1); err != nil { return fmt.Errorf("instance %s: %w", inst.Name, err) }
 		if err:=validateMasquePath(inst.Path);err!=nil{return fmt.Errorf("instance %s MASQUE path: %w",inst.Name,err)}
 		if inst.MaxFrame != 0 && (inst.MaxFrame < 64 || inst.MaxFrame > 65535) { return fmt.Errorf("instance %s invalid max_frame", inst.Name) }
 		if names[inst.Name] || tuns[inst.TUN] || sni[inst.ServerName] {
@@ -146,4 +147,18 @@ func validateSNI(s string) error {
 		}
 	}
 	return nil
+}
+
+// IP SAN certificates are supported only when no SNI demultiplexing is
+// necessary. An IP TLS ClientHello does not carry a usable SNI extension.
+// Multi-instance listeners must use distinct DNS identities.
+func validateInstanceIdentity(identity string,single bool)error{
+	if ip,err:=netip.ParseAddr(identity);err==nil{
+		if !single{return fmt.Errorf("IP server_name %q requires exactly one instance",identity)}
+		if !ip.IsValid()||ip.Zone()!=""||ip.IsUnspecified()||ip.IsMulticast()||ip.IsLoopback() {
+			return fmt.Errorf("IP server_name %q must be a unicast address without zone",identity)
+		}
+		return nil
+	}
+	return validateSNI(identity)
 }

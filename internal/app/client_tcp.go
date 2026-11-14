@@ -127,26 +127,23 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)(
 		"max_frame",budget.MaxFrame,"auto",budget.Auto,"wan_links",underlays)
 	stream,err:=capsule.New(conn,br,budget.MaxFrame)
 	if err!=nil{return err}
-	openTUN:=tun.Open
-	if dynamicAddressRequested(o.tunAddress){openTUN=tun.OpenRouted}
-	device,err:=openTUN(o.tunName,effectiveAddress,budget.TUNMTU)
+	device,err:=tun.OpenClient(o.tunName,effectiveAddress,budget.TUNMTU,dynamicAddressRequested(o.tunAddress))
 	if err!=nil{return err}
-	if dynamicAddressRequested(o.tunAddress){
-		defer func(){
-			if err:=tun.ReleaseRoutedAddress(o.tunName,effectiveAddress);err!=nil{
-				result=errors.Join(result,fmt.Errorf("%w: cleanup TCP leased TUN IP: %v",errUnsafeReconnect,err))
-				logger.Error("unsafe reconnect: TCP dynamic Tunnel IP cleanup failed","error",err)
-			}
-		}()
-	}
 	if err:=guard.Install(o.tunName,pushedRoutes);err!=nil{
-		_ = device.Close()
-		return fmt.Errorf("apply TCP authenticated Server routes: %w",err)
+		closeErr:=device.Close()
+		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("apply TCP authenticated Server routes: %w",err),closeErr,errUnsafeReconnect)}
+		return errors.Join(fmt.Errorf("apply TCP authenticated Server routes: %w",err),closeErr)
 	}
 	if len(pushedRoutes)>0{logger.Info("authenticated Server routes installed over TCP","routes",routepush.Encode(pushedRoutes),"server_ip",server.IP)}
 	tcAttachment,err:=attachConfiguredTC(o.tunName,o.tcConfig,budget.TUNMTU,logger)
-	if err!=nil{_ = device.Close();return fmt.Errorf("attach TCP TUN TC eBPF: %w",err)}
+	if err!=nil{
+		closeErr:=device.Close()
+		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach TCP TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
+		return errors.Join(fmt.Errorf("attach TCP TUN TC eBPF: %w",err),closeErr)
+	}
 	defer reportAndCloseTC(tcAttachment,logger)
 	logger.Info("TCP fallback VPN session established","remote",dialAddress,"tenant",o.endpoint.serverName,"tun",o.tunName,"tunnel_address",effectiveAddress)
-	return p2mp.ClientPump(ctx,device,stream,budget.MaxFrame,logger)
+	err=p2mp.ClientPump(ctx,device,stream,budget.MaxFrame,logger)
+	if errors.Is(err,tun.ErrCleanup){return errors.Join(err,errUnsafeReconnect)}
+	return err
 }

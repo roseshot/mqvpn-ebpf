@@ -50,7 +50,11 @@ func ClientPump(ctx context.Context,device io.ReadWriteCloser,stream Stream,maxF
 	case result=<-ends:
 	}
 	cancel()
-	_ = device.Close()
-	if errors.Is(result,context.Canceled)||errors.Is(result,io.EOF){return nil}
-	return result
+	// Closing TUN stops a blocked kernel Read. Always wait for both pump
+	// goroutines before returning to the reconnect supervisor; otherwise
+	// the previous session could still touch an interface being restored.
+	closeErr:=device.Close()
+	<-ends
+	if errors.Is(result,context.Canceled)||errors.Is(result,io.EOF){result=nil}
+	return errors.Join(result,closeErr)
 }
