@@ -75,12 +75,12 @@ func TestAdaptiveDATAGRAMBudgetAfterPathCapacityDrop(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &l3.Fragmenter{Enabled: true}
-	s := &limitedDatagramStream{limit: 1024, afterOne: 600}
+	s := &limitedDatagramStream{limit: 1024, afterOne: 400}
 	sent, reductions, err := sendEncodedFrame(context.Background(), s, f, frame)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reductions != 1 || sent < 4 || f.Budget() >= 600 {
+	if reductions != 1 || sent < 4 || f.Budget() >= 400 {
 		t.Fatalf("mid-flight path shrink not retried: sent=%d reduced=%d budget=%d",
 			sent, reductions, f.Budget())
 	}
