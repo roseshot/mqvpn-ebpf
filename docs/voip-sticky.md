@@ -80,7 +80,13 @@ the retired connection cannot start new TUN writes afterward.
 ### QoS classification limitations
 
 The `qos.Priority` classifier conservatively prioritizes DSCP EF 46
-and SIP ports 5060/5061. RTP and RTCP often use dynamic UDP ports:
+and SIP ports 5060/5061. For IPv6 SIP, it follows a bounded chain of
+Hop-by-Hop, Routing, Destination Options, Fragment and AH extension headers
+to find TCP/UDP ports. Non-initial IP fragments do not contain reliable
+transport port information; **mark fragmented SIP packets DSCP EF (46)**
+when strict affinity is required, otherwise later fragments may take the
+bulk MPQUIC transport. Malformed or unsupported IPv6 header chains are
+not guessed to be SIP. RTP and RTCP often use dynamic UDP ports:
 **those media flows must carry DSCP EF (46)** for strict affinity.
 SIP signalling in the test uses port 5060. It does not parse SIP/SDP
 dialog IDs to assign individual calls to independent WANs: currently
