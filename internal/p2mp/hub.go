@@ -198,9 +198,16 @@ func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stre
 		for {
 			// Priority takes precedence over bulk packets, with bounded
 			// bursts to avoid starving normal traffic on a busy peer.
-			payload, ok := qos.Next(s.ctx, s.priorityTx, s.tx, &burst)
+			packet, ok := qos.Next(s.ctx, s.priorityTx, s.tx, &burst)
 			if !ok || s.ctx.Err() != nil {
 				return
+			}
+			// Compress only after priority selection so costly bulk zstd
+			// work cannot delay enqueuing a following RTP packet.
+			payload, err := s.codec.Wrap(packet, qos.Priority(packet))
+			if err != nil {
+				h.drops.Add(1)
+				continue
 			}
 			if err := s.stream.SendDatagram(payload); err != nil {
 				h.drops.Add(1)
@@ -368,14 +375,12 @@ func (h *Hub) fanout(origin *Session, packet []byte) {
 
 func (h *Hub) send(s *Session, packet []byte) {
 	priority := qos.Priority(packet)
-	payload, err := s.codec.Wrap(packet, priority)
-	if err != nil {
-		h.drops.Add(1)
-		return
-	}
+	// TUN buffers are reused immediately after this callback returns.
+	// Queue an owned packet; encode it on the sender goroutine instead.
+	queued := append([]byte(nil), packet...)
 	// A retired session cannot receive a late enqueue even when both its
 	// closed done channel and buffered tx channel would be selectable.
-	if !s.enqueue(payload, priority) {
+	if !s.enqueue(queued, priority) {
 		// Only bounded I/O queue pressure or retired-session cleanup
 		// drops an otherwise valid packet. Not an inner IP traffic ACL.
 		h.drops.Add(1)
