@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,7 +18,7 @@ import (
 )
 
 // authorizeTCPRequest uses the SAME tenant SNI, current client CA, and peer
-// certificate fingerprint policy as the HTTP/3 CONNECT handler.
+// certificate identity and CRL policy as the HTTP/3 CONNECT handler.
 func (m *serverMux) authorizeTCPRequest(r *http.Request) (*liveInstance, *p2mp.Rule, int, error) {
 	if r.TLS == nil {
 		return nil, nil, http.StatusMisdirectedRequest, errors.New("TLS connection required")
@@ -28,20 +27,8 @@ func (m *serverMux) authorizeTCPRequest(r *http.Request) (*liveInstance, *p2mp.R
 	if inst == nil || !requestAuthorityMatchesSNI(r.Host, inst.prepared.spec.ServerName) {
 		return nil, nil, http.StatusMisdirectedRequest, errors.New("unknown VPN tenant")
 	}
-	if len(r.TLS.PeerCertificates) == 0 || len(r.TLS.VerifiedChains) == 0 {
-		return nil, nil, http.StatusForbidden, errors.New("verified client certificate required")
-	}
-	intermediates := x509.NewCertPool()
-	for _, cert := range r.TLS.PeerCertificates[1:] {
-		intermediates.AddCert(cert)
-	}
-	_, err := r.TLS.PeerCertificates[0].Verify(x509.VerifyOptions{
-		Roots:         inst.prepared.tlsConfig.ClientCAs,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	})
-	if err != nil {
-		return nil, nil, http.StatusForbidden, fmt.Errorf("tenant client CA: %w", err)
+	if err := verifyClientCertificate(r.TLS, inst.prepared.tlsConfig.ClientCAs, inst.prepared.revocation); err != nil {
+		return nil, nil, http.StatusForbidden, fmt.Errorf("tenant client identity or CRL: %w", err)
 	}
 	rule, err := inst.hub.Authorize(r.TLS.PeerCertificates[0].Raw)
 	if err != nil {
@@ -140,11 +127,11 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	if assigned := session.TunnelAddress(); assigned != "" {
 		responseHeaders += tunnelAddressHeader + ": " + assigned + "\r\n"
 	}
-	if len(inst.prepared.spec.PushRoutes) > 0 {
-		responseHeaders += routepush.Header + ": " + strings.Join(inst.prepared.spec.PushRoutes, ",") + "\r\n"
+	if routes := p2mp.EffectivePush(inst.prepared.spec.PushRoutes, rule.PushRoutes); len(routes) > 0 {
+		responseHeaders += routepush.Header + ": " + strings.Join(routes, ",") + "\r\n"
 	}
-	if len(inst.prepared.spec.PushDNS) > 0 {
-		responseHeaders += dnspush.Header + ": " + strings.Join(inst.prepared.spec.PushDNS, ",") + "\r\n"
+	if dns := p2mp.EffectivePush(inst.prepared.spec.PushDNS, rule.PushDNS); len(dns) > 0 {
+		responseHeaders += dnspush.Header + ": " + strings.Join(dns, ",") + "\r\n"
 	}
 	_, err = rw.Writer.WriteString(responseHeaders + "\r\n")
 	if err != nil {
