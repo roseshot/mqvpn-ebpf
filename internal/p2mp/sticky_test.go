@@ -2,6 +2,7 @@ package p2mp
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -171,5 +172,55 @@ func TestStickyHeartbeatIsNotAnInnerIPPacket(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat receive worker did not stop after session revocation")
+	}
+}
+
+func TestServerIPv6SIPWithExtensionHeaderUsesStickyCompanion(t *testing.T) {
+	h, _, other, old, _, _, cancel := prepare(t)
+	defer cancel()
+	defer h.Detach(other)
+	h.Detach(old)
+
+	normal := &fakeStream{out: make(chan []byte, 8)}
+	primary, err := h.AttachWithTrafficRole(context.Background(), old.rule,
+		normal, false, false, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Detach(primary)
+	realtime := &fakeStream{out: make(chan []byte, 8)}
+	companion, err := h.AttachWithTrafficRole(context.Background(), old.rule,
+		realtime, false, false, false, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Detach(companion)
+
+	// Server-to-client QoS uses the same classifier as the Client pump.
+	// A SIP port hidden behind IPv6 Destination Options must not be
+	// forwarded on the ordinary multipath session.
+	sip := make([]byte, 40+8+8)
+	sip[0], sip[5], sip[6] = 0x60, 16, 60
+	sip[40] = 17
+	binary.BigEndian.PutUint16(sip[48:50], 40000)
+	binary.BigEndian.PutUint16(sip[50:52], 5061)
+	h.send(primary, sip)
+	got, err := l3.Unwrap(waitFrame(t, realtime))
+	if err != nil || string(got) != string(sip) {
+		t.Fatalf("server IPv6 SIP sticky delivery failed: %v", err)
+	}
+	if len(normal.out) != 0 {
+		t.Fatal("server leaked IPv6 SIP with extension headers onto bulk MPQUIC")
+	}
+
+	bulk := append([]byte(nil), sip...)
+	binary.BigEndian.PutUint16(bulk[50:52], 40002)
+	h.send(primary, bulk)
+	got, err = l3.Unwrap(waitFrame(t, normal))
+	if err != nil || string(got) != string(bulk) {
+		t.Fatalf("server ordinary IPv6 UDP delivery failed: %v", err)
+	}
+	if len(realtime.out) != 0 {
+		t.Fatal("server routed ordinary IPv6 UDP onto realtime QUIC")
 	}
 }

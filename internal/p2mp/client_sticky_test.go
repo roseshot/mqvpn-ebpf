@@ -293,3 +293,69 @@ func TestClientPumpRejectsRealtimeFrameRevokedBeforeTUNWrite(t *testing.T) {
 		t.Fatal("client pump failed to stop after generation fencing")
 	}
 }
+
+func TestClientPumpIPv6SIPWithExtensionHeaderUsesStickyCompanion(t *testing.T) {
+	device := newTestTun()
+	stream := &dualClassStream{
+		baseIn: make(chan []byte, 8), realtimeIn: make(chan RealtimeDatagram, 8),
+		bulkOut: make(chan []byte, 8), realtimeOut: make(chan []byte, 8),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+
+	// IPv6 Destination Options precedes a UDP SIP port. It must remain
+	// on the pinned single-WAN companion instead of bulk round-robin QUIC.
+	sip := make([]byte, 40+8+8)
+	sip[0], sip[5], sip[6], sip[7] = 0x60, 16, 60, 64
+	copy(sip[8:24], []byte{0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2})
+	copy(sip[24:40], []byte{0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1})
+	sip[40] = 17 // Destination Options -> UDP
+	binary.BigEndian.PutUint16(sip[48:50], 5060)
+	binary.BigEndian.PutUint16(sip[50:52], 40000)
+	device.in <- sip
+
+	select {
+	case frame := <-stream.realtimeOut:
+		got, err := l3.Unwrap(frame)
+		if err != nil || string(got) != string(sip) {
+			t.Fatalf("IPv6 SIP priority packet corrupted: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("IPv6 SIP with extension header missed realtime companion")
+	}
+	select {
+	case <-stream.bulkOut:
+		t.Fatal("IPv6 SIP with extension header leaked onto bulk MPQUIC")
+	default:
+	}
+
+	bulk := append([]byte(nil), sip...)
+	binary.BigEndian.PutUint16(bulk[48:50], 40001)
+	binary.BigEndian.PutUint16(bulk[50:52], 40002)
+	device.in <- bulk
+	select {
+	case frame := <-stream.bulkOut:
+		got, err := l3.Unwrap(frame)
+		if err != nil || string(got) != string(bulk) {
+			t.Fatalf("ordinary IPv6 UDP packet corrupted: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ordinary IPv6 UDP with extension header failed to reach bulk session")
+	}
+	select {
+	case <-stream.realtimeOut:
+		t.Fatal("ordinary IPv6 UDP was misclassified as realtime")
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("IPv6 dual-path client pump failed to stop")
+	}
+}

@@ -46,8 +46,15 @@ func Priority(pkt []byte) bool {
 		if trafficClass>>2 == dscpEF {
 			return true
 		}
-		proto, offset = pkt[6], 40
-		// Extension-header parsing is unnecessary for SIP classification.
+		// Follow the IPv6 extension chain so unmarked SIP with Hop-by-Hop,
+		// Routing, Destination Options, Fragment or AH headers remains
+		// pinned to the realtime WAN. Never infer ports from a non-initial
+		// fragment or from malformed/truncated extension headers.
+		var ok bool
+		proto, offset, ok = ipv6Transport(pkt)
+		if !ok {
+			return false
+		}
 	default:
 		return false
 	}
@@ -96,4 +103,48 @@ func Next(ctx context.Context, priority, normal <-chan []byte, burst *int) ([]by
 		*burst = 0
 		return p, true
 	}
+}
+
+// ipv6Transport locates the transport header without allocating or reading
+// beyond the IPv6 payload. At most 16 extension headers are walked so
+// maliciously long chains cannot monopolize the QoS classifier. ESP and
+// unknown next-header values are left to the caller (and are never SIP).
+func ipv6Transport(pkt []byte) (proto byte, offset int, ok bool) {
+	proto, offset = pkt[6], 40
+	for headers := 0; headers < 16; headers++ {
+		switch proto {
+		case 0, 43, 60: // Hop-by-Hop, Routing, Destination Options
+			if len(pkt)-offset < 2 {
+				return 0, 0, false
+			}
+			size := (int(pkt[offset+1]) + 1) * 8
+			if size > len(pkt)-offset {
+				return 0, 0, false
+			}
+			proto = pkt[offset]
+			offset += size
+		case 44: // Fragment: only fragment offset 0 contains transport ports
+			if len(pkt)-offset < 8 {
+				return 0, 0, false
+			}
+			if pkt[offset+2] != 0 || pkt[offset+3]&0xf8 != 0 {
+				return 0, 0, false
+			}
+			proto = pkt[offset]
+			offset += 8
+		case 51: // Authentication Header: size in four-byte words minus 2
+			if len(pkt)-offset < 2 {
+				return 0, 0, false
+			}
+			size := (int(pkt[offset+1]) + 2) * 4
+			if size < 12 || size > len(pkt)-offset {
+				return 0, 0, false
+			}
+			proto = pkt[offset]
+			offset += size
+		default:
+			return proto, offset, true
+		}
+	}
+	return 0, 0, false
 }
