@@ -118,7 +118,7 @@ func TestPeerCNAuthorizationWithoutFingerprint(t *testing.T) {
 
 func TestRejectAmbiguousOrInvalidCNAndPeerOverrides(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name  string
 		peers []PeerConfig
 	}{
 		{"duplicate cn", []PeerConfig{
