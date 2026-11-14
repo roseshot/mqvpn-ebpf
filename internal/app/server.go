@@ -239,7 +239,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(instance.prepared.spec.PushDNS) > 0 {
 		w.Header().Set(dnspush.Header, strings.Join(instance.prepared.spec.PushDNS, ","))
 	}
-	if compression { w.Header().Set(compressionHeader, compressionZstd) }
+	if compression {
+		w.Header().Set(compressionHeader, compressionZstd)
+	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
 	peerLogger.InfoContext(r.Context(), "peer connected", "remote", r.RemoteAddr)
