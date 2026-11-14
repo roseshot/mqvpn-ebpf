@@ -17,6 +17,7 @@ type clientFileConfig struct {
 	SourceIP        string        `yaml:"source_ip,omitempty"`
 	SourceInterface string        `yaml:"source_interface,omitempty"`
 	WANs            []clientWAN   `yaml:"wans,omitempty"`
+	UseServerWANs   *bool         `yaml:"use_server_wans,omitempty"`
 	WAN2IP          string        `yaml:"wan2_ip,omitempty"`
 	WAN2Interface   string        `yaml:"wan2_interface,omitempty"`
 	MTU             int           `yaml:"mtu,omitempty"`
