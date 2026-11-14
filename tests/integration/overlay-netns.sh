@@ -2,7 +2,9 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp ]] || { echo "usage: $0 vxlan|bgp" >&2; exit 2; }
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip" >&2; exit 2;
+}
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 for tool in ip ping openssl sha256sum timeout; do
@@ -11,6 +13,9 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip ]]; then
+  command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
+fi
 if [[ "$mode" == bgp ]]; then
   for binary in /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/bin/vtysh; do
     [[ -x "$binary" ]] || { echo "missing official FRR stable deb: $binary" >&2; exit 2; }
@@ -137,16 +142,71 @@ if [[ "$mode" == vxlan ]]; then
   ip -n "$client_ns" link add vx100 type vxlan id 100 dev mq0 local 10.77.0.2 remote 10.77.0.1 dstport 4789
   ip -n "$server_ns" addr add 172.30.100.1/24 dev vx100
   ip -n "$client_ns" addr add 172.30.100.2/24 dev vx100
+  # Standard IPv4 VXLAN overhead is 50 bytes, leaving 1450-byte
+  # inner Ethernet payload on a 1500-byte mqvpn TUN interface.
+  ip -n "$server_ns" link set vx100 mtu 1450
+  ip -n "$client_ns" link set vx100 mtu 1450
   ip -n "$server_ns" link set vx100 up
   ip -n "$client_ns" link set vx100 up
+  ip -n "$server_ns" -o link show vx100 | grep -q 'mtu 1450' ||
+    fail "server VXLAN MTU != 1450"
+  ip -n "$client_ns" -o link show vx100 | grep -q 'mtu 1450' ||
+    fail "client VXLAN MTU != 1450"
   ip netns exec "$server_ns" ping -n -c 3 -W 2 172.30.100.2 || fail "VXLAN server -> client"
   ip netns exec "$client_ns" ping -n -c 3 -W 2 172.30.100.1 || fail "VXLAN client -> server"
-  # DF VXLAN large payload tests negotiated frag-v1, not just small pings.
-  ip netns exec "$server_ns" ping -n -M do -s 1372 -c 2 -W 2 172.30.100.2 ||
-    fail "VXLAN large DF IP datagram over TUN"
+  # 1422 ICMP data + 8 ICMP + 20 inner IPv4 = 1450-byte inner IP.
+  # Adding 50 bytes of IPv4 VXLAN overhead yields a 1500-byte TUN IP
+  # packet; frag-v1 must fit it into the QUIC DATAGRAM budget.
+  ip netns exec "$server_ns" ping -n -M do -s 1422 -c 2 -W 2 172.30.100.2 ||
+    fail "VXLAN MTU 1450 DF packet server -> client"
+  ip netns exec "$client_ns" ping -n -M do -s 1422 -c 2 -W 2 172.30.100.1 ||
+    fail "VXLAN MTU 1450 DF packet client -> server"
   ip -n "$server_ns" neigh show dev vx100 | grep -q 172.30.100.2 ||
     fail "VXLAN L2 neighbor resolution"
-  echo "PASS VXLAN VNI 100: L2 ARP, bidirectional IP, large DF packet"
+  echo "PASS VXLAN VNI 100, MTU 1450: L2 ARP, bidirectional IP, 1500-byte outer TUN IP DF packets"
+  exit 0
+fi
+
+# Each test runs against the same authenticated QUIC/TUN topology.
+# A fresh listener marker prevents startup races; a failure in either
+# namespace fails the entire CI test instead of silently losing packets.
+run_probe() {
+  local proto="$1" listen_ns="$2" send_ns="$3" listen_ip="$4" send_ip="$5" label="$6"
+  local marker="$work/${proto}-${label}.ready"
+  ip netns exec "$listen_ns" python3 "$root/tests/integration/transport_probe.py" \
+    listen "$proto" "$listen_ip" "$send_ip" "$marker" \
+    >"$work/${proto}-${label}-listener.log" 2>&1 &
+  local probe_pid="$!"
+  pids="$pids $probe_pid"
+  local active=0
+  for attempt in $(seq 1 100); do
+    if [[ -f "$marker" ]]; then active=1; break; fi
+    kill -0 "$probe_pid" 2>/dev/null || fail "$proto $label listener exited early"
+    sleep 0.05
+  done
+  (( active )) || fail "$proto $label listener never became ready"
+  timeout 40s ip netns exec "$send_ns" python3 "$root/tests/integration/transport_probe.py" \
+    send "$proto" "$send_ip" "$listen_ip" "$marker" \
+    >"$work/${proto}-${label}-sender.log" 2>&1 ||
+    fail "$proto $label sender failed"
+  wait "$probe_pid" || fail "$proto $label listener failed"
+  cat "$work/${proto}-${label}-listener.log"
+  cat "$work/${proto}-${label}-sender.log"
+}
+
+if [[ "$mode" == tcp || "$mode" == udp ]]; then
+  # Both endpoints must accept real connections and carry both data flows.
+  run_probe "$mode" "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 s2c
+  run_probe "$mode" "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 c2s
+  echo "PASS $mode: both VPN peers served as endpoints"
+  exit 0
+fi
+if [[ "$mode" == voip ]]; then
+  # SIP initiator on the Client, then reverse it. Both simulate a full
+  # duplex 20ms G.711 RTP call with EF marking and RTCP reports.
+  run_probe voip "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 s2c
+  run_probe voip "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 c2s
+  echo "PASS VoIP: two full-duplex SIP/RTP/RTCP sessions over QUIC TUN"
   exit 0
 fi
 
