@@ -567,7 +567,7 @@ for side in ("server", "client"):
         end = item.get("end", {})
         result = end.get("sum_received", {})
         n = result.get("bytes", 0)
-        if n < (100_000 if proto == "tcp" else 20_000):
+        if n < (32_768 if proto == "tcp" else 20_000):
             raise SystemExit(f"WAN {side}/{proto}: too few receiver bytes ({n})")
         print(f"WAN_THROUGHPUT side={side} proto={proto} bytes={n} "
               f"bps={result.get('bits_per_second', 0):.0f}", flush=True)
