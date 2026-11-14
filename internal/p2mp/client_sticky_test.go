@@ -207,3 +207,89 @@ func TestClientPumpRealtimeFragmentsNeverCrossCompanionGenerations(t *testing.T)
 		t.Fatal("client pump blocked after generation change")
 	}
 }
+
+type generationGatedStream struct {
+	*dualClassStream
+	authorized uint64
+	checked    chan uint64
+}
+
+func (s *generationGatedStream) WithRealtimeGeneration(generation uint64, write func()) bool {
+	s.checked <- generation
+	if generation != s.authorized {
+		return false
+	}
+	write()
+	return true
+}
+
+func TestClientPumpRejectsRealtimeFrameRevokedBeforeTUNWrite(t *testing.T) {
+	device := newTestTun()
+	base := &dualClassStream{
+		baseIn: make(chan []byte, 8), realtimeIn: make(chan RealtimeDatagram, 8),
+		bulkOut: make(chan []byte, 8), realtimeOut: make(chan []byte, 8),
+	}
+	stream := &generationGatedStream{dualClassStream: base, authorized: 2, checked: make(chan uint64, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+
+	oldPacket := ip4([4]byte{10, 77, 0, 1}, [4]byte{10, 77, 0, 2})
+	oldPacket[8] = 17
+	newPacket := append([]byte(nil), oldPacket...)
+	newPacket[8] = 18
+	oldFrame, err := l3.Wrap(oldPacket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newFrame, err := l3.Wrap(newPacket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Dequeue validation could have succeeded for generation 1 before
+	// failover. Only the final write fence is allowed to authorize TUN.
+	base.realtimeIn <- RealtimeDatagram{Payload: oldFrame, Generation: 1}
+	base.realtimeIn <- RealtimeDatagram{Payload: newFrame, Generation: 2}
+	for _, expected := range []uint64{1, 2} {
+		select {
+		case generation := <-stream.checked:
+			if generation != expected {
+				t.Fatalf("unexpected fenced generation: got %d want %d", generation, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("realtime frame bypassed the final authorization fence")
+		}
+	}
+	deadline := time.After(time.Second)
+	for {
+		device.mu.Lock()
+		count := len(device.out)
+		var got []byte
+		if count > 0 {
+			got = append([]byte(nil), device.out[0]...)
+		}
+		device.mu.Unlock()
+		if count > 0 {
+			if count != 1 || string(got) != string(newPacket) {
+				t.Fatalf("revoked companion injected TUN data: count=%d new=%t", count, string(got) == string(newPacket))
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("authorized realtime packet was not injected to TUN")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("client pump failed to stop after generation fencing")
+	}
+}
