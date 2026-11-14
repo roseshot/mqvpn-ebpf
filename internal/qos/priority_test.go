@@ -37,7 +37,7 @@ func TestPriority(t *testing.T) {
     }
     v6 := make([]byte, 48)
     v6[0] = 0x60 | byte((46<<2)>>4)
-    v6[1] = byte((46<<2)<<4)
+    v6[1] = byte((46 << 2) & 0x0f) << 4
     v6[5] = 8
     v6[6] = 17
     if !Priority(v6) {
