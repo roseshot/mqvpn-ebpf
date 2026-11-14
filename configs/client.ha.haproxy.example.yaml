@@ -1,0 +1,14 @@
+# HAProxy TCP L4/TLS pass-through. Community HAProxy cannot transparently
+# load balance an arbitrary QUIC/UDP session using a mode tcp frontend.
+server: vpn.example.com
+connect_ip: 192.0.2.100 # HAProxy virtual address; TLS identity stays VPN DNS
+address: 10.77.0.2/24
+ca: /etc/mqvpn/ca.crt
+cert: /etc/mqvpn/site1.crt
+key: /etc/mqvpn/site1.key
+transport: tcp
+tcp_port: 443
+reconnect: true
+ha:
+  mode: active_standby # or active_active; use matching HAProxy backend config
+  controller: haproxy
