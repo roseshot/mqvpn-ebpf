@@ -144,8 +144,8 @@ jobs:
           sudo apt-get update -qq
           apt-cache policy frr | tee /tmp/mqvpn-frr-policy.log
           grep -q 'deb.frrouting.org/frr' /tmp/mqvpn-frr-policy.log
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends frr frr-pythontools
-          dpkg -l frr frr-pythontools
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends frr frr-pythontools haproxy
+          dpkg -l frr frr-pythontools haproxy
           /usr/lib/frr/bgpd --version
           /usr/lib/frr/ospfd --version
       - name: Prepare Linux TUN and VXLAN modules
@@ -157,6 +157,10 @@ jobs:
           bash -n tests/integration/five-site-frr.sh
           python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py tests/integration/check_frr_neighbors.py tests/integration/test_frr_neighbors.py
           python3 -m unittest discover -s tests/integration -p 'test_frr_neighbors.py' -v
+      - name: Validate active/active and active/standby HAProxy TLS/TCP configs
+        run: |
+          haproxy -c -f configs/haproxy-ha-active-active.cfg
+          haproxy -c -f configs/haproxy-ha-active-standby.cfg
       - name: Build actual mqvpn binaries
         run: make release
       - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
