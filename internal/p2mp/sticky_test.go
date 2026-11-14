@@ -113,7 +113,6 @@ func TestStickyHeartbeatIsNotAnInnerIPPacket(t *testing.T) {
 	defer cancel()
 	defer h.Detach(a)
 	h.Detach(initial)
-	h.Detach(initial)
 	primary, err := h.AttachWithTrafficRole(context.Background(), initial.rule,
 		&fakeStream{out: make(chan []byte, 8)}, false, false, false, true, false)
 	if err != nil {
