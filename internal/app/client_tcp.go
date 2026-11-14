@@ -131,7 +131,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		!strings.EqualFold(response.Header.Get("Upgrade"), "connect-ethernet") ||
 		response.Header.Get("Capsule-Protocol") != "?1" {
 		_ = response.Body.Close()
-		return fmt.Errorf("TCP CONNECT-ETHERNET rejected: %s", response.Status)
+		return fmt.Errorf("TCP %w: %s", errClientPeerDenied, response.Status)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
