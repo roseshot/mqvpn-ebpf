@@ -28,6 +28,13 @@ type serverWAN struct {
 	IP        string `yaml:"ip"`
 }
 
+// ClientRevocationConfig controls optional RFC 5280 leaf certificate CRL checks.
+// "off" does not disable mTLS or peer-identity authorization.
+type ClientRevocationConfig struct {
+	Mode string `yaml:"mode,omitempty"` // off (default), crl
+	CRLFile string `yaml:"crl_file,omitempty"`
+}
+
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
 // All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
 type ServerInstance struct {
@@ -44,6 +51,7 @@ type ServerInstance struct {
 	Cert       string         `yaml:"cert"`
 	Key        string         `yaml:"key"`
 	ClientCA   string         `yaml:"client_ca"`
+	ClientRevocation *ClientRevocationConfig `yaml:"client_revocation,omitempty"`
 	MaxFrame   int            `yaml:"max_frame,omitempty"`
 	TC         *tcebpf.Config `yaml:"tc,omitempty"`
 }
@@ -190,6 +198,24 @@ func (c *ServerConfig) Validate() error {
 		if inst.Name == "" || inst.ServerName == "" || inst.TUN == "" ||
 			inst.Peers == "" || inst.Cert == "" || inst.Key == "" || inst.ClientCA == "" {
 			return fmt.Errorf("instance %d requires name, server_name, tun, address, peers, cert, key and client_ca", i)
+		}
+		if inst.ClientRevocation != nil {
+			policy := inst.ClientRevocation
+			if policy.Mode == "" {
+				policy.Mode = "off"
+			}
+			switch policy.Mode {
+			case "off":
+				if policy.CRLFile != "" {
+					return fmt.Errorf("instance %s client_revocation.crl_file requires mode: crl", inst.Name)
+				}
+			case "crl":
+				if policy.CRLFile == "" {
+					return fmt.Errorf("instance %s client_revocation.mode: crl requires crl_file", inst.Name)
+				}
+			default:
+				return fmt.Errorf("instance %s invalid client_revocation.mode %q: use off or crl", inst.Name, policy.Mode)
+			}
 		}
 		if err := mtu.ValidateRequest(inst.TUN, inst.Address, inst.MTU, inst.MaxFrame); err != nil {
 			return fmt.Errorf("instance %s: %w", inst.Name, err)
