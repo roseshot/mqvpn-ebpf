@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"sync/atomic"
+	"time"
 )
 
 // newServerHAHealthHandler only advertises local process readiness, not
@@ -48,7 +49,7 @@ func (m *serverManager) startHealthListener() error {
 	m.healthListener = listener
 	m.healthServer = &http.Server{
 		Handler:           newServerHAHealthHandler(&m.ready),
-		ReadHeaderTimeout: 2e9, // 2s; local health checks should not hang
+		ReadHeaderTimeout: 2 * time.Second, // local health checks must not hang
 	}
 	m.healthDone = make(chan struct{})
 	go func() {
