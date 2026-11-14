@@ -122,7 +122,8 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	ready := make(chan struct{})
 	delayed := &delayedCapsule{stream: stream, ready: ready, ctx: r.Context()}
 	compression := acceptCompression(r.Header.Get(compressionHeader))
-	session, err := inst.hub.AttachWithCompression(r.Context(), rule, delayed, requestDynamic, compression)
+	fragmentation := acceptFraming(r.Header.Get(framingHeader))
+	session, err := inst.hub.AttachWithFeatures(r.Context(), rule, delayed, requestDynamic, compression, fragmentation)
 	if err != nil {
 		_, _ = rw.Writer.WriteString("HTTP/1.1 409 Conflict\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
 		_ = rw.Writer.Flush()
@@ -132,6 +133,9 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	responseHeaders := "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: connect-ethernet\r\nCapsule-Protocol: ?1\r\n"
 	if compression {
 		responseHeaders += compressionHeader + ": " + compressionZstd + "\r\n"
+	}
+	if fragmentation {
+		responseHeaders += framingHeader + ": " + framingValue + "\r\n"
 	}
 	if assigned := session.TunnelAddress(); assigned != "" {
 		responseHeaders += tunnelAddressHeader + ": " + assigned + "\r\n"
