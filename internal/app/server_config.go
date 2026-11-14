@@ -99,7 +99,7 @@ func (c *ServerConfig) Validate() error {
 			return fmt.Errorf("invalid ha.readiness_listen: %w", err)
 		}
 		addr, err := netip.ParseAddr(host)
-		if err != nil || !addr.IsLoopback() || addr.Zone() != "" {
+		if err != nil || addr.Zone() != "" || (addr.String() != "127.0.0.1" && addr.String() != "::1") {
 			return errors.New("ha.readiness_listen must use a literal loopback IP (127.0.0.1 or ::1); never expose unauthenticated health checks publicly")
 		}
 		n, err := strconv.Atoi(port)
