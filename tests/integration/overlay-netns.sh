@@ -2,8 +2,8 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,8 +13,13 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
-if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip ]]; then
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
+fi
+if [[ "$mode" == mixed ]]; then
+  for tool in iperf3 tc ss; do
+    command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
+  done
 fi
 if [[ "$mode" == bgp ]]; then
   for binary in /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/bin/vtysh; do
@@ -207,6 +212,100 @@ if [[ "$mode" == voip ]]; then
   run_probe voip "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 s2c
   run_probe voip "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 c2s
   echo "PASS VoIP: two full-duplex SIP/RTP/RTCP sessions over QUIC TUN"
+  exit 0
+fi
+
+# Mixed-load QoS smoke test: shape the WAN in both directions, then
+# overlap four real iperf3 streams (TCP and UDP both directions) with
+# two separate full-duplex G.711/SIP/RTCP calls. This validates that
+# realtime traffic stays functional while normal traffic saturates queues.
+# It does not assert a real-Internet MOS or WAN DSCP priority.
+if [[ "$mode" == mixed ]]; then
+  for ns in "$server_ns" "$client_ns"; do
+    ip netns exec "$ns" tc qdisc replace dev wan0 root tbf \
+      rate 20mbit burst 64kb latency 120ms
+    ip netns exec "$ns" tc -s qdisc show dev wan0
+  done
+
+  load_pids=""
+  server_pids=""
+  for entry in "server:$server_ns:10.77.0.1" "client:$client_ns:10.77.0.2"; do
+    side="${entry%%:*}"
+    rest="${entry#*:}"
+    ns="${rest%%:*}"
+    address="${rest#*:}"
+    for proto in tcp udp; do
+      if [[ "$proto" == tcp ]]; then port=5201; else port=5202; fi
+      ip netns exec "$ns" iperf3 -s -1 -B "$address" -p "$port" \
+        >"$work/load-$side-$proto-server.log" 2>&1 &
+      server_pids="$server_pids $!"
+      pids="$pids $!"
+    done
+  done
+  listeners=0
+  for attempt in $(seq 1 80); do
+    if ip netns exec "$server_ns" ss -lntH | grep -q ':5201' &&
+       ip netns exec "$client_ns" ss -lntH | grep -q ':5201' &&
+       ip netns exec "$server_ns" ss -lntH | grep -q ':5202' &&
+       ip netns exec "$client_ns" ss -lntH | grep -q ':5202'; then
+      listeners=1
+      break
+    fi
+    sleep 0.05
+  done
+  (( listeners )) || fail "mixed-load iperf3 listeners not ready"
+
+  for entry in "server:$server_ns:10.77.0.1:10.77.0.2" "client:$client_ns:10.77.0.2:10.77.0.1"; do
+    side="${entry%%:*}"
+    rest="${entry#*:}"
+    ns="${rest%%:*}"
+    rest="${rest#*:}"
+    local_ip="${rest%%:*}"
+    remote_ip="${rest#*:}"
+    timeout 30s ip netns exec "$ns" iperf3 -J -c "$remote_ip" \
+      -B "$local_ip" -p 5201 -t 12 -P 2 \
+      >"$work/load-$side-tcp-client.json" 2>"$work/load-$side-tcp-client.log" &
+    load_pids="$load_pids $!"
+    pids="$pids $!"
+    timeout 30s ip netns exec "$ns" iperf3 -J -c "$remote_ip" \
+      -B "$local_ip" -p 5202 -u -b 4M -l 1200 -t 12 \
+      >"$work/load-$side-udp-client.json" 2>"$work/load-$side-udp-client.log" &
+    load_pids="$load_pids $!"
+    pids="$pids $!"
+  done
+  sleep 0.4
+  for pid in $load_pids; do
+    kill -0 "$pid" 2>/dev/null || fail "mixed-load generator exited before VoIP"
+  done
+  echo "mixed-load active: TCP 2 streams + UDP 4Mbps each direction, WAN TBF 20Mbps"
+  run_probe voip "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 loaded-s2c
+  run_probe voip "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 loaded-c2s
+  for pid in $load_pids; do
+    kill -0 "$pid" 2>/dev/null || fail "bulk load did not overlap full VoIP test"
+  done
+  for pid in $load_pids $server_pids; do
+    wait "$pid" || fail "mixed-load iperf3 process failed: $pid"
+  done
+  # Confirm actual received bulk bytes, not merely spawned processes.
+  python3 - "$work" <<'PY'
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+for side in ("server", "client"):
+    for proto in ("tcp", "udp"):
+        record = json.loads((root / f"load-{side}-{proto}-client.json").read_text())
+        if "error" in record:
+            raise SystemExit(f"{side} {proto} load failed: {record['error']}")
+        summary = record.get("end", {}).get("sum_received", {})
+        byte_count = summary.get("bytes", 0)
+        minimum = 500_000 if proto == "tcp" else 100_000
+        if byte_count < minimum:
+            raise SystemExit(
+                f"{side} {proto} insufficient received bytes: {byte_count}")
+        print(f"PASS mixed {side} {proto}: {byte_count} receiver bytes", flush=True)
+PY
+  echo "PASS mixed: full-duplex VoIP during bidirectional TCP and UDP on shaped WAN"
   exit 0
 fi
 

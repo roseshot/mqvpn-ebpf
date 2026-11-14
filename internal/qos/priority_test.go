@@ -68,3 +68,38 @@ func TestNextPrefersRealtimeWithoutStarvingBulk(t *testing.T) {
 		t.Fatal("retired queue was consumed")
 	}
 }
+
+func TestNextContinuousLoadBoundedPriorityBurst(t *testing.T) {
+	// Both queues are kept permanently nonempty. Verify fair dispatch
+	// remains 4 high priority to 1 normal over a long busy session.
+	urgent, normal := make(chan []byte, 8), make(chan []byte, 8)
+	for i := 0; i < cap(urgent); i++ {
+		urgent <- []byte{1}
+		normal <- []byte{2}
+	}
+	burst := 0
+	var realTime, bulk int
+	for i := 0; i < 5000; i++ {
+		item, ok := Next(context.Background(), urgent, normal, &burst)
+		if !ok {
+			t.Fatal("active session sender unexpectedly stopped")
+		}
+		expected := byte(1)
+		if i%5 == 4 {
+			expected = 2
+		}
+		if len(item) != 1 || item[0] != expected {
+			t.Fatalf("packet %d: got %v, wanted priority class %d", i, item, expected)
+		}
+		if item[0] == 1 {
+			realTime++
+			urgent <- []byte{1}
+		} else {
+			bulk++
+			normal <- []byte{2}
+		}
+	}
+	if realTime != 4000 || bulk != 1000 {
+		t.Fatalf("unexpected sustained load distribution: realtime=%d bulk=%d", realTime, bulk)
+	}
+}

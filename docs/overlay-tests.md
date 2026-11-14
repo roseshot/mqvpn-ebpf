@@ -77,6 +77,35 @@ The `voip` scenario uses two independent test endpoints (no external PBX):
 This tests encapsulation and priority marking, **not actual telephony
 hardware, PBX authentication, NAT traversal or audio intelligibility**.
 
+### VoIP during concurrent TCP + UDP load (mixed)
+
+The `mixed` scenario runs the same authenticated QUIC/TUN endpoints but
+shapes **both WAN veth transmit interfaces to 20 Mbit/s** using Linux
+`tc tbf` (64 KiB burst, up to 120 ms queue latency). Against each TUN
+endpoint, it runs two concurrent iperf3 streams:
+
+- **TCP:** 2 parallel bulk streams per direction, trying to use spare WAN capacity.
+- **UDP:** paced at **4 Mbit/s per direction**, with 1200-byte application datagrams.
+
+The test overlaps those four load processes with **two full-duplex
+G.711/SIP/RTP/RTCP sessions**, reversing the SIP initiator between calls.
+Every call must still pass RTP sequence, integrity, DSCP EF and RTCP
+checks; the script also proves that the bulk generators remained active
+for the complete voice test and that both TCP and UDP receivers saw
+nontrivial traffic.
+
+The QoS queue unit test `TestNextContinuousLoadBoundedPriorityBurst`
+separately exercises 5,000 packet choices against continuously
+nonempty queues and checks the **4 realtime : 1 normal** dispatch policy.
+The integration test does *not* attempt to read that internal queue
+or declare a MOS improvement. It checks application coexistence with
+a shaped WAN, not QoS policy on external routers.
+
+A shared CI runner cannot supply dependable real-world jitter, loss,
+path failover, or audio intelligibility guarantees. It is deliberately
+a reproducible smoke test; production acceptance needs external WAN
+impairment and long-running measurements.
+
 ### FRRouting eBGP peer on TUN
 
 The BGP scenario uses **FRRouting's official signed stable Debian/Ubuntu
@@ -106,10 +135,10 @@ are installed before BGP convergence.
 
 GitHub Actions: the `overlay-integration` job in
 `.github/workflows/go.yml` runs **VXLAN, TCP, UDP, VoIP and FRR BGP**
-scenarios on `ubuntu-24.04`.
+and the shaped-WAN mixed-load scenario on `ubuntu-24.04`.
 
 Locally, on an isolated Linux test host with root/CAP_NET_ADMIN and
-`/dev/net/tun` (and `iproute2`, `iputils-ping`, OpenSSL, Python 3):
+`/dev/net/tun` (and `iproute2`, `iputils-ping`, OpenSSL, Python 3, iperf3):
 
 ```bash
 make release
@@ -117,6 +146,7 @@ sudo bash tests/integration/overlay-netns.sh vxlan
 sudo bash tests/integration/overlay-netns.sh tcp
 sudo bash tests/integration/overlay-netns.sh udp
 sudo bash tests/integration/overlay-netns.sh voip
+sudo bash tests/integration/overlay-netns.sh mixed
 sudo bash tests/integration/overlay-netns.sh bgp
 ```
 
