@@ -31,29 +31,29 @@ type serverWAN struct {
 // ClientRevocationConfig controls optional RFC 5280 leaf certificate CRL checks.
 // "off" does not disable mTLS or peer-identity authorization.
 type ClientRevocationConfig struct {
-	Mode string `yaml:"mode,omitempty"` // off (default), crl
+	Mode    string `yaml:"mode,omitempty"` // off (default), crl
 	CRLFile string `yaml:"crl_file,omitempty"`
 }
 
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
 // All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
 type ServerInstance struct {
-	Name       string         `yaml:"name"`
-	ServerName string         `yaml:"server_name"`
-	TUN        string         `yaml:"tun"`
-	Address    string         `yaml:"address"`
-	TunnelPool string         `yaml:"tunnel_pool,omitempty"`
-	PushRoutes []string       `yaml:"push_routes,omitempty"`
-	PushDNS    []string       `yaml:"push_dns,omitempty"`
-	MTU        int            `yaml:"mtu,omitempty"`
-	Peers      string         `yaml:"peers"`
-	Path       string         `yaml:"path,omitempty"`
-	Cert       string         `yaml:"cert"`
-	Key        string         `yaml:"key"`
-	ClientCA   string         `yaml:"client_ca"`
+	Name             string                  `yaml:"name"`
+	ServerName       string                  `yaml:"server_name"`
+	TUN              string                  `yaml:"tun"`
+	Address          string                  `yaml:"address"`
+	TunnelPool       string                  `yaml:"tunnel_pool,omitempty"`
+	PushRoutes       []string                `yaml:"push_routes,omitempty"`
+	PushDNS          []string                `yaml:"push_dns,omitempty"`
+	MTU              int                     `yaml:"mtu,omitempty"`
+	Peers            string                  `yaml:"peers"`
+	Path             string                  `yaml:"path,omitempty"`
+	Cert             string                  `yaml:"cert"`
+	Key              string                  `yaml:"key"`
+	ClientCA         string                  `yaml:"client_ca"`
 	ClientRevocation *ClientRevocationConfig `yaml:"client_revocation,omitempty"`
-	MaxFrame   int            `yaml:"max_frame,omitempty"`
-	TC         *tcebpf.Config `yaml:"tc,omitempty"`
+	MaxFrame         int                     `yaml:"max_frame,omitempty"`
+	TC               *tcebpf.Config          `yaml:"tc,omitempty"`
 }
 
 // TCPFallbackConfig enables a separate TCP/443 TLS listener. It shares the
