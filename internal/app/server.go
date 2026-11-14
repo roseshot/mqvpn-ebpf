@@ -263,6 +263,10 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func newSharedHTTP3Server(mux *serverMux, wans ...serverWAN) *http3.Server {
+	return newSharedHTTP3ServerWithScheduler(mux, pathSchedulerRoundRobin, wans...)
+}
+
+func newSharedHTTP3ServerWithScheduler(mux *serverMux, policy string, wans ...serverWAN) *http3.Server {
 	advertised := make([]net.IP, 0, len(wans))
 	for _, link := range wans {
 		advertised = append(advertised, net.ParseIP(link.IP))
@@ -281,7 +285,7 @@ func newSharedHTTP3Server(mux *serverMux, wans ...serverWAN) *http3.Server {
 			MultipathAutoAdvertise:     len(advertised) != 0,
 			MultipathAutoAddrs:         advertised,
 			MultipathControllerFactory: func() quic.MultipathController {
-				return quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler())
+				return quic.NewDefaultMultipathController(newPathScheduler(policy))
 			},
 			KeepAlivePeriod: 10 * time.Second,
 			MaxIdleTimeout:  30 * time.Second,

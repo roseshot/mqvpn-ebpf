@@ -2,8 +2,8 @@
 # Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp || "$mode" == wan4-latency ]] || {
+  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp|wan4-latency" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,10 +13,10 @@ done
 for binary in "$root/bin/mqvpn-server" "$root/bin/mqvpn-client"; do
   [[ -x "$binary" ]] || { echo "make release first: $binary" >&2; exit 2; }
 done
-if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
+if [[ "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
   command -v python3 >/dev/null || { echo "missing python3" >&2; exit 2; }
 fi
-if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
+if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
   for tool in iperf3 tc ss; do
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
   done
@@ -78,7 +78,7 @@ done
 ip -n "$server_ns" addr add 192.0.2.1/30 dev wan0
 ip -n "$client_ns" addr add 192.0.2.2/30 dev wan0
 
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
   # Four physically distinct WAN veth pairs. The first Client path
   # dials 192.0.2.1; additional QUIC paths dial *different Server IPs*
   # on the corresponding independent links, within the same connection.
@@ -119,6 +119,8 @@ peers:
 EOF
 server_listen="192.0.2.1:8443"
 server_wans=""
+path_scheduler_setting=""
+if [[ "$mode" == wan4-latency ]]; then path_scheduler_setting="path_scheduler: low_latency"; fi
 tcp_fallback_settings=""
 if [[ "$mode" == crypto-tcp ]]; then
   tcp_fallback_settings="$(cat <<'TCPCFG'
@@ -128,7 +130,7 @@ tcp_fallback:
 TCPCFG
 )"
 fi
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
   server_listen="0.0.0.0:8443"
   server_wans="$(cat <<'WANCFG'
 wans:
@@ -146,6 +148,7 @@ fi
 cat >"$work/server.yaml" <<EOF
 listen: "$server_listen"
 $server_wans
+$path_scheduler_setting
 $tcp_fallback_settings
 instances:
   - name: lab
@@ -202,7 +205,7 @@ if [[ "$is_crypto" == true ]]; then
   start_crypto_capture "$client_ns" client wan0 "$capture_filter"
 fi
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
   client_wan_flags=(
     --use-server-wans=true
     --wan 192.0.2.2@wan0=192.0.2.1
@@ -211,6 +214,8 @@ if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
     --wan 192.0.2.6@wan3=192.0.2.5
   )
 fi
+scheduler_client_flags=()
+if [[ "$mode" == wan4-latency ]]; then scheduler_client_flags=(--path-scheduler low_latency); fi
 crypto_client_flags=()
 client_env=()
 client_transport=quic
@@ -223,7 +228,7 @@ ip netns exec "$client_ns" env "${client_env[@]}" "$root/bin/mqvpn-client" \
   --server vpn.ci.example:8443 --connect-ip 192.0.2.1 \
   --tun mq0 --tun-address 10.77.0.2/30 \
   --tun-mtu 1500 --max-frame 1514 \
-  "${client_wan_flags[@]}" \
+  "${client_wan_flags[@]}" "${scheduler_client_flags[@]}" \
   --ca "$cert/ca.crt" --cert "$cert/client.crt" --key "$cert/client.key" \
   --tc-mode off --transport "$client_transport" --tcp-port 8443 \
   "${crypto_client_flags[@]}" --reconnect=false \
@@ -522,8 +527,9 @@ fi
 # Four independent WAN paths, all carrying the same mTLS MPQUIC session.
 # Confirm three additional AddPath+Probe completions before fault injection.
 # Differentiated netem conditions prove traffic actually uses each link.
-if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
+if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency ]]; then
   profile=poor
+  if [[ "$mode" == wan4-latency ]]; then profile=latency; fi
   validated=0
   for attempt in $(seq 1 140); do
     count="$(grep -c 'QUIC WAN path validated' "$work/client.log" || true)"
@@ -557,8 +563,14 @@ if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
     done
   done
   echo "four-WAN netem active: WAN0 10ms/0%, WAN1 35ms/0.5%, WAN2 70ms/1%, WAN3 120ms/3%"
-  # The first WAN remains fast enough for handshake, but the server
-  # round-robin scheduler must now cope with asymmetric performance.
+  # Generate RTT measurements after netem is active, without
+  # changing the preexisting round-robin WAN4 regression.
+  if [[ "$mode" == wan4-latency ]]; then
+    ip netns exec "$server_ns" ping -n -i 0.08 -c 24 -W 2 10.77.0.2 >/dev/null ||
+      fail "low-latency scheduler warmup server to client"
+    ip netns exec "$client_ns" ping -n -i 0.08 -c 24 -W 2 10.77.0.1 >/dev/null ||
+      fail "low-latency scheduler warmup client to server"
+  fi
   run_wan_voice "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 multi-s2c
   run_wan_voice "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 multi-c2s
   for ns in "$server_ns" "$client_ns"; do
@@ -566,10 +578,22 @@ if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
       stats="$(ip netns exec "$ns" tc -s qdisc show dev "wan$index")"
       echo "MPQUIC four-WAN $ns wan$index: $stats"
       bytes="$(echo "$stats" | awk '/ Sent [0-9]+ bytes/{print $2; exit}')"
-      [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 1000 ]] ||
-        fail "WAN$index in $ns carried too few bytes ($bytes): path may not be scheduled"
+      if [[ "$mode" == wan4-latency ]]; then
+        # Preferred fast path takes business data; other validated WANs
+        # may be idle until congestion or a failure triggers failover.
+        [[ "$bytes" =~ ^[0-9]+$ ]] || fail "WAN$index in $ns lacks a traffic counter"
+        if [[ "$index" == 0 ]]; then
+          (( bytes > 1000 )) || fail "fast WAN0 not selected by low-latency policy"
+        fi
+      else
+        [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 1000 ]] ||
+          fail "WAN$index in $ns carried too few bytes ($bytes): path may not be scheduled"
+      fi
     done
   done
+  if [[ "$mode" == wan4-latency ]]; then
+    echo "PASS MPQUIC low_latency: four validated WAN paths, RTP reordering budget and fast-path usage"
+  fi
   echo "PASS MPQUIC four-WAN: distinct Server IPs, validated paths, independent netem and per-WAN counters"
   exit 0
 fi

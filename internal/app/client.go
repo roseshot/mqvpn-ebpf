@@ -50,6 +50,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	mssClamp := fs.String("mss-clamp", "auto", "TUN TCP SYN MSS clamp: off|auto|numeric")
 	tcStats := fs.Bool("tc-stats", true, "collect TUN ingress/egress BPF counters")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
+	pathScheduler := fs.String("path-scheduler", pathSchedulerRoundRobin, "MPQUIC scheduling: round_robin (default) or low_latency")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort := fs.Int("tcp-port", 443, "TCP fallback server port (independent of QUIC URL port)")
 	acceptRoutes := fs.Bool("accept-routes", true, "apply authenticated Server-pushed routes (default true)")
@@ -103,6 +104,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		setString("cert", certFile, file.Cert)
 		setString("key", keyFile, file.Key)
 		setString("transport", transportMode, file.Transport)
+		setString("path-scheduler", pathScheduler, file.PathScheduler)
 		setInt("tcp-port", tcpPort, file.TCPPort)
 		if !explicit["udp-dial-timeout"] && file.UDPDialTimeout != "" {
 			timeout, err := time.ParseDuration(file.UDPDialTimeout)
@@ -145,6 +147,10 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("TUN TC eBPF config: %w", err)
 	}
+	normalizedScheduler, err := normalizePathScheduler(*pathScheduler)
+	if err != nil {
+		return err
+	}
 	if *transportMode != "auto" && *transportMode != "quic" && *transportMode != "tcp" {
 		return fmt.Errorf("invalid --transport %q (auto|quic|tcp)", *transportMode)
 	}
@@ -167,7 +173,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	logger = logger.With("tun", *tunName)
+	logger = logger.With("tun", *tunName, "path_scheduler", normalizedScheduler)
 	logger.InfoContext(ctx, "VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName, "transport", *transportMode)
 	tcpOptions := clientTCPOptions{
 		endpoint: endpoint, wanIP: wans[0].SourceIP, wanInterface: wans[0].Interface, tunName: *tunName, tcpPort: *tcpPort,
@@ -196,7 +202,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	options := clientSessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
-		wans: wans, useServerWANs: *useServerWANs,
+		wans: wans, useServerWANs: *useServerWANs, pathScheduler: normalizedScheduler,
 	}
 	return runClientSupervisor(ctx, *reconnect, logger, func(sessionCtx context.Context) error {
 		return runClientSession(sessionCtx, options, logger)
@@ -209,6 +215,7 @@ type clientSessionOptions struct {
 	udpDialTimeout time.Duration
 	wans           []clientWAN
 	useServerWANs  bool
+	pathScheduler  string
 }
 
 // runClientSession owns exactly one transport and TUN session. On every
@@ -277,7 +284,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		EnableDatagrams:            true,
 		EnableAddressAdvertisement: true,
 		MaxPaths:                   max(2, len(o.wans)),
-		MultipathController:        quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler()),
+		MultipathController:        quic.NewDefaultMultipathController(newPathScheduler(o.pathScheduler)),
 		KeepAlivePeriod:            10 * time.Second,
 		MaxIdleTimeout:             30 * time.Second,
 	}

@@ -58,6 +58,7 @@ type TCPFallbackConfig struct {
 type ServerConfig struct {
 	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen        string            `yaml:"listen,omitempty"`
+	PathScheduler string            `yaml:"path_scheduler,omitempty"`
 	WANInterfaces []string          `yaml:"wan_interfaces,omitempty"`
 	WANs          []serverWAN       `yaml:"wans,omitempty"`
 	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
@@ -79,6 +80,11 @@ func (c *ServerConfig) Validate() error {
 	if c.Listen == "" {
 		c.Listen = defaultServerListen
 	}
+	policy, err := normalizePathScheduler(c.PathScheduler)
+	if err != nil {
+		return err
+	}
+	c.PathScheduler = policy
 	if c.TCPFallback.Enabled && c.TCPFallback.Listen == "" {
 		c.TCPFallback.Listen = "0.0.0.0:443"
 	}
