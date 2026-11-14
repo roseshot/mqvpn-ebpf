@@ -19,7 +19,7 @@ func TestGo127GenericAuthenticatedHeaderDecoding(t *testing.T) {
 		headers := authenticatedHeaders{
 			Header: http.Header{
 				http.CanonicalHeaderKey(routepush.Header): []string{"10.90.0.0/16,0.0.0.0/0"},
-				http.CanonicalHeaderKey(dnspush.Header):  []string{"10.77.0.1,fd77::53"},
+				http.CanonicalHeaderKey(dnspush.Header):   []string{"10.77.0.1,fd77::53"},
 			},
 			transport: transport,
 		}
@@ -53,11 +53,11 @@ func TestGo127GenericAuthenticatedHeadersFailClosed(t *testing.T) {
 		}
 		for _, tc := range []struct {
 			key, kind, invalid string
-			decode func(authenticatedHeaders) error
+			decode             func(authenticatedHeaders) error
 		}{
 			{
-				key: routepush.Header,
-				kind: "routes",
+				key:     routepush.Header,
+				kind:    "routes",
 				invalid: "not-a-prefix",
 				decode: func(h authenticatedHeaders) error {
 					_, err := h.Decode("routes", routepush.Header, routepush.Decode)
@@ -65,8 +65,8 @@ func TestGo127GenericAuthenticatedHeadersFailClosed(t *testing.T) {
 				},
 			},
 			{
-				key: dnspush.Header,
-				kind: "DNS",
+				key:     dnspush.Header,
+				kind:    "DNS",
 				invalid: "not-an-ip",
 				decode: func(h authenticatedHeaders) error {
 					_, err := h.Decode("DNS", dnspush.Header, dnspush.Decode)

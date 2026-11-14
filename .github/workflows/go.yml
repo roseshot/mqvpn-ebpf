@@ -17,24 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  go127-format-export:
-    name: Export Go 1.27 syntax formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Emit gofmt for Go 1.27 changed source
-        run: |
-          for path in internal/app/client.go internal/app/client_tcp.go internal/app/client_headers.go internal/app/client_headers_test.go internal/app/server_config.go internal/app/server_config_test.go internal/app/client_reconnect_test.go internal/p2mp/client_test.go; do
-            echo "__MQVPN_GO127_BEGIN__ $path"
-            gofmt "$path" | base64 -w76
-            echo "__MQVPN_GO127_END__ $path"
-          done
-
   hygiene:
     name: Go format and module integrity
     runs-on: ubuntu-latest
