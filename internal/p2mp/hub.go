@@ -29,6 +29,7 @@ type Session struct {
 	codec       l3.Codec
 	fragmenter  l3.Fragmenter
 	reassembler l3.Reassembler
+	voip        qos.VoIPMonitor
 	done        chan struct{}
 	txDone      chan struct{}
 	// txMu serializes the nonblocking enqueue with session revocation,
@@ -40,6 +41,11 @@ type Session struct {
 }
 
 func (s *Session) ID() string { return s.rule.ID }
+
+// VoIPStats reports receive-side indicators for DSCP EF-marked RTP/RTCP.
+func (s *Session) VoIPStats() qos.VoIPStats {
+	return s.voip.Snapshot()
+}
 
 // stop is called only while holding Hub.mu and only after removing this
 // session from Hub.peers. It fences new queue writes before canceling the
@@ -238,11 +244,30 @@ func (h *Hub) Detach(s *Session) {
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.peers[s.ID()] == s {
+	active := h.peers[s.ID()] == s
+	if active {
 		delete(h.peers, s.ID())
 		s.stop()
 	}
+	h.mu.Unlock()
+	if active {
+		stats := s.VoIPStats()
+		if stats.RTPPackets > 0 || stats.RTCPPackets > 0 {
+			h.log.Info("peer VoIP receive summary", "peer", s.ID(), "stats", stats)
+		}
+	}
+}
+
+// PeerVoIPStats returns current receive-side indicators for active peers.
+// It can be consumed by a future local diagnostics or metrics exporter.
+func (h *Hub) PeerVoIPStats() map[string]qos.VoIPStats {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make(map[string]qos.VoIPStats, len(h.peers))
+	for id, peer := range h.peers {
+		out[id] = peer.VoIPStats()
+	}
+	return out
 }
 
 func (h *Hub) Receive(ctx context.Context, s *Session) error {
@@ -331,6 +356,7 @@ func (h *Hub) ingress(origin *Session, payload []byte) {
 		h.drops.Add(1)
 		return
 	}
+	origin.voip.Observe(packet)
 	if dst.IsMulticast() || l3.IsBroadcastOrMulticastIP(dst) {
 		// P2MP IP multicast/broadcast delivered to every other connected
 		// tunnel endpoint, without group allowlists, TTL rewriting or PPS caps.
