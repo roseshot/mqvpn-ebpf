@@ -119,7 +119,7 @@ jobs:
           sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
 
   overlay-integration:
-    name: VXLAN, TCP, UDP, VoIP, mixed-load QoS and FRR over QUIC TUN
+    name: VXLAN, TCP, UDP, VoIP, WAN netem and FRR over QUIC TUN
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -151,7 +151,7 @@ jobs:
           sudo modprobe vxlan || true
           test -c /dev/net/tun
           bash -n tests/integration/overlay-netns.sh
-          python3 -m py_compile tests/integration/transport_probe.py
+          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py
       - name: Build actual mqvpn binaries
         run: make release
       - name: VXLAN MTU 1450 over TUN (ARP, full-MTU DF, both directions)
@@ -164,5 +164,9 @@ jobs:
         run: sudo bash tests/integration/overlay-netns.sh voip
       - name: VoIP under concurrent bidirectional TCP/UDP load on shaped WAN
         run: sudo bash tests/integration/overlay-netns.sh mixed
+      - name: WAN netem regional (RTT 80ms, jitter, 1% loss, concurrent TCP UDP)
+        run: sudo bash tests/integration/overlay-netns.sh wan-regional
+      - name: WAN netem poor (RTT 240ms, jitter, 3% loss)
+        run: sudo bash tests/integration/overlay-netns.sh wan-poor
       - name: FRRouting official stable .deb BGP peering and FIB over TUN
         run: sudo bash tests/integration/overlay-netns.sh bgp
