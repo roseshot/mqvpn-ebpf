@@ -1,10 +1,14 @@
 package p2mp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"runtime"
+	"runtime/pprof"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -152,5 +156,32 @@ func TestClientPumpRemoteEOFWaitsForBlockedTUNReader(t *testing.T) {
 		default:
 			t.Fatal("ClientPump did not close TUN before returning")
 		}
+	}
+}
+
+func TestGo127GoroutineLeakProfileAfterRepeatedClientPumps(t *testing.T) {
+	// Go 1.27 promotes goroutineleak from experiment to a standard pprof
+	// profile. Detect any permanently blocked ClientPump worker that was
+	// not joined before the next VPN session.
+	for range 64 {
+		device := newTestTun()
+		stream := &testDatagrams{in: make(chan []byte, 2), out: make(chan []byte, 2)}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := ClientPump(ctx, device, stream, 1160, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.GC()
+	profile := pprof.Lookup("goroutineleak")
+	if profile == nil {
+		t.Fatal("Go 1.27 goroutineleak profile is unavailable")
+	}
+	var out bytes.Buffer
+	if err := profile.WriteTo(&out, 1); err != nil {
+		t.Fatalf("read goroutineleak profile: %v", err)
+	}
+	if strings.Contains(out.String(), "github.com/roseshot/mqvpn-ebpf/internal/p2mp.ClientPump.func") {
+		t.Fatalf("ClientPump left permanently blocked worker:\n%s", out.String())
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"reflect"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -172,4 +173,66 @@ func TestReconnectSupervisorSerializesCleanupAcrossFailures(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || active != 0 || attempts != sessions || waits != sessions-1 {
 		t.Fatalf("serial reconnect lifecycle: err=%v active=%d attempts=%d waits=%d", err, active, attempts, waits)
 	}
+}
+
+func TestGo127ReconnectBackoffWithVirtualTime(t *testing.T) {
+	// Go 1.27 synctest.Sleep advances the virtual clock AND waits for
+	// the reconnect goroutine to settle. No wall-clock sleeps or retries.
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		attempts := make(chan time.Time, 4)
+		done := make(chan error, 1)
+		go func() {
+			done <- runClientSupervisor(ctx, true, silentReconnectLogger(), func(context.Context) error {
+				attempts <- time.Now()
+				return errors.New("transient disconnect")
+			})
+		}()
+
+		first := <-attempts
+		synctest.Sleep(time.Second)
+		second := <-attempts
+		if delay := second.Sub(first); delay != time.Second {
+			t.Fatalf("first retry: got %v, want 1s", delay)
+		}
+
+		synctest.Sleep(2 * time.Second)
+		third := <-attempts
+		if delay := third.Sub(second); delay != 2*time.Second {
+			t.Fatalf("second retry: got %v, want 2s", delay)
+		}
+
+		synctest.Sleep(4 * time.Second)
+		fourth := <-attempts
+		if delay := fourth.Sub(third); delay != 4*time.Second {
+			t.Fatalf("third retry: got %v, want 4s", delay)
+		}
+
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("supervisor did not stop on cancellation: %v", err)
+		}
+	})
+}
+
+func TestGo127ReconnectCancelDuringVirtualThirtySecondWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		started := make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			close(started)
+			done <- waitReconnect(ctx, 30*time.Second)
+		}()
+		<-started
+		synctest.Sleep(time.Second)
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation should interrupt a 30s wait: %v", err)
+		}
+	})
 }

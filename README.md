@@ -741,3 +741,24 @@ sessions. The QUIC path monitor uses `sync.WaitGroup.Go` and is joined
 before a session returns. Linux's optional `resolvconf` fallback is
 still the sole explicitly restricted subprocess exception: it cannot
 be replaced with a kernel interface-DNS syscall on Linux.
+
+## Go 1.27 language and runtime features in production
+
+The Go 1.27.4 minimum is intentional rather than just a build setting:
+
+- `internal/app/client_headers.go` defines a **generic method** on
+  authenticated response headers. QUIC CONNECT and TCP Upgrade infer
+  `[]netip.Prefix` or `[]netip.Addr` from the decoder while preserving
+  strict parsing and transport-specific error context.
+- Its embedded response context is initialized using **promoted fields
+  in keyed struct literals**, another Go 1.27 language feature.
+- DNS tenant validation uses `strings.CutLast` (added in Go 1.27).
+- Reconnect timing tests use `testing/synctest.Sleep` for virtual
+  1s/2s/4s retry intervals and interruption of a 30-second wait.
+- Client pump tests read the built-in `runtime/pprof` `goroutineleak`
+  profile (stable in Go 1.27) after repeated session shutdowns.
+
+The protocol, mTLS validation, route ownership and DNS cleanup behavior
+remain unchanged by these language and test improvements. Experimental
+SIMD and JSON v2 are not enabled because they do not improve current
+MASQUE VPN behavior.

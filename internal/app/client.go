@@ -297,18 +297,21 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if err != nil {
 		return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w", err)
 	}
+	// Go 1.27 promoted keyed fields and generic methods keep authenticated
+	// route/DNS decoding identical for QUIC and TCP without losing context.
+	headers := authenticatedHeaders{Header: response.Header, transport: "CONNECT-ETHERNET"}
 	var pushedRoutes []netip.Prefix
 	if o.tcp.acceptRoutes {
-		pushedRoutes, err = routepush.Decode(response.Header.Get(routepush.Header))
+		pushedRoutes, err = headers.Decode("routes", routepush.Header, routepush.Decode)
 		if err != nil {
-			return fmt.Errorf("CONNECT-ETHERNET pushed routes: %w", err)
+			return err
 		}
 	}
 	var pushedDNS []netip.Addr
 	if o.tcp.acceptDNS {
-		pushedDNS, err = dnspush.Decode(response.Header.Get(dnspush.Header))
+		pushedDNS, err = headers.Decode("DNS", dnspush.Header, dnspush.Decode)
 		if err != nil {
-			return fmt.Errorf("CONNECT-ETHERNET pushed DNS: %w", err)
+			return err
 		}
 	}
 	// DNS host routes are independent from ordinary route acceptance, and

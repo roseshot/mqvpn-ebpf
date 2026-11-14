@@ -130,18 +130,19 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	if err != nil {
 		return fmt.Errorf("TCP tunnel IP negotiation: %w", err)
 	}
+	headers := authenticatedHeaders{Header: response.Header, transport: "TCP"}
 	var pushedRoutes []netip.Prefix
 	if o.acceptRoutes {
-		pushedRoutes, err = routepush.Decode(response.Header.Get(routepush.Header))
+		pushedRoutes, err = headers.Decode("routes", routepush.Header, routepush.Decode)
 		if err != nil {
-			return fmt.Errorf("TCP pushed routes: %w", err)
+			return err
 		}
 	}
 	var pushedDNS []netip.Addr
 	if o.acceptDNS {
-		pushedDNS, err = dnspush.Decode(response.Header.Get(dnspush.Header))
+		pushedDNS, err = headers.Decode("DNS", dnspush.Header, dnspush.Decode)
 		if err != nil {
-			return fmt.Errorf("TCP pushed DNS: %w", err)
+			return err
 		}
 	}
 	pushedRoutes = routepush.WithDNSHostRoutes(pushedRoutes, pushedDNS, o.dnsRoutes)

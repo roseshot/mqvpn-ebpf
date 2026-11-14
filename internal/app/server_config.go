@@ -178,7 +178,10 @@ func (c *ServerConfig) Validate() error {
 // SNI must be an unambiguous DNS hostname, not an IP literal or wildcard.
 // An IP-literal HTTPS URL cannot reliably transmit SNI for demultiplexing.
 func validateSNI(s string) error {
-	if len(s) == 0 || len(s) > 253 || net.ParseIP(s) != nil || !strings.Contains(s, ".") {
+	// Go 1.27 CutLast checks for a non-empty terminal DNS label without
+	// allocating a temporary slice or assuming that any dot is valid.
+	_, topLevel, qualified := strings.CutLast(s, ".")
+	if len(s) == 0 || len(s) > 253 || net.ParseIP(s) != nil || !qualified || topLevel == "" {
 		return fmt.Errorf("invalid server_name %q: use a DNS hostname, not an IP", s)
 	}
 	for _, label := range strings.Split(s, ".") {

@@ -284,3 +284,16 @@ func TestInstancePushDNSValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestGo127QualifiedSNIRequiresValidTerminalLabel(t *testing.T) {
+	for _, domain := range []string{"edge.example.com", "tenant.co.uk"} {
+		if err := validateSNI(domain); err != nil {
+			t.Fatalf("valid multi-label DNS SNI %q rejected: %v", domain, err)
+		}
+	}
+	for _, domain := range []string{"edge", "edge.", ".edge", "edge..com", "192.0.2.1"} {
+		if err := validateSNI(domain); err == nil {
+			t.Fatalf("invalid DNS SNI %q accepted", domain)
+		}
+	}
+}
