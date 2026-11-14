@@ -224,10 +224,7 @@ router ospf
 EOF
   fi
 done
-chown frr:frr "$work"/site*-{zebra,bgpd,ospfd}.conf 2>/dev/null || {
-  # The shell glob includes only the active routing protocol.
-  chown frr:frr "$work"/site*-zebra.conf "$work"/site*-"$mode"d.conf
-}
+chown frr:frr "$work"/site*-zebra.conf "$work"/site*-"$mode"d.conf
 chmod 0640 "$work"/site*.conf
 
 for i in 0 1 2 3 4; do
