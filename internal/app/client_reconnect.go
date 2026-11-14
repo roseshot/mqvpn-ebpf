@@ -46,7 +46,7 @@ func runClientSupervisorWithWait(ctx context.Context, enabled bool, logger *slog
 		if stop := ctx.Err(); stop != nil {
 			return stop
 		}
-		if errors.Is(err, errUnsafeReconnect) {
+		if errors.Is(err, errUnsafeReconnect) || errors.Is(err, errHAFatal) {
 			return err
 		}
 		if time.Since(started) >= reconnectStableAfter {
