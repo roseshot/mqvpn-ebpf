@@ -56,6 +56,7 @@ Logs go to **stderr**, and may contain sensitive network topology and peer infor
 | `mq0` missing or cannot be configured | Linux TUN | `/dev/net/tun`, capabilities, TUN name collision, interface MTU; see [TUN lifecycle](tun-lifecycle.md) |
 | Client can ping Server TUN but not another site | Linux routing / peer mapping | Remote peer `routes` ownership, Server `ip_forward`, kernel routes and forwarding/firewall rules |
 | Additional WAN paths do not validate | MPQUIC underlay | Each `--wan` source IP/interface and Server destination, source-policy routes, interface UP state; see [Multi-WAN](server-multiwan.md) |
+| Server VIP does not move or wrong node receives encrypted packets | Server HA ingress | Check local `GET /readyz`, Keepalived VRRP ownership, fencing, external routes, and QUIC session affinity; see [Server HA](high-availability.md) |
 | Assured traffic does not choose a specific WAN | QoS design | QoS queue class changes order, **not** per-datagram MPQUIC WAN selection; see [QoS](qos-queues.md) |
 | Voice takes multiple WANs | Sticky configuration | Enable `sticky_voip` on the Client, mark media DSCP EF 46, verify companion QUIC and WAN health; see [Sticky voice](voip-sticky.md) |
 | TCP fallback never starts | Transport policy | Server must enable it; automatic fallback is limited to an initial QUIC handshake timeout and uses only one WAN |
