@@ -10,7 +10,7 @@
 
 | 能力 | 实际行为 |
 | --- | --- |
-| 加密与身份验证 | TLS 1.3 + 双向 TLS（mTLS）；客户端证书还必须在 Server 的 SHA-256 指纹白名单中 |
+| 加密与身份验证 | TLS 1.3 + 双向 TLS（mTLS）；Server 按证书 CN 映射已授权 Peer，可选使用 CRL 验证吊销 |
 | 多租户 | 一个 UDP/QUIC 监听端口；通过校验过的 TLS SNI 选择相互隔离的 VPN 实例 |
 | 多 WAN | 每个 Client 可配置多条有序 QUIC 路径；支持 `round_robin` 和连接级 `low_latency` 策略 |
 | Server 高可用 | Server 本地健康检测、Keepalived/VRRP UDP VIP 主备、HAProxy TCP 主备或双活；Client 无需 HA 配置 |
@@ -46,7 +46,7 @@ sudo bash tests/integration/overlay-netns.sh udp
 | 想做的事 | 文档 |
 | --- | --- |
 | 完整搭建第一个 Server 和 Client | [入门教程](docs/getting-started.md) |
-| 配置多租户、证书指纹、动态地址、路由及 DNS | [Server 配置](docs/server-config.md) |
+| 配置多租户、证书 CN、CRL、动态地址、路由及 DNS | [Server 配置](docs/server-config.md) |
 | 配置 Client、认证、重连、WAN 列表 | [Client 配置](docs/client-config.md) |
 | 在一条连接上使用多个 Server WAN IP | [Server 多 WAN](docs/server-multiwan.md) |
 | 根据 DSCP 优化转发队列 | [QoS 分级队列](docs/qos-queues.md) |
@@ -76,7 +76,7 @@ Server 采用 YAML；Client 既可以用 YAML，也可以通过命令行覆盖�
 
 ## 安全边界
 
-- 客户端需要受信任的证书链及 Server 的**显式指纹授权**。仅有合法的 CA 签名还不够。
+- 客户端必须通过实例的 mTLS 证书链校验、可选 CRL 检查，并与该实例配置的 CN/Peer 身份相匹配。仅有 CA 签名不足以自动获得网段访问权。
 - Server Peer YAML 的 `routes` 是“目的前缀对应哪个认证会话”的映射，不是 Linux 系统路由表。
 - 跨站点转发、Linux VRF、策略路由、防火墙和 OSPF/BGP 需要根据你的拓扑另行配置。
 - 单一 UDP 端口下的多租户必须有独立 TLS SNI 身份；客户端连接必须校验证书域名或 IP SAN。
