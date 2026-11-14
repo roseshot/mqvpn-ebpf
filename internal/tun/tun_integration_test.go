@@ -3,6 +3,7 @@
 package tun
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -319,5 +320,27 @@ func TestIntegrationClientRestoresPersistentStaticAndDynamicTUN(t *testing.T) {
 		if !foundOld || foundLease {
 			t.Fatalf("persistent TUN addresses leaked: old=%t new=%t addrs=%+v", foundOld, foundLease, addrs)
 		}
+	}
+}
+
+func TestIntegrationPollableTUNRead(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("TUN poller integration needs root/CAP_NET_ADMIN")
+	}
+	name := fmt.Sprintf("mqpoll%x", os.Getpid())
+	device, err := Open(name, "198.19.91.1/30", 1400)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer device.Close()
+	// A runtime-initialized /dev/net/tun before TUNSETIFF can produce
+	// "read /dev/net/tun: not pollable" and silently kill the VPN.
+	if err := device.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("configured TUN must be pollable: %v", err)
+	}
+	defer device.SetReadDeadline(time.Time{})
+	_, err = device.Read(make([]byte, 2048))
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("configured TUN read must wait or time out, not fail: %v", err)
 	}
 }

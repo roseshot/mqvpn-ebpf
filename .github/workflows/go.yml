@@ -117,3 +117,43 @@ jobs:
           sudo modprobe tun || true
           test -c /dev/net/tun
           sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
+
+  overlay-integration:
+    name: VXLAN and official FRR eBGP over QUIC TUN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install Linux network tools and official FRRouting stable .deb
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release
+          # Official signed frr-stable channel, NOT the Ubuntu archive package.
+          curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
+            sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr noble frr-stable" |
+            sudo tee /etc/apt/sources.list.d/frrouting.list
+          sudo apt-get update -qq
+          apt-cache policy frr | tee /tmp/mqvpn-frr-policy.log
+          grep -q 'deb.frrouting.org/frr' /tmp/mqvpn-frr-policy.log
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends frr frr-pythontools
+          dpkg -l frr frr-pythontools
+          /usr/lib/frr/bgpd --version
+      - name: Prepare Linux TUN and VXLAN modules
+        run: |
+          sudo modprobe tun || true
+          sudo modprobe vxlan || true
+          test -c /dev/net/tun
+          bash -n tests/integration/overlay-netns.sh
+      - name: Build actual mqvpn binaries
+        run: make release
+      - name: VXLAN over TUN (ARP, UDP 4789, bidirectional and large DF payload)
+        run: sudo bash tests/integration/overlay-netns.sh vxlan
+      - name: FRRouting official stable .deb BGP peering and FIB over TUN
+        run: sudo bash tests/integration/overlay-netns.sh bgp

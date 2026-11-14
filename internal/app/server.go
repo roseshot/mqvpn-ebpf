@@ -225,7 +225,13 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	compression := acceptCompression(r.Header.Get(compressionHeader))
 	fragmentation := acceptFraming(r.Header.Get(framingHeader))
-	session, err := instance.hub.AttachWithFeatures(r.Context(), rule, streamer.HTTPStream(), requestDynamic, compression, fragmentation)
+	// HTTPStreamer.HTTPStream flushes the response immediately. Attaching
+	// with it before configuring the CONNECT response sent a bare 200,
+	// hiding Capsule-Protocol and authenticated tunnel negotiation headers.
+	// A pending stream keeps sender goroutines parked until the complete
+	// HTTP response is committed, without sending 200 for rejected peers.
+	pending := &pendingHTTP3Stream{ctx: r.Context(), ready: make(chan struct{})}
+	session, err := instance.hub.AttachWithFeatures(r.Context(), rule, pending, requestDynamic, compression, fragmentation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -248,6 +254,7 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
+	pending.release(streamer.HTTPStream())
 	peerLogger.InfoContext(r.Context(), "peer connected", "remote", r.RemoteAddr)
 	if err := instance.hub.Receive(r.Context(), session); err != nil {
 		peerLogger.WarnContext(r.Context(), "peer receive ended", "error", err)
