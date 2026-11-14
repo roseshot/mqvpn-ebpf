@@ -27,6 +27,7 @@ type Session struct {
 	sticky      bool
 	isRealtime  bool
 	tx          chan []byte
+	assuredTx   chan []byte
 	priorityTx  chan []byte
 	codec       l3.Codec
 	fragmenter  l3.Fragmenter
@@ -67,6 +68,14 @@ func (s *Session) stop() {
 // enqueue never blocks on a slow peer and cannot queue more datagrams once
 // stop has finished. A full or retired queue is counted as a drop by Hub.
 func (s *Session) enqueue(payload []byte, priority bool) bool {
+	class := qos.BestEffort
+	if priority {
+		class = qos.Realtime
+	}
+	return s.enqueueClass(payload, class)
+}
+
+func (s *Session) enqueueClass(payload []byte, class qos.Class) bool {
 	s.txMu.Lock()
 	defer s.txMu.Unlock()
 	if s.ctx.Err() != nil {
@@ -78,8 +87,11 @@ func (s *Session) enqueue(payload []byte, priority bool) bool {
 	default:
 	}
 	queue := s.tx
-	if priority {
+	switch class {
+	case qos.Realtime:
 		queue = s.priorityTx
+	case qos.Assured:
+		queue = s.assuredTx
 	}
 	select {
 	case queue <- payload:
@@ -238,7 +250,7 @@ func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stre
 		return nil, fmt.Errorf("peer %s must request a dynamic tunnel IP", rule.ID)
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	s := &Session{rule: rule, stream: stream, sticky: sticky, isRealtime: realtime, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, fragmenter: l3.Fragmenter{Enabled: fragmentation}, reassembler: l3.Reassembler{Enabled: fragmentation, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
+	s := &Session{rule: rule, stream: stream, sticky: sticky, isRealtime: realtime, tx: make(chan []byte, 192), priorityTx: make(chan []byte, 64), assuredTx: make(chan []byte, 96), codec: l3.Codec{Compression: compression, MaxFrame: h.maxFrame}, fragmenter: l3.Fragmenter{Enabled: fragmentation}, reassembler: l3.Reassembler{Enabled: fragmentation, MaxFrame: h.maxFrame}, done: make(chan struct{}), txDone: make(chan struct{}), ctx: sessionCtx, cancel: sessionCancel, tunnelAddress: lease}
 	if realtime {
 		h.realtime[rule.ID] = s
 	} else {
@@ -247,11 +259,11 @@ func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stre
 	h.mu.Unlock()
 	go func() {
 		defer close(s.txDone)
-		burst := 0
+		cursor := 0
 		for {
-			// Priority takes precedence over bulk packets, with bounded
-			// bursts to avoid starving normal traffic on a busy peer.
-			packet, ok := qos.Next(s.ctx, s.priorityTx, s.tx, &burst)
+			// Weighted 4:2:1 service protects RTP/SIP latency while giving
+			// assured traffic bandwidth and avoiding best-effort starvation.
+			packet, ok := qos.NextTier(s.ctx, s.priorityTx, s.assuredTx, s.tx, &cursor)
 			if !ok || s.ctx.Err() != nil {
 				return
 			}
@@ -491,8 +503,8 @@ func (h *Hub) fanout(origin *Session, packet []byte) {
 }
 
 func (h *Hub) send(s *Session, packet []byte) {
-	priority := qos.Priority(packet)
-	if priority && s.sticky {
+	class := qos.Classify(packet)
+	if class == qos.Realtime && s.sticky {
 		// Strict sticky policy: NEVER route realtime data via the normal
 		// round-robin MPQUIC connection, even while the dedicated WAN is
 		// reconnecting. A bounded drop is safer than path-flapping/late
@@ -511,7 +523,7 @@ func (h *Hub) send(s *Session, packet []byte) {
 	queued := append([]byte(nil), packet...)
 	// A retired session cannot receive a late enqueue even when both its
 	// closed done channel and buffered tx channel would be selectable.
-	if !s.enqueue(queued, priority) {
+	if !s.enqueueClass(queued, class) {
 		// Only bounded I/O queue pressure or retired-session cleanup
 		// drops an otherwise valid packet. Not an inner IP traffic ACL.
 		h.drops.Add(1)

@@ -224,3 +224,42 @@ func TestServerIPv6SIPWithExtensionHeaderUsesStickyCompanion(t *testing.T) {
 		t.Fatal("server routed ordinary IPv6 UDP onto realtime QUIC")
 	}
 }
+
+func TestServerAssuredQoSRemainsOnMPQUIC(t *testing.T) {
+	h, _, other, old, _, _, cancel := prepare(t)
+	defer cancel()
+	defer h.Detach(other)
+	h.Detach(old)
+
+	normal := &fakeStream{out: make(chan []byte, 8)}
+	primary, err := h.AttachWithTrafficRole(context.Background(), old.rule,
+		normal, false, false, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Detach(primary)
+	voice := &fakeStream{out: make(chan []byte, 8)}
+	companion, err := h.AttachWithTrafficRole(context.Background(), old.rule,
+		voice, false, false, false, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Detach(companion)
+	assured := ip4([4]byte{10, 77, 0, 1}, [4]byte{10, 77, 0, 3})
+	assured[1] = 34 << 2 // AF41; bulk MPQUIC uses its configured scheduler.
+	h.send(primary, assured)
+	pkt, err := l3.Unwrap(waitFrame(t, normal))
+	if err != nil || string(pkt) != string(assured) {
+		t.Fatalf("AF41 not sent on bulk multipath: %v", err)
+	}
+	if len(voice.out) != 0 {
+		t.Fatal("AF41 incorrectly routed over strict realtime companion")
+	}
+	realtime := append([]byte(nil), assured...)
+	realtime[1] = 46 << 2
+	h.send(primary, realtime)
+	pkt, err = l3.Unwrap(waitFrame(t, voice))
+	if err != nil || string(pkt) != string(realtime) {
+		t.Fatalf("EF failed to use pinned realtime companion: %v", err)
+	}
+}
