@@ -137,9 +137,8 @@ done
 {
   echo "peers:"
   for i in 1 2 3 4; do
-    fingerprint="$(openssl x509 -in "$cert/site$i.crt" -outform DER | sha256sum | awk '{print $1}')"
-    printf '  - id: site%d\n    certificate_sha256: "%s"\n    routes:\n      - %s/32\n      - %s/32\n' \
-      "$i" "$fingerprint" "${tunnel[i]}" "${loopback[i]}"
+    printf '  - id: site%d\n    certificate_cn: mqvpn-site%d\n    routes:\n      - %s/32\n      - %s/32\n' \
+      "$i" "$i" "${tunnel[i]}" "${loopback[i]}"
   done
 } >"$work/peers.yaml"
 
