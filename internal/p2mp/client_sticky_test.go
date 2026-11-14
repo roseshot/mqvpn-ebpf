@@ -112,8 +112,8 @@ func TestClientPumpNeverRotatesEFOrSIPOntoBulkSession(t *testing.T) {
 // both QUIC receivers are busy.
 type serializeCheckDevice struct {
 	*testTun
-	mu sync.Mutex
-	busy bool
+	mu         sync.Mutex
+	busy       bool
 	concurrent bool
 }
 
