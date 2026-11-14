@@ -157,7 +157,7 @@ var (
 	// errClientPeerDenied is used on both QUIC and TCP CONNECT rejections.
 	// An authorization denial must never be bypassed by trying a weaker peer.
 	errClientPeerDenied = errors.New("CONNECT-ETHERNET rejected")
-	errHAFatal         = errors.New("HA endpoint authentication or authorization failed")
+	errHAFatal          = errors.New("HA endpoint authentication or authorization failed")
 )
 
 func fatalHAAttempt(err error) bool {
