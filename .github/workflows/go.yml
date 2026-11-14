@@ -28,14 +28,6 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
-      - name: Temporary canonical formatting diagnostic
-        run: |
-          gofmt -w internal/app/client.go
-          echo WAN_GOFMT_BEGIN
-          base64 -w0 internal/app/client.go
-          echo
-          echo WAN_GOFMT_END
-          exit 1
       - name: Enforce gofmt across all application and test code
         run: |
           files="$(gofmt -l cmd internal)"
