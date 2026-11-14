@@ -20,8 +20,8 @@ func fourServerWANs() []serverWAN {
 
 func TestServerWANMultiAddressValidation(t *testing.T) {
 	config := ServerConfig{
-		Listen: "0.0.0.0:8443",
-		WANs: fourServerWANs(),
+		Listen:    "0.0.0.0:8443",
+		WANs:      fourServerWANs(),
 		Instances: []ServerInstance{sampleInstance("lab", "vpn.example.test", "mq0")},
 	}
 	if err := config.Validate(); err != nil {
@@ -41,8 +41,8 @@ func TestServerWANMultiAddressValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := ServerConfig{
-				Listen: "0.0.0.0:8443",
-				WANs: fourServerWANs(),
+				Listen:    "0.0.0.0:8443",
+				WANs:      fourServerWANs(),
 				Instances: []ServerInstance{sampleInstance("lab", "vpn.example.test", "mq0")},
 			}
 			tc.change(&cfg)
