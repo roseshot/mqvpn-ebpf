@@ -42,17 +42,32 @@ func open(name, cidr string, mtu int, routed bool) (*os.File, error) {
 	if err := Validate(name, cidr, mtu, 0); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+	// Opening /dev/net/tun via os.OpenFile before TUNSETIFF asks the Go
+	// runtime to register an unconfigured TUN fd with epoll. On kernels
+	// where epoll support is unavailable until TUNSETIFF, this poisons
+	// the os.File poller state and all later Reads fail "not pollable".
+	// Open the raw fd, configure IFF_TUN first, then enable nonblocking
+	// mode and wrap it with os.NewFile to register a ready fd with netpoll.
+	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open /dev/net/tun: %w (requires TUN access and CAP_NET_ADMIN)", err)
 	}
 	var req ifreq
 	copy(req.Name[:], name)
 	req.Flags = iffTUN | iffNoPI
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(tunSetIFF), uintptr(unsafe.Pointer(&req)))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(tunSetIFF), uintptr(unsafe.Pointer(&req)))
 	if errno != 0 {
-		_ = f.Close()
+		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("create/attach TUN %q: %w (requires CAP_NET_ADMIN and a TUN, not TAP)", name, errno)
+	}
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		_ = syscall.Close(fd)
+		return nil, fmt.Errorf("prepare TUN %q pollable fd: %w", name, err)
+	}
+	f := os.NewFile(uintptr(fd), "/dev/net/tun")
+	if f == nil {
+		_ = syscall.Close(fd)
+		return nil, fmt.Errorf("wrap TUN %q file descriptor", name)
 	}
 	setup := setupInterface
 	if routed {
