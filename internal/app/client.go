@@ -274,6 +274,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
+	request.Header.Set(framingHeader, framingValue)
 	compressionOffered := localCompressionAvailable()
 	if compressionOffered {
 		request.Header.Set(compressionHeader, compressionZstd)
@@ -305,6 +306,10 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w", err)
 	}
 	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
+	if err != nil {
+		return err
+	}
+	fragmentation, err := negotiatedFraming(response.Header.Get(framingHeader), true)
 	if err != nil {
 		return err
 	}
@@ -396,7 +401,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	var monitors sync.WaitGroup
 	monitors.Go(func() { printPaths(ctx, done, conn, logger) })
 	logger.InfoContext(ctx, "L3 route-based TUN forwarding started", "address", effectiveAddress, "mtu", budget.TUNMTU)
-	err = p2mp.ClientPumpWithCompression(ctx, pumpDevice, stream, budget.MaxFrame, compression, logger)
+	err = p2mp.ClientPumpWithFeatures(ctx, pumpDevice, stream, budget.MaxFrame, compression, fragmentation, logger)
 	close(done)
 	monitors.Wait()
 	return classifyClientCleanup(err)
