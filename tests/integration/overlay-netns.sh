@@ -192,13 +192,12 @@ if [[ "$is_crypto" == true ]]; then
   if [[ "$mode" == crypto-tcp ]]; then capture_filter="tcp port 8443"; fi
   count=1
   if [[ "$mode" == crypto-wan4 ]]; then count=4; fi
-  for side in server client; do
-    if [[ "$side" == server ]]; then ns="$server_ns"; else ns="$client_ns"; fi
-    for (( i=0; i<count; i++ )); do
-      start_crypto_capture "$ns" "$side" "wan$i" "$capture_filter"
-    done
-  done
-  start_crypto_capture "$server_ns" server mq0 "ip"
+  # Only ONE WAN capture starts before QUIC path validation. Running
+  # nine simultaneous pcap readers during the initial AddPath/Probe
+  # handshake can steal enough scheduler time to create false failures.
+  # The other interfaces begin capture after all paths are up, but
+  # before any application canary traffic is generated.
+  start_crypto_capture "$client_ns" client wan0 "$capture_filter"
 fi
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
 if [[ "$mode" == wan4 || "$mode" == crypto-wan4 ]]; then
@@ -266,6 +265,16 @@ if [[ "$is_crypto" == true ]]; then
       fail "forced TLS/TCP fallback VPN session not established"
   fi
 
+  start_crypto_capture "$server_ns" server mq0 "ip"
+  start_crypto_capture "$server_ns" server wan0 "$capture_filter"
+  if [[ "$mode" == crypto-wan4 ]]; then
+    for side in server client; do
+      if [[ "$side" == server ]]; then ns="$server_ns"; else ns="$client_ns"; fi
+      for index in 1 2 3; do
+        start_crypto_capture "$ns" "$side" "wan$index" "$capture_filter"
+      done
+    done
+  fi
   start_crypto_capture "$client_ns" client mq0 "ip"
   run_crypto_probe() {
     local listener_ns="$1" sender_ns="$2" listener_ip="$3" sender_ip="$4" label="$5"
