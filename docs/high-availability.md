@@ -118,8 +118,12 @@ Failover may change assigned tunnel addresses, disrupt existing UDP/TCP applicat
 ```bash
 go test ./internal/app -run 'TestHA|TestPlanClientHA|TestClientHA'
 make test
+make release
+sudo bash tests/integration/client-ha-netns.sh
 haproxy -c -f configs/haproxy-ha-active-standby.cfg
 haproxy -c -f configs/haproxy-ha-active-active.cfg
 ```
+
+The namespace test runs **two separate Server daemons** sharing an authenticated tenant identity, terminates the primary and requires the Client to reestablish a working QUIC/TUN path to the standby. It needs Linux network namespaces, TUN, OpenSSL and root. It is a functional smoke test, not a measured recovery-time SLA.
 
 Inspect Client logs for `HA backend selected`, `backend_index` and the selected destination. In production, monitor the authenticated CONNECT success rate, backend outages, reconnect count, route ownership and actual tunnel data—not just TCP port reachability.
