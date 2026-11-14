@@ -28,6 +28,14 @@ type RealtimeDatagram struct {
 	Generation uint64
 }
 
+// realtimeWriteFence executes the final TUN write only while the companion
+// generation remains authorized. Checking on dequeue alone is insufficient:
+// a WAN can be revoked while the packet is decoded or waiting on writeMu.
+// The stream must keep revocation blocked until the callback finishes.
+type realtimeWriteFence interface {
+	WithRealtimeGeneration(generation uint64, write func()) bool
+}
+
 type realtimeSendStream struct {
 	Stream
 	sender realtimeDatagramSender
@@ -197,11 +205,30 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 				if err != nil {
 					continue
 				}
+				// The generation can change after ReceiveRealtimeDatagram
+				// returns (or while the packet waits for a bulk TUN
+				// write). Fence authorization and the actual write as
+				// one operation; late packets from a retired WAN drop.
 				writeMu.Lock()
-				n, err := device.Write(pkt)
+				var n int
+				var writeErr error
+				write := func() { n, writeErr = device.Write(pkt) }
+				authorized := true
+				if fence, ok := stream.(realtimeWriteFence); ok {
+					authorized = fence.WithRealtimeGeneration(frame.Generation, write)
+				} else {
+					write()
+				}
 				writeMu.Unlock()
-				if err != nil || n != len(pkt) {
-					ends <- fmt.Errorf("realtime TUN write: %w (len %d/%d)", err, n, len(pkt))
+				if !authorized {
+					continue
+				}
+				if writeErr != nil {
+					ends <- fmt.Errorf("realtime TUN write: %w", writeErr)
+					return
+				}
+				if n != len(pkt) {
+					ends <- fmt.Errorf("short realtime TUN write: %d / %d", n, len(pkt))
 					return
 				}
 				voice.Observe(pkt)
