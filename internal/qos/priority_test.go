@@ -2,6 +2,7 @@ package qos
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 )
 
@@ -101,5 +102,95 @@ func TestNextContinuousLoadBoundedPriorityBurst(t *testing.T) {
 	}
 	if realTime != 4000 || bulk != 1000 {
 		t.Fatalf("unexpected sustained load distribution: realtime=%d bulk=%d", realTime, bulk)
+	}
+}
+
+func ipv6Packet(nextHeader byte, body []byte) []byte {
+	packet := make([]byte, 40+len(body))
+	packet[0] = 0x60
+	binary.BigEndian.PutUint16(packet[4:6], uint16(len(body)))
+	packet[6] = nextHeader
+	copy(packet[40:], body)
+	return packet
+}
+
+func sipPorts(src, dst uint16) []byte {
+	p := make([]byte, 8)
+	binary.BigEndian.PutUint16(p[0:2], src)
+	binary.BigEndian.PutUint16(p[2:4], dst)
+	return p
+}
+
+func ipv6Options(next byte) []byte {
+	p := make([]byte, 8)
+	p[0] = next
+	return p
+}
+
+func ipv6Fragment(next byte, fragmentOffset uint16) []byte {
+	p := make([]byte, 8)
+	p[0] = next
+	binary.BigEndian.PutUint16(p[2:4], fragmentOffset<<3)
+	return p
+}
+
+func TestPriorityIPv6SIPWithExtensionHeaders(t *testing.T) {
+	chain := append(ipv6Options(43), ipv6Options(60)...)
+	chain = append(chain, ipv6Options(51)...)
+	ah := make([]byte, 12)
+	ah[0], ah[1] = 17, 1 // AH length = (1 + 2) * 4 = 12 bytes
+	chain = append(chain, ah...)
+	chain = append(chain, sipPorts(40000, 5061)...)
+
+	cases := []struct {
+		name     string
+		packet   []byte
+		priority bool
+	}{
+		{"direct UDP SIP", ipv6Packet(17, sipPorts(5060, 40000)), true},
+		{"direct TCP SIP TLS", ipv6Packet(6, sipPorts(40000, 5061)), true},
+		{"destination options SIP", ipv6Packet(60, append(ipv6Options(17), sipPorts(5060, 40000)...)), true},
+		{"hop by hop routing destination and AH", ipv6Packet(0, chain), true},
+		{"first IPv6 fragment has ports", ipv6Packet(44, append(ipv6Fragment(17, 0), sipPorts(40000, 5060)...)), true},
+		{"noninitial IPv6 fragment hides ports", ipv6Packet(44, append(ipv6Fragment(17, 1), sipPorts(40000, 5060)...)), false},
+		{"noninitial fragment without ports", ipv6Packet(44, ipv6Fragment(17, 2)), false},
+		{"extension chain bulk UDP", ipv6Packet(60, append(ipv6Options(17), sipPorts(40000, 40002)...)), false},
+		{"unknown next header", ipv6Packet(60, append(ipv6Options(50), sipPorts(5060, 40000)...)), false},
+		{"truncated destination options", ipv6Packet(60, []byte{17}), false},
+		{"declared extension exceeds packet", ipv6Packet(60, []byte{17, 2, 0, 0, 0, 0, 0, 0}), false},
+		{"truncated fragment", ipv6Packet(44, []byte{17, 0, 0, 0}), false},
+		{"invalid short AH", ipv6Packet(51, append([]byte{17, 0, 0, 0, 0, 0, 0, 0}, sipPorts(5060, 40000)...)), false},
+		{"truncated transport ports", ipv6Packet(60, append(ipv6Options(17), []byte{0x13, 0xc4, 0}...)), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Priority(tc.packet); got != tc.priority {
+				t.Fatalf("Priority() = %v, want %v", got, tc.priority)
+			}
+		})
+	}
+
+	long := make([]byte, 17*8+8)
+	for i := 0; i < 17; i++ {
+		long[i*8] = 60 // loop to another Destination Options header
+	}
+	copy(long[17*8:], sipPorts(5060, 40000))
+	if Priority(ipv6Packet(60, long)) {
+		t.Fatal("overlong IPv6 extension chain should not be classified as SIP")
+	}
+
+	// Keep the EF fast path independent of extension-header parsing,
+	// including noninitial fragments whose UDP ports cannot be inspected.
+	ef := ipv6Packet(44, append(ipv6Fragment(17, 1), sipPorts(40000, 40002)...))
+	ef[0] = 0x60 | byte((46<<2)>>4)
+	ef[1] = byte((46<<2)&0x0f) << 4
+	if !Priority(ef) {
+		t.Fatal("EF must remain sticky even for IPv6 noninitial fragments")
+	}
+
+	invalidLength := ipv6Packet(17, sipPorts(5060, 40000))
+	invalidLength[5]--
+	if Priority(invalidLength) {
+		t.Fatal("invalid IPv6 payload length must not be prioritized")
 	}
 }
