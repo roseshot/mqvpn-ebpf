@@ -274,7 +274,10 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
-	request.Header.Set(compressionHeader, compressionZstd)
+	compressionOffered := localCompressionAvailable()
+	if compressionOffered {
+		request.Header.Set(compressionHeader, compressionZstd)
+	}
 	if dynamicAddressRequested(o.tcp.tunAddress) {
 		request.Header.Set(tunnelAddressHeader, "auto")
 	}
@@ -301,7 +304,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if err != nil {
 		return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w", err)
 	}
-	compression, err := negotiatedCompression(response.Header.Get(compressionHeader))
+	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
 	if err != nil {
 		return err
 	}
