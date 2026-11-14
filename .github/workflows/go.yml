@@ -28,8 +28,6 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
-      - name: Temporary gofmt diff diagnostic
-        run: gofmt -d internal/app/server_manager.go internal/app/path_scheduler_test.go
       - name: Enforce gofmt across all application and test code
         run: |
           files="$(gofmt -l cmd internal)"
