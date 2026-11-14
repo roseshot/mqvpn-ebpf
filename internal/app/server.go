@@ -270,6 +270,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if fragmentation {
 		w.Header().Set(framingHeader, framingValue)
 	}
+	if stickyValue == "sticky-v1" {
+		w.Header().Set(stickySessionHeader, "sticky-v1")
+	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
 	pending.release(streamer.HTTPStream())
