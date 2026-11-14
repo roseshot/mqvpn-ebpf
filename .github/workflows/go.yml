@@ -28,8 +28,6 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
-      - name: Temporary canonical sticky gofmt diagnostic
-        run: gofmt -d internal/app/client_config.go internal/app/client_sticky.go internal/p2mp/client_sticky_test.go
       - name: Enforce gofmt across all application and test code
         run: |
           files="$(gofmt -l cmd internal)"
