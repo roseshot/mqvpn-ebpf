@@ -39,6 +39,8 @@ jobs:
         run: |
           go mod tidy -diff
           go mod verify
+      - name: Check local documentation links and heading anchors
+        run: python3 scripts/check-doc-links.py
 
   native:
     name: Native Go (CGO=0)

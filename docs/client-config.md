@@ -150,7 +150,7 @@ source-policy routes to the desired interface for every Server IP;
 mqvpn does not create those rules.
 
 Server-side configuration and the four-WAN test are documented in
-`docs/server-multiwan.md`. The current `mp-quic-go v0.3.1` library
+[Server multi-WAN](server-multiwan.md). The current `mp-quic-go v0.3.1` library
 still caps active MPQUIC paths at **64**, independent of the unbounded
 configuration list.
 
@@ -167,7 +167,9 @@ configuration list.
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
 | `source_ip`, `source_interface` | Primary WAN binding |
-| `wans` | Ordered list of MPQUIC WANs: `source_ip` and `interface` |\n| `wan2_ip`, `wan2_interface` | Legacy secondary WAN parameters (still supported) |\n| `use_server_wans` | Discover Server WAN IPs from authenticated MPQUIC ADD_ADDRESS announcements |
+| `wans` | Ordered list of MPQUIC WANs: `source_ip` and `interface` |
+| `wan2_ip`, `wan2_interface` | Legacy secondary WAN parameters (still supported) |
+| `use_server_wans` | Discover Server WAN IPs from authenticated MPQUIC ADD_ADDRESS announcements |
 | `transport`, `udp_dial_timeout`, `tcp_port` | Transport and fallback policy |
 | `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
 
@@ -187,10 +189,11 @@ full-tunnel IPv4 `0.0.0.0/0` advertisement is installed as two
 Only daemon-owned routes are removed at session termination; existing
 administrator routes are never replaced. New Client-created TUNs are
 deleted at session end; pre-existing TUNs regain their original IP
-addresses, MTU and administrative UP/DOWN state. The Client does not
-install system DNS settings; it does not modify or reset DNS on
-disconnect. Cleanup failures stop retries instead of compounding stale
-kernel state. If multi-WAN MPQUIC receives
+addresses, MTU and administrative UP/DOWN state. If the Server sends authenticated DNS settings and the Client accepts
+them, the Client applies per-interface resolver settings through
+`systemd-resolved` or `resolvconf`, restoring its own changes on
+disconnect. Without an authenticated DNS push, system DNS is not changed.
+Cleanup failures stop retries instead of compounding stale kernel state. If multi-WAN MPQUIC receives
 a push that covers the Server public IP, Client rejects it instead
 of redirecting an underlay path through the tunnel.
 

@@ -94,9 +94,10 @@ checks; the script also proves that the bulk generators remained active
 for the complete voice test and that both TCP and UDP receivers saw
 nontrivial traffic.
 
-The QoS queue unit test `TestNextContinuousLoadBoundedPriorityBurst`
-separately exercises 5,000 packet choices against continuously
-nonempty queues and checks the **4 realtime : 1 normal** dispatch policy.
+The QoS queue tests include `TestNextTierSustainedWeightedFairness`,
+which checks the **4 realtime : 2 assured : 1 best-effort** service
+ratio when all queues remain backlogged. These are *local queue*
+weights; they do not select a different WAN for each DSCP class.
 The integration test does *not* attempt to read that internal queue
 or declare a MOS improvement. It checks application coexistence with
 a shaped WAN, not QoS policy on external routers.
@@ -189,11 +190,16 @@ rather than simply parsing four configuration entries.
 sudo bash tests/integration/overlay-netns.sh wan4
 ~~~
 
-See `docs/client-config.md` for the ordered WAN configuration and
+See [Client WAN configuration](client-config.md) for the ordered WAN configuration and
 the current **64 active-path ceiling inside the upstream MPQUIC
 library**, which is separate from mqvpn's uncapped WAN-list parser.
 
-### FRRouting eBGP peer on TUN
+### Legacy two-site FRRouting eBGP example (manual)
+
+The two-site `bgp` case remains available for local debugging, but is no
+longer run as a separate CI step. CI now uses the more comprehensive
+[five-site randomized-WAN BGP/OSPF test](five-site-routing.md) for
+dynamic route convergence and cross-site forwarding.
 
 The BGP scenario uses **FRRouting's official signed stable Debian/Ubuntu
 APT repository**, `https://deb.frrouting.org/frr`, channel
@@ -221,8 +227,10 @@ are installed before BGP convergence.
 ## Run
 
 GitHub Actions: the `overlay-integration` job in
-`.github/workflows/go.yml` runs **VXLAN, TCP, UDP, VoIP and FRR BGP**
-and the shaped-WAN mixed-load scenario on `ubuntu-24.04`.
+[the Go workflow](../.github/workflows/go.yml) runs **VXLAN, TCP, UDP,
+VoIP, four-WAN encryption and scheduling, shaped-WAN loads, and five-site
+BGP/OSPF** on `ubuntu-24.04`. The signed FRR packages and Go binaries
+are installed/built once per combined network job.
 
 Locally, on an isolated Linux test host with root/CAP_NET_ADMIN and
 `/dev/net/tun` (and `iproute2`, `iputils-ping`, OpenSSL, Python 3, iperf3):
@@ -237,10 +245,12 @@ sudo bash tests/integration/overlay-netns.sh mixed
 sudo bash tests/integration/overlay-netns.sh wan-regional
 sudo bash tests/integration/overlay-netns.sh wan-poor
 sudo bash tests/integration/overlay-netns.sh wan4
-sudo bash tests/integration/overlay-netns.sh bgp
+sudo bash tests/integration/overlay-netns.sh bgp  # legacy two-site local check
+sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh bgp
+sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh ospf
 ```
 
-FRR is required only for the BGP test. To install it from the official
+FRR is required for BGP and OSPF tests. To install it from the official
 stable channel, follow https://deb.frrouting.org/ and use
 `FRRVER=frr-stable` with the signed package repository and
 `apt install frr frr-pythontools`.

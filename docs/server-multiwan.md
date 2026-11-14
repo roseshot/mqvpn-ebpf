@@ -98,5 +98,9 @@ The `wan4` scenario uses four independent Client/Server veth pairs.
 It requires all additional QUIC paths to validate against **different
 Server IPs**, applies a different `tc netem` profile to each physical
 path and confirms actual transmitted bytes on all eight WAN egresses.
-It also runs full-duplex simulated SIP/RTP/RTCP traffic and retains
-existing VXLAN, TCP/UDP, WAN loss and FRRouting BGP regressions.
+It also runs full-duplex simulated SIP/RTP/RTCP traffic. The same
+combined network integration job retains VXLAN, TCP/UDP and WAN-loss
+scenarios, and separately checks randomized **1–8 WAN per Client**
+five-site BGP/OSPF convergence, all eight bidirectional adjacencies,
+20/20 learned remote FIB routes and 20/20 cross-site pings per protocol.
+See [Five-site routing](five-site-routing.md).
