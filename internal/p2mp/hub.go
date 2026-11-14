@@ -201,7 +201,7 @@ func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stre
 	// Verify it against the live config while holding the same lock as reload.
 	valid := false
 	for _, current := range h.cfg.Peers {
-		if current.ID == rule.ID && current.Fingerprint == rule.Fingerprint && current.DynamicTunnelIP == rule.DynamicTunnelIP {
+		if current.SameIdentity(rule) && current.DynamicTunnelIP == rule.DynamicTunnelIP {
 			valid = true
 			break
 		}
@@ -213,7 +213,7 @@ func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stre
 	if realtime {
 		base := h.peers[rule.ID]
 		if !sticky || requestDynamic || base == nil || !base.sticky ||
-			base.rule.Fingerprint != rule.Fingerprint {
+			!base.rule.SameIdentity(rule) {
 			h.mu.Unlock()
 			return nil, fmt.Errorf("peer %s has no authorized sticky primary session", rule.ID)
 		}
@@ -534,9 +534,11 @@ func (h *Hub) Counters() (tx, rx, drops uint64) {
 }
 
 // ReplaceConfig atomically swaps the peer-to-session destination map.
-// Established connections with unchanged (peer ID, certificate fingerprint)
-// remain up, including when their destination prefixes change. A revoked or
-// rotated certificate cancels its old session. No Linux routes, addresses,
+// Established connections with unchanged (peer ID, credential identity)
+// remain up, including when their destination prefixes change. In legacy
+// fingerprint mode, cert rotation retires the session; in CN mode, CRL/CA
+// changes restart the instance and enforce new credential policy.
+// No Linux routes, addresses,
 // multicast memberships, or TUN state are changed here.
 func (h *Hub) ReplaceConfig(next *Config) error {
 	return h.replaceConfig(next, nil, false)
@@ -573,7 +575,7 @@ func (h *Hub) replaceConfig(next *Config, pool *TunnelPool, updatePool bool) err
 	}
 	for id, s := range h.peers {
 		rule, ok := accepted[id]
-		if !ok || rule.Fingerprint != s.rule.Fingerprint || rule.DynamicTunnelIP != s.rule.DynamicTunnelIP {
+		if !ok || !rule.SameIdentity(s.rule) || rule.DynamicTunnelIP != s.rule.DynamicTunnelIP {
 			delete(h.peers, id)
 			if companion := h.realtime[id]; companion != nil {
 				delete(h.realtime, id)
