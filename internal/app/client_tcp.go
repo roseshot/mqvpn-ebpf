@@ -70,7 +70,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		return err
 	}
 	defer raw.Close()
-	logger.Info("TCP fallback primary WAN connected", "local", raw.LocalAddr(), "remote", raw.RemoteAddr(), "source", ip)
+	logger.InfoContext(ctx,"TCP fallback primary WAN connected", "local", raw.LocalAddr(), "remote", raw.RemoteAddr(), "source", ip)
 	roots, err := certPool(o.caFile)
 	if err != nil {
 		return err
@@ -165,20 +165,20 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	defer func() {
 		if err := guard.Close(); err != nil {
 			result = errors.Join(result, fmt.Errorf("%w: cleanup pushed TCP routes: %v", errUnsafeReconnect, err))
-			logger.Error("unsafe reconnect: TCP route cleanup failed", "error", err)
+			logger.ErrorContext(ctx,"unsafe reconnect: TCP route cleanup failed", "error", err)
 		}
 	}()
-	logger.Info("effective TCP fallback TUN MTU", "mtu", budget.TUNMTU,
+	logger.InfoContext(ctx,"effective TCP fallback TUN MTU", "mtu", budget.TUNMTU,
 		"max_frame", budget.MaxFrame, "auto", budget.Auto, "wan_links", underlays)
 	stream, err := capsule.New(conn, br, budget.MaxFrame)
 	if err != nil {
 		return err
 	}
-	pumpDevice, err := openClientNetworkSession(guard, o, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
+	pumpDevice, err := openClientNetworkSession(ctx, guard, o, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
 	if err != nil {
 		return err
 	}
-	logger.Info("TCP fallback VPN session established", "remote", dialAddress, "tenant", o.endpoint.serverName, "tun", o.tunName, "tunnel_address", effectiveAddress)
+	logger.InfoContext(ctx,"TCP fallback VPN session established", "remote", dialAddress, "tenant", o.endpoint.serverName, "tunnel_address", effectiveAddress)
 	err = p2mp.ClientPump(ctx, pumpDevice, stream, budget.MaxFrame, logger)
 	return classifyClientCleanup(err)
 }

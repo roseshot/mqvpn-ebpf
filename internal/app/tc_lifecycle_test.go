@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -18,7 +19,7 @@ func TestAutoTCFailureFallsBackButRequiredFails(t *testing.T) {
 		cfg := tcebpf.Config{Mode: mode, Object: missing, MSSClamp: "auto", Stats: true}
 		// This missing-interface attach error exercises the same policy path
 		// as a missing ELF or unsupported TCX kernel without requiring root.
-		got, err := attachConfiguredTC("mqvpn-no-such-tun", cfg, 1400, logger)
+		got, err := attachConfiguredTC(context.Background(), "mqvpn-no-such-tun", cfg, 1400, logger)
 		if got != nil {
 			t.Fatalf("%s: unexpected attached TCX", mode)
 		}

@@ -762,3 +762,26 @@ The protocol, mTLS validation, route ownership and DNS cleanup behavior
 remain unchanged by these language and test improvements. Experimental
 SIMD and JSON v2 are not enabled because they do not improve current
 MASQUE VPN behavior.
+
+## Structured logging
+
+Both `mqvpn-client` and `mqvpn-server` use the same `internal/logging`
+`log/slog` configuration. CLI flags `--log-level=debug|info|warn|error`
+and `--log-format=text|json`, or the `MQVPN_LOG_LEVEL` and
+`MQVPN_LOG_FORMAT` environment variables, control diagnostic output.
+
+Logs always go to **stderr**; stdout is reserved for command data such
+as `mqvpn-server instance list`. Each record has a stable
+`component=client` or `component=server`. Client session logs include
+`tun`; Server instance logs include `instance` and `tun`.
+Authenticated peer logs use `peer` consistently across QUIC and TCP.
+Network setup and reconnect messages carry `subsystem` fields.
+
+Application, session and HTTP request logs use context-aware `slog`
+methods wherever a context exists. The context is passed to the
+handler; standard text/JSON handlers do not automatically convert
+arbitrary context values into log fields. There is no global
+`slog.SetDefault` dependency: injected loggers keep their configured
+format and level, while nil loggers use a deterministic info-level
+stderr fallback. Startup logging-option errors are structured stderr
+records; CLI data output is deliberately not logged.

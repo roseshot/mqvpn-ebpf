@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 )
 
 // errUnsafeReconnect marks a failed netlink cleanup that may leave a stale
@@ -27,9 +29,7 @@ func runClientSupervisor(ctx context.Context, enabled bool, logger *slog.Logger,
 }
 
 func runClientSupervisorWithWait(ctx context.Context, enabled bool, logger *slog.Logger, attempt func(context.Context) error, wait func(context.Context, time.Duration) error) error {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -53,13 +53,13 @@ func runClientSupervisorWithWait(ctx context.Context, enabled bool, logger *slog
 			delay = reconnectInitialDelay
 		}
 		if err == nil {
-			logger.Warn("VPN session closed; scheduling reconnect", "attempt", attemptNumber, "retry_in", delay)
+			logger.WarnContext(ctx,"VPN session closed; scheduling reconnect", "attempt", attemptNumber, "retry_in", delay)
 		} else if errors.Is(err, context.Canceled) {
 			// A cancellation from a nested session context (rather than the
 			// daemon context) is still a disconnect that can be retried.
-			logger.Warn("VPN session interrupted; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
+			logger.WarnContext(ctx,"VPN session interrupted; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
 		} else {
-			logger.Warn("VPN connection failed; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
+			logger.WarnContext(ctx,"VPN connection failed; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
 		}
 		if err := wait(ctx, delay); err != nil {
 			return err

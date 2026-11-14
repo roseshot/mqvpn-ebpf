@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 )
 
 // Stream is a CONNECT-ETHERNET HTTP/3 DATAGRAM stream.
@@ -59,9 +60,7 @@ func New(device io.ReadWriteCloser, cfg *Config, maxFrame int, logger *slog.Logg
 	if maxFrame < 64 || maxFrame > 65535 {
 		return nil, fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	return &Hub{device: device, cfg: cfg, maxFrame: maxFrame, log: logger, peers: make(map[string]*Session)}, nil
 }
 
@@ -148,7 +147,7 @@ func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream,
 			case payload := <-s.tx:
 				if err := s.stream.SendDatagram(payload); err != nil {
 					h.drops.Add(1)
-					h.log.Debug("QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
+					h.log.DebugContext(s.ctx, "QUIC DATAGRAM rejected", "peer", s.ID(), "error", err)
 				} else {
 					h.txFrames.Add(1)
 				}
@@ -353,7 +352,7 @@ func (h *Hub) replaceConfig(next *Config, pool *TunnelPool, updatePool bool) err
 			delete(h.peers, id)
 			s.cancel()
 			close(s.done)
-			h.log.Info("peer session revoked by config reload", "peer", id)
+			h.log.InfoContext(s.ctx, "peer session revoked by config reload", "peer", id)
 		}
 	}
 	h.cfg = next

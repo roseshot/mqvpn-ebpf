@@ -19,6 +19,7 @@ import (
 
 	"github.com/qoke/mp-quic-go/http3"
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
@@ -244,7 +245,7 @@ type serverManager struct {
 
 func newServerManager(ctx context.Context, logger *slog.Logger) *serverManager {
 	return &serverManager{
-		ctx: ctx, logger: logger, xdp: xdp.NewController(),
+		ctx: ctx, logger: logging.Ensure(logger), xdp: xdp.NewController(),
 		mux:       newServerMux(),
 		instances: make(map[string]*liveInstance),
 		exits:     make(chan *liveInstance, 256),
@@ -274,7 +275,7 @@ func (m *serverManager) start(p preparedInstance) error {
 	if p.spec.TC != nil {
 		policy = *p.spec.TC
 	}
-	tc, err := attachConfiguredTC(p.spec.TUN, policy, p.spec.MTU, logger)
+	tc, err := attachConfiguredTC(m.ctx, p.spec.TUN, policy, p.spec.MTU, logger)
 	if err != nil {
 		_ = device.Close()
 		return fmt.Errorf("instance %s TUN TC eBPF: %w", p.spec.Name, err)
@@ -293,7 +294,7 @@ func (m *serverManager) start(p preparedInstance) error {
 		case <-m.ctx.Done():
 		}
 	}()
-	logger.Info("VPN instance attached", "server_name", p.spec.ServerName,
+	logger.InfoContext(m.ctx, "VPN instance attached", "server_name", p.spec.ServerName,
 		"address", p.spec.Address, "mtu", p.spec.MTU, "peers", len(p.peers.Peers))
 	return nil
 }
@@ -309,15 +310,15 @@ func (m *serverManager) stop(name string) {
 	<-live.done
 	if live.tc != nil {
 		if counters, err := live.tc.Snapshot(); err == nil {
-			live.logger.Info("TUN TC eBPF counters", "ingress", counters.Ingress, "egress", counters.Egress)
+			live.logger.InfoContext(m.ctx,"TUN TC eBPF counters", "ingress", counters.Ingress, "egress", counters.Egress)
 		} else {
-			live.logger.Warn("read TUN TC eBPF counters", "error", err)
+			live.logger.WarnContext(m.ctx,"read TUN TC eBPF counters", "error", err)
 		}
 		if err := live.tc.Close(); err != nil {
-			live.logger.Warn("detach TUN TC eBPF", "error", err)
+			live.logger.WarnContext(m.ctx,"detach TUN TC eBPF", "error", err)
 		}
 	}
-	live.logger.Info("VPN instance detached")
+	live.logger.InfoContext(m.ctx,"VPN instance detached")
 }
 
 func (m *serverManager) close() {
@@ -346,10 +347,10 @@ func (m *serverManager) close() {
 	if m.xdp != nil {
 		counters, err := m.xdp.Snapshots()
 		if err != nil {
-			m.logger.Warn("WAN XDP counters could not be read", "error", err)
+			m.logger.WarnContext(m.ctx,"WAN XDP counters could not be read", "error", err)
 		}
 		if len(counters) > 0 {
-			m.logger.Info("WAN XDP ingress counters", "interfaces", counters)
+			m.logger.InfoContext(m.ctx,"WAN XDP ingress counters", "interfaces", counters)
 		}
 		_ = m.xdp.Close()
 	}
@@ -366,7 +367,7 @@ func (m *serverManager) startListener() error {
 	m.server = newSharedHTTP3Server(m.mux)
 	m.listenerDone = make(chan struct{})
 	go func() { m.listenerErr = m.server.Serve(conn); close(m.listenerDone) }()
-	m.logger.Info("shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
+	m.logger.InfoContext(m.ctx,"shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
 	return nil
 }
 
@@ -421,7 +422,7 @@ func (m *serverManager) apply(next preparedServer) error {
 			}
 			old.peerHash = newCfg.peerHash
 			old.peerConfig = newCfg.peers
-			old.logger.Info("P2MP peer map hot-reloaded", "peers", len(newCfg.peers.Peers))
+			old.logger.InfoContext(m.ctx, "P2MP peer map hot-reloaded", "peers", len(newCfg.peers.Peers))
 		}
 	}
 	names = names[:0]
@@ -443,6 +444,7 @@ func (m *serverManager) apply(next preparedServer) error {
 // The shared listener survives all reloads except an explicit change to
 // the global UDP bind address. SIGHUP / polling reload peer and TLS files.
 func runManagedServer(ctx context.Context, load func() (preparedServer, error), interval time.Duration, logger *slog.Logger) error {
+	logger = logging.Ensure(logger)
 	if interval < 0 {
 		return errors.New("--reload-interval cannot be negative")
 	}
@@ -477,19 +479,19 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 	reload := func() {
 		next, err := load()
 		if err != nil {
-			logger.Warn("YAML reload rejected; active instances preserved", "error", err)
+			logger.WarnContext(ctx,"YAML reload rejected; active instances preserved", "error", err)
 			return
 		}
 		if next.fingerprint == applied {
-			logger.Debug("YAML configuration unchanged")
+			logger.DebugContext(ctx,"YAML configuration unchanged")
 			return
 		}
 		if err := manager.apply(next); err != nil {
-			logger.Error("YAML reload failed; check active instance state", "error", err)
+			logger.ErrorContext(ctx,"YAML reload failed; check active instance state", "error", err)
 			return
 		}
 		applied = next.fingerprint
-		logger.Info("VPN instance hot reload applied", "instances", len(next.instances), "shared_listen", next.listen)
+		logger.InfoContext(ctx,"VPN instance hot reload applied", "instances", len(next.instances), "shared_listen", next.listen)
 	}
 	for {
 		select {

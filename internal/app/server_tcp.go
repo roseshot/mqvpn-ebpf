@@ -94,6 +94,7 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), status)
 		return
 	}
+	peerLogger := inst.logger.With("peer", rule.ID)
 	if r.URL.Path != inst.prepared.spec.Path {
 		http.Error(w, "unknown CONNECT-ETHERNET path", http.StatusNotFound)
 		return
@@ -110,7 +111,7 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
-		inst.logger.Warn("TCP hijack failed", "error", err)
+		peerLogger.WarnContext(r.Context(), "TCP hijack failed", "error", err)
 		return
 	}
 	defer conn.Close()
@@ -145,9 +146,9 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	close(ready)
-	inst.logger.Info("TCP fallback CONNECT-ETHERNET accepted", "peer", rule.ID, "remote", r.RemoteAddr)
+	peerLogger.InfoContext(r.Context(), "TCP fallback CONNECT-ETHERNET accepted", "remote", r.RemoteAddr)
 	if err := inst.hub.Receive(r.Context(), session); err != nil {
-		inst.logger.Warn("TCP fallback peer disconnected", "peer", rule.ID, "error", err)
+		peerLogger.WarnContext(r.Context(), "TCP fallback peer disconnected", "error", err)
 	}
 }
 
@@ -182,6 +183,6 @@ func (m *serverManager) startTCPListener() error {
 		m.tcpErr = m.tcpServer.Serve(tls.NewListener(ln, tlsConfig))
 		close(m.tcpDone)
 	}()
-	m.logger.Info("TCP fallback listener ready", "listen", ln.Addr())
+	m.logger.InfoContext(m.ctx, "TCP fallback listener ready", "listen", ln.Addr())
 	return nil
 }

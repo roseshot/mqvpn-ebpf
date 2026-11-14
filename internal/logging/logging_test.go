@@ -1,8 +1,12 @@
 package logging
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +34,43 @@ func TestExtract(t *testing.T) {
 	}
 	if _, _, err := Extract([]string{"--log-format", "xml"}); err == nil {
 		t.Fatal("accepted invalid format")
+	}
+}
+
+func TestComponentLoggerJSONFieldsAndLevel(t *testing.T) {
+	var output bytes.Buffer
+	logger := newComponentWithWriter(&output, Options{Level: slog.LevelWarn, Format: "json"}, "client").With("tun", "mq0")
+	logger.InfoContext(context.Background(), "filtered")
+	logger.WarnContext(context.Background(), "reconnecting", "attempt", 3)
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected one filtered JSON record, got %q", output.String())
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]any{
+		"level": "WARN", "msg": "reconnecting", "component": "client", "tun": "mq0", "attempt": float64(3),
+	} {
+		if record[name] != want {
+			t.Errorf("JSON field %q: got %v want %v", name, record[name], want)
+		}
+	}
+}
+
+func TestDefaultLoggingUsesSuppliedLogger(t *testing.T) {
+	var output bytes.Buffer
+	explicit := newWithWriter(&output, Options{Level: slog.LevelDebug, Format: "text"})
+	if got := Ensure(explicit); got != explicit {
+		t.Fatal("explicit logger was replaced")
+	}
+	Ensure(explicit).InfoContext(context.Background(), "owned logger")
+	if !strings.Contains(output.String(), "owned logger") {
+		t.Fatalf("explicit log handler was bypassed: %q", output.String())
+	}
+	if fallback := Ensure(nil); fallback == nil || !fallback.Enabled(context.Background(), slog.LevelInfo) ||
+		fallback.Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("nil logger must fall back to a stable info-level stderr logger")
 	}
 }

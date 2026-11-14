@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 )
 
 // ClientPump transports every valid IP packet read from the TUN. It does not
@@ -17,9 +18,7 @@ func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, m
 	if maxFrame < 64 || maxFrame > 65535 {
 		return fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ends := make(chan error, 2)
@@ -40,7 +39,7 @@ func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, m
 			}
 			if err := stream.SendDatagram(payload); err != nil {
 				// A QUIC DATAGRAM can be dropped due to path MTU or congestion.
-				logger.Debug("client QUIC DATAGRAM rejected", "error", err)
+				logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
 			}
 		}
 	}()

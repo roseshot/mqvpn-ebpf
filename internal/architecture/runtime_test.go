@@ -96,3 +96,64 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 		}
 	}
 }
+
+
+ // TestProductionLoggingUsesSlog rejects accidental divergence from the
+ // common logging package. The only stdout print exception produces YAML
+ // data for the "instance list" CLI; it is not a diagnostic log.
+func TestProductionLoggingUsesSlog(t *testing.T) {
+	root := filepath.Join("..", "..")
+	allowedDataOutput := filepath.Join(root, "internal", "app", "server_cli.go")
+	for _, directory := range []string{"internal", filepath.Join("cmd", "mqvpn-server"), filepath.Join("cmd", "mqvpn-client")} {
+		err := filepath.WalkDir(filepath.Join(root, directory), func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			set := token.NewFileSet()
+			node, err := parser.ParseFile(set, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(node, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkg, ok := sel.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				name := pkg.Name + "." + sel.Sel.Name
+				banned := name == "slog.Default" ||
+					strings.HasPrefix(name, "log.Print") || strings.HasPrefix(name, "log.Fatal") ||
+					name == "log.Panic" || name == "fmt.Print" || name == "fmt.Println" ||
+					name == "fmt.Fprint" || name == "fmt.Fprintln"
+				if name == "fmt.Println" && path == allowedDataOutput {
+					banned = false
+				}
+				if banned {
+					t.Errorf("%s: unstructured or global logging %s; use the injected slog.Logger", set.Position(call.Pos()), name)
+				}
+				if name == "fmt.Fprintf" && len(call.Args) > 0 {
+					if target, ok := call.Args[0].(*ast.SelectorExpr); ok {
+						if v, ok := target.X.(*ast.Ident); ok && v.Name == "os" && (target.Sel.Name == "Stderr" || target.Sel.Name == "Stdout") {
+							t.Errorf("%s: direct stdout/stderr diagnostic output; use slog", set.Position(call.Pos()))
+						}
+					}
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan production logging in %s: %v", directory, err)
+		}
+	}
+}

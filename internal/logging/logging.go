@@ -2,6 +2,7 @@ package logging
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -68,10 +69,36 @@ func Extract(args []string) ([]string, Options, error) {
 	return out, Options{Level: l, Format: format}, nil
 }
 
+// New sends all diagnostic records to stderr. stdout stays reserved for
+// machine-readable command output (for example, "server instance list").
 func New(opts Options) *slog.Logger {
+	return newWithWriter(os.Stderr, opts)
+}
+
+func newWithWriter(writer io.Writer, opts Options) *slog.Logger {
 	handlerOpts := &slog.HandlerOptions{Level: opts.Level}
 	if opts.Format == "json" {
-		return slog.New(slog.NewJSONHandler(os.Stderr, handlerOpts))
+		return slog.New(slog.NewJSONHandler(writer, handlerOpts))
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, handlerOpts))
+	return slog.New(slog.NewTextHandler(writer, handlerOpts))
+}
+
+// NewComponent creates an application root logger with a stable component
+// attribute. Child loggers inherit its handler, format and level.
+func NewComponent(opts Options, component string) *slog.Logger {
+	return newComponentWithWriter(os.Stderr, opts, component)
+}
+
+func newComponentWithWriter(writer io.Writer, opts Options, component string) *slog.Logger {
+	return newWithWriter(writer, opts).With("component", component)
+}
+
+// Ensure preserves the explicit logger provided by the caller, or creates a
+// deterministic stderr/info fallback for library entry points and tests.
+// It never depends on the process-global slog.Default() configuration.
+func Ensure(logger *slog.Logger) *slog.Logger {
+	if logger != nil {
+		return logger
+	}
+	return New(Options{Level: slog.LevelInfo, Format: "text"})
 }

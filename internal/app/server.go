@@ -19,15 +19,14 @@ import (
 	"github.com/qoke/mp-quic-go/http3"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 )
 
 // RunServer requires one YAML config with a shared UDP listener.
 // The command accepts only the current multi-instance YAML contract.
 func RunServer(ctx context.Context, args []string, logger *slog.Logger) error {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	if len(args) > 0 {
 		switch args[0] {
 		case "validate":
@@ -51,9 +50,7 @@ func RunServer(ctx context.Context, args []string, logger *slog.Logger) error {
 }
 
 func validateServerCLI(args []string, logger *slog.Logger) error {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	path := fs.String("config", "", "YAML config to validate")
 	if err := fs.Parse(args); err != nil {
@@ -71,9 +68,7 @@ func validateServerCLI(args []string, logger *slog.Logger) error {
 }
 
 func reloadServerCLI(args []string, logger *slog.Logger) error {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
 	pid := fs.Int("pid", 0, "PID of the running server")
 	if err := fs.Parse(args); err != nil {
@@ -195,10 +190,11 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rule, err := instance.hub.Authorize(r.TLS.PeerCertificates[0].Raw)
 	if err != nil {
-		instance.logger.Warn("unauthorized client", "remote", r.RemoteAddr)
+		instance.logger.WarnContext(r.Context(), "unauthorized client", "remote", r.RemoteAddr)
 		http.Error(w, "unauthorized site", http.StatusForbidden)
 		return
 	}
+	peerLogger := instance.logger.With("peer", rule.ID)
 	setter, ok := w.(interface {
 		ReceivedSettings() <-chan struct{}
 		Settings() *http3.Settings
@@ -244,11 +240,11 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
-	instance.logger.Info("peer connected", "site", rule.ID, "remote", r.RemoteAddr)
+	peerLogger.InfoContext(r.Context(), "peer connected", "remote", r.RemoteAddr)
 	if err := instance.hub.Receive(r.Context(), session); err != nil {
-		instance.logger.Warn("peer receive ended", "site", rule.ID, "error", err)
+		peerLogger.WarnContext(r.Context(), "peer receive ended", "error", err)
 	}
-	instance.logger.Info("peer disconnected", "site", rule.ID)
+	peerLogger.InfoContext(r.Context(), "peer disconnected")
 }
 
 func newSharedHTTP3Server(mux *serverMux) *http3.Server {

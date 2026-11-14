@@ -1,12 +1,14 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
@@ -17,6 +19,7 @@ import (
 // and closes it *after* this device: DNS -> TCX -> TUN -> guarded routes.
 // Setup failures close partially initialized resources in the same order.
 func openClientNetworkSession(
+	ctx context.Context,
 	guard *routepush.Guard,
 	config clientTCPOptions,
 	address string,
@@ -25,6 +28,7 @@ func openClientNetworkSession(
 	dns []netip.Addr,
 	logger *slog.Logger,
 ) (*managedPumpDevice, error) {
+	logger = logging.Ensure(logger).With("subsystem", "network")
 	device, err := tun.OpenClient(config.tunName, address, budget.TUNMTU, dynamicAddressRequested(config.tunAddress))
 	if err != nil {
 		return nil, classifyClientCleanup(err)
@@ -33,16 +37,16 @@ func openClientNetworkSession(
 		return nil, classifyClientCleanup(errors.Join(fmt.Errorf("install authenticated routes: %w", err), device.Close()))
 	}
 	if len(routes) != 0 {
-		logger.Info("authenticated VPN routes installed", "routes", routepush.Encode(routes))
+		logger.InfoContext(ctx, "authenticated VPN routes installed", "routes", routepush.Encode(routes))
 	}
 
-	tc, err := attachConfiguredTC(config.tunName, config.tcConfig, budget.TUNMTU, logger)
+	tc, err := attachConfiguredTC(ctx, config.tunName, config.tcConfig, budget.TUNMTU, logger)
 	if err != nil {
 		return nil, classifyClientCleanup(errors.Join(fmt.Errorf("attach TUN TC eBPF: %w", err), device.Close()))
 	}
 	lease, err := dnspush.Apply(config.tunName, dns)
 	if err != nil {
-		tcErr := reportAndCloseTC(tc, logger)
+		tcErr := reportAndCloseTC(ctx, tc, logger)
 		closeErr := device.Close()
 		combined := errors.Join(fmt.Errorf("apply authenticated DNS: %w", err), tcErr, closeErr)
 		if tcErr != nil {
@@ -51,9 +55,9 @@ func openClientNetworkSession(
 		return nil, classifyClientCleanup(combined)
 	}
 	if lease != nil {
-		logger.Info("authenticated DNS installed on TUN", "tun", config.tunName, "servers", dnspush.Encode(dns))
+		logger.InfoContext(ctx, "authenticated DNS installed on TUN", "tun", config.tunName, "servers", dnspush.Encode(dns))
 	}
-	return newManagedPumpDevice(device, tc, lease, logger), nil
+	return newManagedPumpDevice(ctx, device, tc, lease, logger), nil
 }
 
 // Incomplete netlink/DNS cleanup is a fatal reconnect condition. Ordinary

@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
@@ -23,9 +24,7 @@ func runInstanceCLI(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
 		return errors.New("usage: mqvpn-server instance list|upsert|delete --config /path/to/server.yaml")
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.Ensure(logger)
 	action := args[0]
 	fs := flag.NewFlagSet("instance "+action, flag.ContinueOnError)
 	configPath := fs.String("config", "", "server YAML configuration path")
