@@ -1,0 +1,13 @@
+# Native fleet active/active: different Clients use different Servers.
+# One Client still owns exactly ONE TUN and QUIC/TCP connection at a time.
+server: vpn.example.com:8443
+address: 10.77.0.2/24
+ca: /etc/mqvpn/ca.crt
+cert: /etc/mqvpn/site1.crt
+key: /etc/mqvpn/site1.key
+transport: quic
+reconnect: true
+ha:
+  mode: active_active
+  controller: client
+  backends: [192.0.2.10, 198.51.100.10]
