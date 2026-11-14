@@ -60,9 +60,9 @@ func TestLowLatencySchedulerPrefersFastHealthyPathAndFailsOver(t *testing.T) {
 
 func TestServerPathSchedulerConfigurationValidation(t *testing.T) {
 	cfg := ServerConfig{
-		Listen: "0.0.0.0:8443",
+		Listen:        "0.0.0.0:8443",
 		PathScheduler: pathSchedulerLowLatency,
-		Instances: []ServerInstance{sampleInstance("lab", "vpn.example.test", "mq0")},
+		Instances:     []ServerInstance{sampleInstance("lab", "vpn.example.test", "mq0")},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid low-latency Server policy: %v", err)
