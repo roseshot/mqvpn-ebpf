@@ -1,4 +1,4 @@
-# Privileged VXLAN and FRRouting eBGP over TUN integration tests
+# Privileged VXLAN, TCP/UDP, SIP/RTP/RTCP and FRRouting over TUN tests
 
 These opt-in GitHub Actions tests use actual `mqvpn-server` and
 `mqvpn-client` binaries, an authenticated QUIC/HTTP/3 CONNECT-ETHERNET
@@ -30,14 +30,52 @@ removed by a cleanup trap.
 ### VXLAN over TUN
 
 The VXLAN scenario creates a **real kernel VXLAN VNI 100** device on
-each endpoint, with UDP destination port 4789 and the peer's TUN IP as
-the remote VTEP. It checks:
+each endpoint, explicitly sets the **VXLAN MTU to 1450 bytes**, with UDP
+destination port 4789 and the peer's TUN IP as the remote VTEP. It checks:
 
 1. Authenticated TUN control/data-plane readiness and 1500-byte MTU.
 2. Kernel VXLAN L2 neighbor resolution (ARP) and ICMP both ways.
-3. Large (1372-byte ICMP payload) IPv4 DF traffic through VXLAN,
-   exercising VPN `frag-v1` when the encoded TUN packet exceeds
-   the conservative DATAGRAM budget.
+3. Full VXLAN MTU (1422-byte ICMP data + 8 ICMP + 20 IPv4 = **1450-byte**
+   inner IP packet), in **both directions** with DF set. VXLAN IPv4
+   encapsulation contributes 50 bytes, producing an exactly **1500-byte**
+   outer TUN IPv4 packet, which exercises the VPN `frag-v1` extension.
+
+### TCP and UDP data transport over TUN
+
+The `tcp` and `udp` scenarios run real Python 3 standard-library sockets
+inside each network namespace. Each scenario repeats with **Client and
+Server swapped as listeners**, so it covers both directions independently.
+No TCP connection or UDP datagram is sent directly over the WAN veth.
+
+- **TCP:** transfers a deterministic 256 KiB payload and echoes it back,
+  verifying byte-for-byte integrity on both legs. Real TCP segmentation,
+  QUIC encapsulation and reassembly are exercised.
+- **UDP:** checks exact datagram contents, sizes and sequence order for
+  payloads of 64, 512, 1200 and **1472 bytes**. The last produces an
+  inner IPv4/UDP datagram of **1500 bytes**, testing `frag-v1` with
+  incompressible data. The listener echoes every datagram.
+
+### Synthetic VoIP: SIP, RTP and RTCP over TUN
+
+The `voip` scenario uses two independent test endpoints (no external PBX):
+
+- Runs a minimal **SIP REGISTER → INVITE → BYE** exchange over UDP 5060.
+  The INVITE includes a G.711 PCMU/8000 SDP offer.
+- Runs **full-duplex RTP**: 100 packets per direction, 20 ms apart, each
+  with 160 bytes of synthetic PCMU audio payload. Checks payload bytes,
+  timestamp cadence, SSRC, sequence completeness, duplication and packet
+  order. A missing frame fails the test.
+- Marks RTP/RTCP with **DSCP EF (46)** and verifies the marking arrives
+  at the receiver using Linux `IP_RECVTOS`.
+- Computes a receive-side RFC 3550-style jitter estimate and interarrival
+  gap; the local CI smoke test accepts up to 80 ms jitter and 200 ms
+  maximum interarrival gap. **These are generous CI stability limits,
+  not an end-user VoIP quality SLA or a Mean Opinion Score.**
+- Exchanges and validates **RTCP Receiver Reports** (UDP port 40001).
+  The test is run again with the SIP server role reversed.
+
+This tests encapsulation and priority marking, **not actual telephony
+hardware, PBX authentication, NAT traversal or audio intelligibility**.
 
 ### FRRouting eBGP peer on TUN
 
@@ -67,14 +105,18 @@ are installed before BGP convergence.
 ## Run
 
 GitHub Actions: the `overlay-integration` job in
-`.github/workflows/go.yml` runs both scenarios on `ubuntu-24.04`.
+`.github/workflows/go.yml` runs **VXLAN, TCP, UDP, VoIP and FRR BGP**
+scenarios on `ubuntu-24.04`.
 
 Locally, on an isolated Linux test host with root/CAP_NET_ADMIN and
-`/dev/net/tun` (and `iproute2`, `iputils-ping`, OpenSSL):
+`/dev/net/tun` (and `iproute2`, `iputils-ping`, OpenSSL, Python 3):
 
 ```bash
 make release
 sudo bash tests/integration/overlay-netns.sh vxlan
+sudo bash tests/integration/overlay-netns.sh tcp
+sudo bash tests/integration/overlay-netns.sh udp
+sudo bash tests/integration/overlay-netns.sh voip
 sudo bash tests/integration/overlay-netns.sh bgp
 ```
 
