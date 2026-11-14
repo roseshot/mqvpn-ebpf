@@ -1,0 +1,16 @@
+# Native QUIC HA: automatic Server backend selection and serial TUN sessions.
+# Each physical backend must offer the SAME authenticated TLS server identity,
+# equivalent peer authorization and coherent routed tunnel addresses.
+server: vpn.example.com:8443
+address: 10.77.0.2/24
+ca: /etc/mqvpn/ca.crt
+cert: /etc/mqvpn/site1.crt
+key: /etc/mqvpn/site1.key
+transport: quic
+reconnect: true
+ha:
+  mode: active_standby
+  controller: client
+  backends:
+    - 192.0.2.10
+    - 198.51.100.10
