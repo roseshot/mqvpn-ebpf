@@ -128,7 +128,6 @@ func (m *stickyClientStream) close() {
 // session advances to the NEXT configured WAN; it never reacts to a
 // transient RTT change or jumps back automatically after recovery.
 func (m *stickyClientStream) runStickyCompanions(o clientSessionOptions, destinations []*net.UDPAddr, ca *tls.Config, compression, fragmentation bool) {
-	m.wg.Add(1)
 	defer m.wg.Done()
 	if len(destinations) != len(o.wans) {
 		m.logger.ErrorContext(m.ctx, "sticky WAN destination count mismatch", "destinations", len(destinations), "wans", len(o.wans))
@@ -186,7 +185,9 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	}
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
-	request.Header.Set(framingHeader, framingValue)
+	if fragmentation {
+		request.Header.Set(framingHeader, framingValue)
+	}
 	request.Header.Set(stickySessionHeader, "sticky-v1")
 	request.Header.Set(trafficRoleHeader, "realtime")
 	if compression {
