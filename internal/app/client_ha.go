@@ -143,9 +143,10 @@ func (s *clientHASelector) complete(index int, err error, lifetime time.Duration
 	case clientHAActiveActive:
 		s.index = (index + 1) % len(s.plan.endpoints)
 	case clientHAActiveStandby:
-		if err == nil || lifetime >= reconnectStableAfter {
-			// Prefer primary at the next reconnect after a sustained session.
-			// Never tear down a healthy standby session just to fail back.
+		if err == nil || (index != 0 && lifetime >= reconnectStableAfter) {
+			// A healthy standby is never preempted. After it eventually
+			// disconnects, reattempt primary. A failed primary MUST advance
+			// to standby even if it had been healthy for hours beforehand.
 			s.index = 0
 		} else {
 			s.index = (index + 1) % len(s.plan.endpoints)
