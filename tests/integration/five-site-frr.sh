@@ -6,7 +6,7 @@ set -euo pipefail
 mode="${1:-}"
 [[ "$mode" == bgp || "$mode" == ospf ]] || { echo "usage: $0 bgp|ospf" >&2; exit 2; }
 (( EUID == 0 )) || { echo "CAP_NET_ADMIN/root required" >&2; exit 2; }
-for command in ip ping openssl sha256sum timeout sysctl; do
+for command in ip bridge ping openssl sha256sum python3 timeout sysctl; do
   command -v "$command" >/dev/null || { echo "missing $command" >&2; exit 2; }
 done
 for daemon in zebra bgpd ospfd; do
@@ -20,8 +20,23 @@ done
 work="$(mktemp -d)"
 nodes=("mq5s$$" "mq5c1$$" "mq5c2$$" "mq5c3$$" "mq5c4$$")
 spaces=("mq5f0$$" "mq5f1$$" "mq5f2$$" "mq5f3$$" "mq5f4$$")
-underlay_server=(192.0.2.1 198.51.100.1 203.0.113.1 192.0.2.5)
-underlay_client=(192.0.2.2 198.51.100.2 203.0.113.2 192.0.2.6)
+# Eight distinct Server underlays; each Client chooses a reproducible random
+# count (1..8) and a random subset of the available WAN indices.
+# The seed is logged so a failed CI run can be replayed locally.
+WAN_SEED="${WAN_SEED:-20261115}"
+[[ "$WAN_SEED" =~ ^[0-9]+$ ]] || { echo "WAN_SEED must be an integer" >&2; exit 2; }
+mapfile -t site_selection < <(python3 - "$WAN_SEED" "$mode" <<'PY'
+import random
+import sys
+rng = random.Random(f"{sys.argv[1]}:{sys.argv[2]}")
+for count in rng.sample(range(1, 9), 4):
+    indices = rng.sample(range(8), count)
+    print(" ".join(str(i) for i in indices))
+PY
+)
+(( ${#site_selection[@]} == 4 )) || { echo "WAN random sample failed" >&2; exit 2; }
+echo "WAN_SEED=$WAN_SEED protocol=$mode (reproduce with WAN_SEED=$WAN_SEED)"
+bridges=()
 tunnel=(10.77.0.1 10.77.0.2 10.77.0.3 10.77.0.4 10.77.0.5)
 loopback=(198.18.200.1 198.18.201.1 198.18.202.1 198.18.203.1 198.18.204.1)
 pids=()
@@ -49,6 +64,7 @@ cleanup() {
       ip netns del "$node" 2>/dev/null || true
     fi
   done
+  for bridge_name in "${bridges[@]}"; do ip link del "$bridge_name" 2>/dev/null || true; done
   for space in "${spaces[@]}"; do rm -rf "/run/frr/$space"; done
   rm -rf "$work"
   exit "$status"
@@ -59,16 +75,37 @@ for node in "${nodes[@]}"; do
   ip netns add "$node"
   ip -n "$node" link set lo up
 done
-# Independent /30 underlays; no direct client-to-client physical link.
+# Eight separate underlay switches let the Server share WAN0..WAN7
+# while each Client selects an arbitrary 1..8 WAN subset. Bridge port
+# isolation prevents Client-to-Client L2 bypass of the P2MP Server.
+for wan in 0 1 2 3 4 5 6 7; do
+  bridge_name="m5b${wan}$$"
+  bridges+=("$bridge_name")
+  ip link add "$bridge_name" type bridge
+  ip link set "$bridge_name" up
+  ip link add "m5s${wan}$$" type veth peer name "m5h${wan}$$"
+  ip link set "m5s${wan}$$" netns "${nodes[0]}" name "wan$wan"
+  ip link set "m5h${wan}$$" master "$bridge_name"
+  ip link set "m5h${wan}$$" up
+  ip -n "${nodes[0]}" addr add "172.20.$wan.1/24" dev "wan$wan"
+  ip -n "${nodes[0]}" link set "wan$wan" up
+done
 for i in 1 2 3 4; do
-  offset=$((i - 1))
-  ip link add "m5s$i$$" type veth peer name "m5c$i$$"
-  ip link set "m5s$i$$" netns "${nodes[0]}" name "wan$i"
-  ip link set "m5c$i$$" netns "${nodes[i]}" name wan0
-  ip -n "${nodes[0]}" addr add "${underlay_server[offset]}/30" dev "wan$i"
-  ip -n "${nodes[i]}" addr add "${underlay_client[offset]}/30" dev wan0
-  ip -n "${nodes[0]}" link set "wan$i" up
-  ip -n "${nodes[i]}" link set wan0 up
+  read -r -a chosen < <(printf '%s\n' "${site_selection[i-1]}")
+  (( ${#chosen[@]} >= 1 && ${#chosen[@]} <= 8 )) ||
+    fail "invalid sampled path count for site$i"
+  echo "site$i WAN_COUNT=${#chosen[@]} WAN_INDICES=${chosen[*]}"
+  for wan in "${chosen[@]}"; do
+    root_end="m5c${i}${wan}$$"
+    ns_end="m5n${i}${wan}$$"
+    ip link add "$root_end" type veth peer name "$ns_end"
+    ip link set "$ns_end" netns "${nodes[i]}" name "wan$wan"
+    ip link set "$root_end" master "${bridges[wan]}"
+    bridge link set dev "$root_end" isolated on
+    ip link set "$root_end" up
+    ip -n "${nodes[i]}" addr add "172.20.$wan.$((i + 1))/24" dev "wan$wan"
+    ip -n "${nodes[i]}" link set "wan$wan" up
+  done
 done
 
 # Allow the hub kernel to hairpin cross-site IP packets from mq0 back to mq0.
@@ -102,8 +139,13 @@ done
   done
 } >"$work/peers.yaml"
 
-cat >"$work/server.yaml" <<EOF
-listen: "0.0.0.0:8443"
+{
+  echo 'listen: "0.0.0.0:8443"'
+  echo 'wans:'
+  for wan in 0 1 2 3 4 5 6 7; do
+    printf '  - interface: wan%d\n    ip: 172.20.%d.1\n' "$wan" "$wan"
+  done
+  cat <<EOF
 instances:
   - name: five-site
     server_name: vpn.ci.example
@@ -118,6 +160,7 @@ instances:
     tc:
       mode: off
 EOF
+} >"$work/server.yaml"
 "$root/bin/mqvpn-server" validate --config "$work/server.yaml" >"$work/validate.log" 2>&1 || fail "server config"
 ip netns exec "${nodes[0]}" "$root/bin/mqvpn-server" \
   --config "$work/server.yaml" --reload-interval 0 >"$work/server.log" 2>&1 &
@@ -130,10 +173,15 @@ ip -n "${nodes[0]}" link show mq0 >/dev/null 2>&1 || fail "Server TUN missing"
 ip netns exec "${nodes[0]}" sysctl -qw net.ipv4.conf.mq0.rp_filter=0
 ip netns exec "${nodes[0]}" sysctl -qw net.ipv4.conf.mq0.send_redirects=0
 for i in 1 2 3 4; do
-  offset=$((i - 1))
+  read -r -a chosen < <(printf '%s\n' "${site_selection[i-1]}")
+  client_wan_flags=()
+  for wan in "${chosen[@]}"; do
+    client_wan_flags+=(--wan "172.20.$wan.$((i + 1))@wan$wan=172.20.$wan.1")
+  done
+  primary_wan="${chosen[0]}"
   ip netns exec "${nodes[i]}" "$root/bin/mqvpn-client" \
-    --server vpn.ci.example:8443 --connect-ip "${underlay_server[offset]}" \
-    --source-ip "${underlay_client[offset]}" --source-interface wan0 \
+    --server vpn.ci.example:8443 --connect-ip "172.20.$primary_wan.1" \
+    "${client_wan_flags[@]}" \
     --tun mq0 --tun-address "${tunnel[i]}/24" \
     --tun-mtu 1500 --max-frame 1514 \
     --ca "$cert/ca.crt" --cert "$cert/site$i.crt" --key "$cert/site$i.key" \
@@ -143,10 +191,14 @@ for i in 1 2 3 4; do
 done
 
 connected=0
-for attempt in $(seq 1 120); do
+for attempt in $(seq 1 160); do
   ready=1
   for i in 1 2 3 4; do
-    if ! ip -n "${nodes[i]}" link show mq0 >/dev/null 2>&1 ||
+    read -r -a chosen < <(printf '%s\n' "${site_selection[i-1]}")
+    expected_extra=$(( ${#chosen[@]} - 1 ))
+    validated="$(grep -c 'QUIC WAN path validated' "$work/site$i-client.log" || true)"
+    if (( validated < expected_extra )) ||
+       ! ip -n "${nodes[i]}" link show mq0 >/dev/null 2>&1 ||
        ! ip netns exec "${nodes[i]}" ping -n -c 1 -W 1 "${tunnel[0]}" >/dev/null 2>&1 ||
        ! ip netns exec "${nodes[0]}" ping -n -c 1 -W 1 "${tunnel[i]}" >/dev/null 2>&1; then
       ready=0
@@ -158,7 +210,12 @@ for attempt in $(seq 1 120); do
   sleep 0.25
 done
 (( connected )) || fail "five authenticated Client/Server TUN sessions not reachable"
-echo "PASS five-site $mode: four distinct mTLS Client peers via one Server/UDP listener"
+for i in 1 2 3 4; do
+  read -r -a chosen < <(printf '%s\n' "${site_selection[i-1]}")
+  validated="$(grep -c 'QUIC WAN path validated' "$work/site$i-client.log" || true)"
+  echo "PASS site$i: ${#chosen[@]} configured WANs, $validated additional QUIC paths validated"
+done
+echo "PASS five-site $mode: four distinct mTLS Client peers via eight Server WANs and one UDP listener"
 for i in 0 1 2 3 4; do
   ip -n "${nodes[i]}" addr add "${loopback[i]}/32" dev lo
   ip netns exec "${nodes[i]}" sysctl -qw net.ipv4.conf.mq0.rp_filter=0
