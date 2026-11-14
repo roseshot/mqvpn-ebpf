@@ -475,18 +475,9 @@ if [[ "$mode" == wan-regional || "$mode" == wan-poor ]]; then
     loss=3%
     bandwidth=10mbit
   fi
-  for ns in "$server_ns" "$client_ns"; do
-    ip netns exec "$ns" tc qdisc replace dev wan0 root netem \
-      delay "$delay" "$jitter" distribution normal \
-      loss "$loss" rate "$bandwidth" limit 120
-    ip netns exec "$ns" tc -s qdisc show dev wan0 |
-      tee "$work/$ns-netem-before.log"
-    ip netns exec "$ns" tc qdisc show dev wan0 | grep -q 'netem' ||
-      fail "wan0 netem qdisc was not installed"
-  done
-  echo "netem enabled: profile=$profile delay=$delay jitter=$jitter loss=$loss rate=$bandwidth per direction"
-
-
+  # Establish bulk TCP/UDP control connections before injecting loss.
+  # This distinguishes the transport-under-impairment measurement from
+  # unrelated iperf3 control-cookie startup failures on random 1% loss.
   # Moderate-loss profile also retains the prior mixed TCP/UDP pressure.
   # UDP sender and TCP sender run in both directions during both calls.
   if [[ "$profile" == regional ]]; then
@@ -541,7 +532,34 @@ if [[ "$mode" == wan-regional || "$mode" == wan-poor ]]; then
         fail "WAN load process exited before voice start"
     done
     echo "WAN load active: TCP bulk and UDP 3M in both directions"
+    # All iperf3 TCP control/data sockets should already be connected.
+    # The media and substantial bulk transfer then run under real loss.
+    controls_ready=0
+    for attempt in $(seq 1 80); do
+      if ip netns exec "$server_ns" ss -ntH | grep -qE '^ESTAB.*:5201' &&
+         ip netns exec "$client_ns" ss -ntH | grep -qE '^ESTAB.*:5201' &&
+         ip netns exec "$server_ns" ss -ntH | grep -qE '^ESTAB.*:5202' &&
+         ip netns exec "$client_ns" ss -ntH | grep -qE '^ESTAB.*:5202'; then
+        controls_ready=1
+        break
+      fi
+      sleep 0.1
+    done
+    (( controls_ready )) || fail "WAN iperf3 control sessions never reached ESTABLISHED"
   fi
+
+  for ns in "$server_ns" "$client_ns"; do
+    ip netns exec "$ns" tc qdisc replace dev wan0 root netem \
+      delay "$delay" "$jitter" distribution normal \
+      loss "$loss" rate "$bandwidth" limit 120
+    ip netns exec "$ns" tc -s qdisc show dev wan0 |
+      tee "$work/$ns-netem-before.log"
+    ip netns exec "$ns" tc qdisc show dev wan0 | grep -q 'netem' ||
+      fail "wan0 netem qdisc was not installed"
+  done
+  echo "netem enabled: profile=$profile delay=$delay jitter=$jitter loss=$loss rate=$bandwidth per direction"
+
+
 
   run_wan_voice "$server_ns" "$client_ns" 10.77.0.1 10.77.0.2 s2c
   run_wan_voice "$client_ns" "$server_ns" 10.77.0.2 10.77.0.1 c2s
