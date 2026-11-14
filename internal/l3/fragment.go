@@ -18,13 +18,13 @@ const FramingVersion = "frag-v1"
 const FragmentPayloadBudget = 1024
 
 const (
-	fragmentEtherType uint16 = 0x88b6
-	fragmentHeaderSize       = 12 // packet ID (4), full frame length (4), offset (4)
-	fragmentEnvelopeSize     = 1 + EthernetLen + fragmentHeaderSize
-	fragmentTimeout          = 2 * time.Second
-	maxPendingFragments      = 32
-	maxBufferedFragments     = 2 << 20
-	maxFragmentsPerPacket    = 16
+	fragmentEtherType     uint16 = 0x88b6
+	fragmentHeaderSize           = 12 // packet ID (4), full frame length (4), offset (4)
+	fragmentEnvelopeSize         = 1 + EthernetLen + fragmentHeaderSize
+	fragmentTimeout              = 2 * time.Second
+	maxPendingFragments          = 32
+	maxBufferedFragments         = 2 << 20
+	maxFragmentsPerPacket        = 16
 )
 
 var ErrInvalidFragment = errors.New("invalid VPN DATAGRAM fragment")
