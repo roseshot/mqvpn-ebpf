@@ -90,21 +90,13 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 			if err != nil {
 				continue
 			}
-			parts, err := fragmenter.Split(payload)
-			if err != nil {
-				logger.DebugContext(ctx, "client DATAGRAM fragmentation rejected", "error", err)
-				continue
+			_, reductions, err := sendEncodedFrame(ctx, stream, fragmenter, payload)
+			if reductions > 0 {
+				logger.InfoContext(ctx, "client DATAGRAM size budget reduced",
+					"budget", fragmenter.Budget(), "reductions", reductions)
 			}
-			for _, part := range parts {
-				if ctx.Err() != nil {
-					return
-				}
-				if err := stream.SendDatagram(part); err != nil {
-					// Fragmentation has no automatic retransmission.
-					// Abort the rest of the incomplete frame on failure.
-					logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
-					break
-				}
+			if err != nil {
+				logger.DebugContext(ctx, "client QUIC DATAGRAM rejected", "error", err)
 			}
 		}
 	}()
