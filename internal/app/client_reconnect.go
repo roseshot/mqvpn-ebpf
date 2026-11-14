@@ -53,13 +53,13 @@ func runClientSupervisorWithWait(ctx context.Context, enabled bool, logger *slog
 			delay = reconnectInitialDelay
 		}
 		if err == nil {
-			logger.WarnContext(ctx,"VPN session closed; scheduling reconnect", "attempt", attemptNumber, "retry_in", delay)
+			logger.WarnContext(ctx, "VPN session closed; scheduling reconnect", "attempt", attemptNumber, "retry_in", delay)
 		} else if errors.Is(err, context.Canceled) {
 			// A cancellation from a nested session context (rather than the
 			// daemon context) is still a disconnect that can be retried.
-			logger.WarnContext(ctx,"VPN session interrupted; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
+			logger.WarnContext(ctx, "VPN session interrupted; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
 		} else {
-			logger.WarnContext(ctx,"VPN connection failed; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
+			logger.WarnContext(ctx, "VPN connection failed; scheduling reconnect", "error", err, "attempt", attemptNumber, "retry_in", delay)
 		}
 		if err := wait(ctx, delay); err != nil {
 			return err

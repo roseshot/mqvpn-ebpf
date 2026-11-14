@@ -212,7 +212,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if err != nil {
 		return err
 	}
-	logger.InfoContext(ctx,"primary WAN bound", "source_ip", selectedIP, "interface", o.tcp.wanInterface, "local", base.LocalAddr())
+	logger.InfoContext(ctx, "primary WAN bound", "source_ip", selectedIP, "interface", o.tcp.wanInterface, "local", base.LocalAddr())
 	tr := &quic.Transport{Conn: base}
 	qconf := &quic.Config{
 		EnableDatagrams:     true,
@@ -235,9 +235,9 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if err != nil {
 		_ = tr.Close()
 		if o.transport == "auto" && fallbackAllowed {
-			logger.WarnContext(ctx,"QUIC UDP handshake timed out; trying authenticated TCP fallback", "timeout", o.udpDialTimeout)
+			logger.WarnContext(ctx, "QUIC UDP handshake timed out; trying authenticated TCP fallback", "timeout", o.udpDialTimeout)
 			if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {
-				logger.WarnContext(ctx,"TCP fallback uses primary WAN only; secondary WAN unavailable over TCP")
+				logger.WarnContext(ctx, "TCP fallback uses primary WAN only; secondary WAN unavailable over TCP")
 			}
 			if tcpErr := runTCPFallback(ctx, o.tcp, logger); tcpErr != nil {
 				return errors.Join(fmt.Errorf("QUIC dial: %w", err), fmt.Errorf("TCP fallback: %w", tcpErr))
@@ -320,7 +320,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	// DNS host routes are independent from ordinary route acceptance, and
 	// are protected by the same underlay guard and owned-route cleanup.
 	pushedRoutes = routepush.WithDNSHostRoutes(pushedRoutes, pushedDNS, o.tcp.dnsRoutes)
-	logger.InfoContext(ctx,"CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName, "tunnel_address", effectiveAddress)
+	logger.InfoContext(ctx, "CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName, "tunnel_address", effectiveAddress)
 
 	if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {
 		if !conn.ConnectionState().SupportsMultipath {
@@ -330,7 +330,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		if err != nil {
 			return err
 		}
-		logger.InfoContext(ctx,"secondary WAN bound", "source_ip", secondIP, "interface", o.secondaryWANInterface, "local", otherUDP.LocalAddr())
+		logger.InfoContext(ctx, "secondary WAN bound", "source_ip", secondIP, "interface", o.secondaryWANInterface, "local", otherUDP.LocalAddr())
 		secondIPForMTU = secondIP
 		second = &quic.Transport{Conn: otherUDP}
 		path, err := conn.AddPath(second)
@@ -344,7 +344,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 			return fmt.Errorf("validate second WAN path: %w", err)
 		}
 		pathID, _ := path.ID()
-		logger.InfoContext(ctx,"second QUIC path validated", "path_id", pathID, "source", otherUDP.LocalAddr())
+		logger.InfoContext(ctx, "second QUIC path validated", "path_id", pathID, "source", otherUDP.LocalAddr())
 	}
 	// Compute the final TUN/frame budget only after both MPQUIC WAN paths
 	// have been selected. A slower WAN must not silently receive overlarge
@@ -375,10 +375,10 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	defer func() {
 		if err := guard.Close(); err != nil {
 			result = errors.Join(result, fmt.Errorf("%w: cleanup pushed routes: %v", errUnsafeReconnect, err))
-			logger.ErrorContext(ctx,"unsafe reconnect: route cleanup failed", "error", err)
+			logger.ErrorContext(ctx, "unsafe reconnect: route cleanup failed", "error", err)
 		}
 	}()
-	logger.InfoContext(ctx,"effective VPN TUN MTU", "mtu", budget.TUNMTU, "max_frame", budget.MaxFrame,
+	logger.InfoContext(ctx, "effective VPN TUN MTU", "mtu", budget.TUNMTU, "max_frame", budget.MaxFrame,
 		"auto", budget.Auto, "wan_links", underlays)
 	pumpDevice, err := openClientNetworkSession(ctx, guard, o.tcp, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
 	if err != nil {
@@ -387,7 +387,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	done := make(chan struct{})
 	var monitors sync.WaitGroup
 	monitors.Go(func() { printPaths(ctx, done, conn, logger) })
-	logger.InfoContext(ctx,"L3 route-based TUN forwarding started", "address", effectiveAddress, "mtu", budget.TUNMTU)
+	logger.InfoContext(ctx, "L3 route-based TUN forwarding started", "address", effectiveAddress, "mtu", budget.TUNMTU)
 	err = p2mp.ClientPump(ctx, pumpDevice, stream, budget.MaxFrame, logger)
 	close(done)
 	monitors.Wait()
@@ -403,7 +403,7 @@ func printPaths(ctx context.Context, done <-chan struct{}, conn *quic.Conn, logg
 			return
 		case <-ticker.C:
 			for _, p := range conn.Paths() {
-				logger.InfoContext(ctx,"QUIC path", "id", p.ID, "state", p.State, "local", p.LocalAddr, "remote", p.RemoteAddr)
+				logger.InfoContext(ctx, "QUIC path", "id", p.ID, "state", p.State, "local", p.LocalAddr, "remote", p.RemoteAddr)
 			}
 		}
 	}

@@ -97,10 +97,9 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 	}
 }
 
-
- // TestProductionLoggingUsesSlog rejects accidental divergence from the
- // common logging package. The only stdout print exception produces YAML
- // data for the "instance list" CLI; it is not a diagnostic log.
+// TestProductionLoggingUsesSlog rejects accidental divergence from the
+// common logging package. The only stdout print exception produces YAML
+// data for the "instance list" CLI; it is not a diagnostic log.
 func TestProductionLoggingUsesSlog(t *testing.T) {
 	root := filepath.Join("..", "..")
 	allowedDataOutput := filepath.Join(root, "internal", "app", "server_cli.go")

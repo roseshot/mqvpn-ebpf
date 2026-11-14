@@ -310,15 +310,15 @@ func (m *serverManager) stop(name string) {
 	<-live.done
 	if live.tc != nil {
 		if counters, err := live.tc.Snapshot(); err == nil {
-			live.logger.InfoContext(m.ctx,"TUN TC eBPF counters", "ingress", counters.Ingress, "egress", counters.Egress)
+			live.logger.InfoContext(m.ctx, "TUN TC eBPF counters", "ingress", counters.Ingress, "egress", counters.Egress)
 		} else {
-			live.logger.WarnContext(m.ctx,"read TUN TC eBPF counters", "error", err)
+			live.logger.WarnContext(m.ctx, "read TUN TC eBPF counters", "error", err)
 		}
 		if err := live.tc.Close(); err != nil {
-			live.logger.WarnContext(m.ctx,"detach TUN TC eBPF", "error", err)
+			live.logger.WarnContext(m.ctx, "detach TUN TC eBPF", "error", err)
 		}
 	}
-	live.logger.InfoContext(m.ctx,"VPN instance detached")
+	live.logger.InfoContext(m.ctx, "VPN instance detached")
 }
 
 func (m *serverManager) close() {
@@ -347,10 +347,10 @@ func (m *serverManager) close() {
 	if m.xdp != nil {
 		counters, err := m.xdp.Snapshots()
 		if err != nil {
-			m.logger.WarnContext(m.ctx,"WAN XDP counters could not be read", "error", err)
+			m.logger.WarnContext(m.ctx, "WAN XDP counters could not be read", "error", err)
 		}
 		if len(counters) > 0 {
-			m.logger.InfoContext(m.ctx,"WAN XDP ingress counters", "interfaces", counters)
+			m.logger.InfoContext(m.ctx, "WAN XDP ingress counters", "interfaces", counters)
 		}
 		_ = m.xdp.Close()
 	}
@@ -367,7 +367,7 @@ func (m *serverManager) startListener() error {
 	m.server = newSharedHTTP3Server(m.mux)
 	m.listenerDone = make(chan struct{})
 	go func() { m.listenerErr = m.server.Serve(conn); close(m.listenerDone) }()
-	m.logger.InfoContext(m.ctx,"shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
+	m.logger.InfoContext(m.ctx, "shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
 	return nil
 }
 
@@ -479,19 +479,19 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 	reload := func() {
 		next, err := load()
 		if err != nil {
-			logger.WarnContext(ctx,"YAML reload rejected; active instances preserved", "error", err)
+			logger.WarnContext(ctx, "YAML reload rejected; active instances preserved", "error", err)
 			return
 		}
 		if next.fingerprint == applied {
-			logger.DebugContext(ctx,"YAML configuration unchanged")
+			logger.DebugContext(ctx, "YAML configuration unchanged")
 			return
 		}
 		if err := manager.apply(next); err != nil {
-			logger.ErrorContext(ctx,"YAML reload failed; check active instance state", "error", err)
+			logger.ErrorContext(ctx, "YAML reload failed; check active instance state", "error", err)
 			return
 		}
 		applied = next.fingerprint
-		logger.InfoContext(ctx,"VPN instance hot reload applied", "instances", len(next.instances), "shared_listen", next.listen)
+		logger.InfoContext(ctx, "VPN instance hot reload applied", "instances", len(next.instances), "shared_listen", next.listen)
 	}
 	for {
 		select {
