@@ -190,10 +190,10 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 }
 
 type clientSessionOptions struct {
-	tcp                   clientTCPOptions
-	transport             string
-	udpDialTimeout        time.Duration
-	wans                  []clientWAN
+	tcp            clientTCPOptions
+	transport      string
+	udpDialTimeout time.Duration
+	wans           []clientWAN
 }
 
 // runClientSession owns exactly one transport and TUN session. On every
