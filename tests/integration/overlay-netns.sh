@@ -165,6 +165,7 @@ ip -n "$server_ns" link show mq0 >/dev/null || fail "server failed to create mq0
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
 if [[ "$mode" == wan4 ]]; then
   client_wan_flags=(
+    --use-server-wans=true
     --wan 192.0.2.2@wan0=192.0.2.1
     --wan 198.51.100.2@wan1=198.51.100.1
     --wan 203.0.113.2@wan2=203.0.113.1
@@ -409,6 +410,14 @@ if [[ "$mode" == wan4 ]]; then
     sleep 0.1
   done
   (( validated )) || fail "expected four MPQUIC paths (one primary + three validated): $(grep 'WAN path' "$work/client.log" || true)"
+  # An established path is not proof of its remote destination; check
+  # the Client's validated MPQUIC path tuple for each Server WAN IP.
+  for index in 1 2 3; do
+    ip="${server_addrs[$index]}"
+    grep 'QUIC WAN path validated' "$work/client.log" |
+      grep -q "server_address=$ip:8443" ||
+      fail "Client WAN$index did not validate expected Server IP $ip"
+  done
   echo "PASS four independent MPQUIC paths to four different Server IP addresses established"
   delays=(10ms 35ms 70ms 120ms)
   jitters=(2ms 8ms 20ms 40ms)
