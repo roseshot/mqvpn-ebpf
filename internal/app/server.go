@@ -262,7 +262,11 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	peerLogger.InfoContext(r.Context(), "peer disconnected")
 }
 
-func newSharedHTTP3Server(mux *serverMux) *http3.Server {
+func newSharedHTTP3Server(mux *serverMux, wans ...serverWAN) *http3.Server {
+	advertised := make([]net.IP, 0, len(wans))
+	for _, link := range wans {
+		advertised = append(advertised, net.ParseIP(link.IP))
+	}
 	return &http3.Server{
 		Handler: mux,
 		TLSConfig: &tls.Config{
@@ -271,8 +275,11 @@ func newSharedHTTP3Server(mux *serverMux) *http3.Server {
 		},
 		EnableDatagrams: true,
 		QUICConfig: &quic.Config{
-			EnableDatagrams: true,
-			MaxPaths:        int(^uint(0) >> 1), // Let mp-quic-go negotiate its supported maximum (64 in v0.3.1).
+			EnableDatagrams:            true,
+			MaxPaths:                   int(^uint(0) >> 1), // QUIC library caps active paths (64 in v0.3.1).
+			EnableAddressAdvertisement: true,
+			MultipathAutoAdvertise:     len(advertised) != 0,
+			MultipathAutoAddrs:         advertised,
 			MultipathControllerFactory: func() quic.MultipathController {
 				return quic.NewDefaultMultipathController(quic.NewRoundRobinScheduler())
 			},
