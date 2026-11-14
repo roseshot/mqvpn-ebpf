@@ -2,6 +2,11 @@
 
 The **Client does not select, discover, or manage Server cluster members**. A normal mqvpn Client continues to use one authenticated `server` name (and, optionally, its existing `connect_ip`). All HA election, health evaluation, ingress steering and service-address ownership are controlled by the **Server deployment**.
 
+For versioned configuration/CRL distribution, fenced session ownership,
+durable tunnel leases, and cross-node P2MP data forwarding, follow the
+[HA cluster state synchronization contract](ha-cluster-state-sync.md).
+**Those replication phases are planned, not live features of this release.**
+
 This guide distinguishes **availability of a Server service** from **lossless continuity of an existing QUIC session**. Changing the backend of an encrypted session generally requires the existing Client to establish a fresh TLS/QUIC connection after its normal reconnect cycle. The latter is already implemented in the Client; no HA-specific Client code or YAML is added here.
 
 ## Choose the topology
