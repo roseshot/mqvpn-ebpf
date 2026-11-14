@@ -70,27 +70,57 @@ The `peers` file is independent of the Server's own instance YAML:
 # /etc/mqvpn/peers.yaml
 peers:
   - id: site-1
-    certificate_sha256: "REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS"
+    certificate_cn: gateway-1  # omit if Client cert CN is "site-1"
     routes:
       - 10.77.0.2/32
       - 192.168.20.0/24
 
-  - id: site-2
-    certificate_sha256: "REPLACE_WITH_A_DIFFERENT_64_CHARACTER_SHA256"
+  - id: site-2  # Client cert CN must be "site-2" by default
     routes:
       - 10.77.0.3/32
       - 192.168.30.0/24
 ```
 
-Obtain a Client certificate fingerprint:
+Inspect a Client certificate's Common Name (CN):
 
 ```bash
-openssl x509 -in client.crt -outform DER | sha256sum | cut -d' ' -f1
+openssl x509 -in client.crt -noout -subject
 ```
 
-A trusted Client CA validates the certificate. The fingerprint must **also** match an explicitly authorized peer inside the selected tenant. `routes` are **P2MP destination ownership rules**: the Server forwards an inner packet to the corresponding authenticated Client session. They are *not* Linux FIB routes, source anti-spoofing rules or firewall ACLs.
+After validating mTLS against the instance's trusted Client CA and the configured revocation policy, the Server uses the verified Client CN to match the Peer `id`, or the optional `certificate_cn` override. Every authorized CN must be unique **within the same instance**. The selected Peer still needs explicit destination ownership rules; do not authorize arbitrary trusted-CA certificates or automatically trust an arbitrary CN. `routes` are **P2MP destination ownership rules**: the Server forwards an inner packet to the corresponding authenticated Client session. They are *not* Linux FIB routes, source anti-spoofing rules or firewall ACLs.
 
 For cross-site forwarding, the Server's Linux namespace needs IP forwarding and the correct kernel routes to the TUN. BGP/OSPF route learning is managed externally, for example by FRRouting. See [Five-site BGP and OSPF](five-site-routing.md).
+
+## Choose a Client certificate revocation policy
+
+By default, Server certificate-chain validation and per-Peer CN authorization
+are always required, but local CRL checking is disabled. Enable CRL checking
+per Server instance when your PKI publishes a **complete, direct issuer-signed
+Client leaf CRL**:
+
+```yaml
+instances:
+  - name: company-a
+    # ... existing instance fields ...
+    client_revocation:
+      mode: crl
+      crl_file: /etc/mqvpn/pki/clients.crl
+```
+
+Supported values are `mode: crl` (fail closed) and `mode: off`. If the mode
+is `crl`, a missing, malformed, expired, not-yet-valid, wrongly signed or
+non-covering CRL **rejects Client certificate authorization**. The CRL must
+have valid `thisUpdate` / `nextUpdate` and be signed by the verified
+leaf's direct issuing CA. The file can be PEM or DER. This version does not
+automatically fetch CRLs, support indirect/delta CRLs, or validate all chain
+revocations; use it with a CA issuing Client leaf certificates directly.
+
+CRL contents are watched through the existing Server configuration-reload
+fingerprint. Updating the CRL or CA restarts the affected instance and
+reauthorizes its Client sessions. Disabling CRL checking does **not** disable
+mTLS, tenant-isolated Client CA verification, Client certificate expiration
+validation or the authorized-Peer CN lookup. Keep expired CRL files updated
+before `nextUpdate` to avoid denied new connections.
 
 ## Optional: assign tunnel IPs automatically
 
@@ -105,8 +135,7 @@ tunnel_pool: 10.77.0.0/24
 ```yaml
 # In that instance's peer authorization YAML:
 peers:
-  - id: leased-site
-    certificate_sha256: "REPLACE_WITH_THE_CLIENT_CERTIFICATE_FINGERPRINT"
+  - id: leased-site  # CN=leased-site
     dynamic_tunnel_ip: true
     routes:
       - 192.168.20.0/24
@@ -124,6 +153,19 @@ push_routes:
   # - 0.0.0.0/0   # only after checking underlay protection / policy routes
 push_dns:
   - 10.77.0.1
+```
+
+An individual Peer can override these instance defaults by setting `push_routes` or `push_dns` inside its Peer YAML entry; when omitted, the Peer inherits the instance value, while an explicit empty `[]` suppresses the push for that Peer. Both QUIC and TLS/TCP apply the same resolved policy.
+
+```yaml
+peers:
+  - id: site-1
+    routes: [10.77.0.2/32]
+    push_routes: [192.168.10.0/24]
+    push_dns: [] # do not push the instance default DNS to this site
+  - id: site-2
+    routes: [10.77.0.3/32]
+    # omitted push_routes / push_dns inherit the instance defaults
 ```
 
 Clients accept authorized pushes by default but can opt out using `accept_routes`, `accept_dns` or `dns_routes` in their Client YAML. Route pushes install only Client-session-owned routes. The Client protects the actual Server underlay address so a pushed full-tunnel route does not recursively send VPN control traffic into the TUN; some multi-WAN/full-tunnel combinations are deliberately rejected without explicit source-policy routing.
@@ -177,7 +219,7 @@ Removing a peer authorization revokes the matching peer session; the Hub protect
 ## Production checklist
 
 1. Install CA certificates and private keys with appropriate permissions; do not deploy the demo CA from `scripts/gen-dev-certs.sh`.
-2. Review all authorized peer SHA-256 fingerprints and P2MP destination prefixes.
+2. Review all authorized per-tenant Client certificate CNs (and optional explicit CN mappings), issuer CA trust, CRL freshness, and P2MP destination prefixes.
 3. Configure Linux firewall, forwarding and routing according to the intended trust boundaries.
 4. Validate YAML **before** starting; confirm the Server certificate SAN matches the Client's configured Server name.
 5. Test UDP reachability, backup transport if enabled, MTU and reconnect behavior in the target network.
