@@ -69,9 +69,9 @@ func testClientCertificateCN(t *testing.T, cn string) []byte {
 	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(101), Subject: pkix.Name{CommonName: cn},
-		NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &private.PublicKey, private)
 	if err != nil {
