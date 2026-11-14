@@ -551,8 +551,13 @@ if [[ "$mode" == wan-regional || "$mode" == wan-poor ]]; then
       kill -0 "$pid" 2>/dev/null ||
         fail "WAN bulk load did not overlap complete voice calls"
     done
+    # With injected WAN loss, iperf3 may fail to finish its control
+    # exchange even after meaningful data was delivered. Judge the
+    # datagram and TCP receiver bytes using structured JSON below.
     for pid in $load_pids $server_pids; do
-      wait "$pid" || fail "WAN iperf process failed ($pid)"
+      if ! wait "$pid"; then
+        echo "WARN: WAN iperf3 process $pid exited nonzero; checking receiver JSON" >&2
+      fi
     done
     python3 - "$work" <<'PY'
 import json
