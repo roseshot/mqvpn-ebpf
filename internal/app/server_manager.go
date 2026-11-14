@@ -41,6 +41,7 @@ type preparedInstance struct {
 
 type preparedServer struct {
 	listen      string
+	pathScheduler string
 	wans        []serverWAN
 	tcpEnabled  bool
 	tcpListen   string
@@ -64,6 +65,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	}
 	next := preparedServer{
 		listen:     config.Listen,
+		pathScheduler: config.PathScheduler,
 		wans:       append([]serverWAN(nil), config.WANs...),
 		tcpEnabled: config.TCPFallback.Enabled,
 		tcpListen:  config.TCPFallback.Listen,
@@ -89,6 +91,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	}
 	digest := sha256.New()
 	hashRecord(digest, []byte(config.Listen))
+	hashRecord(digest, []byte(config.PathScheduler))
 	for _, link := range config.WANs {
 		hashRecord(digest, []byte(link.Interface+"@"+link.IP))
 	}
@@ -237,6 +240,7 @@ type serverManager struct {
 	ctx          context.Context
 	logger       *slog.Logger
 	listen       string
+	pathScheduler string
 	wans         []serverWAN
 	tcpEnabled   bool
 	tcpListen    string
@@ -375,7 +379,7 @@ func (m *serverManager) startListener() error {
 		return fmt.Errorf("bind shared HTTP/3 UDP %s: %w", m.listen, err)
 	}
 	m.packetConn = conn
-	m.server = newSharedHTTP3Server(m.mux, m.wans...)
+	m.server = newSharedHTTP3ServerWithScheduler(m.mux, m.pathScheduler, m.wans...)
 	m.listenerDone = make(chan struct{})
 	go func() { m.listenerErr = m.server.Serve(conn); close(m.listenerDone) }()
 	m.logger.InfoContext(m.ctx, "shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
@@ -385,6 +389,9 @@ func (m *serverManager) startListener() error {
 func (m *serverManager) apply(next preparedServer) error {
 	if m.listen != "" && m.listen != next.listen {
 		return fmt.Errorf("shared listen address change %q -> %q requires daemon restart", m.listen, next.listen)
+	}
+	if m.listen != "" && m.pathScheduler != next.pathScheduler {
+		return errors.New("Server MPQUIC path_scheduler changes require daemon restart")
 	}
 	if m.listen != "" && !slices.Equal(m.wans, next.wans) {
 		return errors.New("server WAN address changes require daemon restart to preserve active QUIC sessions")
@@ -403,6 +410,7 @@ func (m *serverManager) apply(next preparedServer) error {
 	// if an OS-level resource failure stops an individual reload.
 	defer m.mux.Publish(m.instances)
 	m.listen = next.listen
+	m.pathScheduler = next.pathScheduler
 	m.wans = append(m.wans[:0], next.wans...)
 	m.tcpEnabled = next.tcpEnabled
 	m.tcpListen = next.tcpListen
