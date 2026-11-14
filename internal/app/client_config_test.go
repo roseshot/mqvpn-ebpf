@@ -88,3 +88,16 @@ func TestClientReconnectConfiguration(t *testing.T){
 		t.Fatalf("omitted reconnect must use the default true: %+v %v",cfg.Reconnect,err)
 	}
 }
+
+func TestClientDNSConsentConfiguration(t *testing.T){
+	for _,tc:=range []struct{value string;want bool}{
+		{"true",true},{"false",false},
+	}{
+		cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\naccept_dns: "+tc.value+"\n"))
+		if err!=nil||cfg.AcceptDNS==nil||*cfg.AcceptDNS!=tc.want{
+			t.Fatalf("accept_dns %s parsed incorrectly: %+v %v",tc.value,cfg.AcceptDNS,err)
+		}
+	}
+	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\n"))
+	if err!=nil||cfg.AcceptDNS!=nil{t.Fatalf("omitted accept_dns should use default true: %+v %v",cfg.AcceptDNS,err)}
+}

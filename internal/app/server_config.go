@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
+	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
@@ -28,6 +29,7 @@ type ServerInstance struct {
 	Address    string `yaml:"address"`
 	TunnelPool string `yaml:"tunnel_pool,omitempty"`
 	PushRoutes []string `yaml:"push_routes,omitempty"`
+	PushDNS []string `yaml:"push_dns,omitempty"`
 	MTU        int    `yaml:"mtu,omitempty"`
 	Peers      string `yaml:"peers"`
 	Path       string `yaml:"path,omitempty"`
@@ -108,6 +110,12 @@ func (c *ServerConfig) Validate() error {
 		if len(routes)>0 {
 			inst.PushRoutes=make([]string,len(routes))
 			for i,p:=range routes {inst.PushRoutes[i]=p.String()}
+		}
+		dns,err:=dnspush.Parse(inst.PushDNS)
+		if err!=nil{return fmt.Errorf("instance %s push_dns: %w",inst.Name,err)}
+		if len(dns)>0 {
+			inst.PushDNS=make([]string,len(dns))
+			for i,ip:=range dns{inst.PushDNS[i]=ip.String()}
 		}
 		if inst.TC==nil {
 			defaultTC:=tcebpf.DefaultConfig()

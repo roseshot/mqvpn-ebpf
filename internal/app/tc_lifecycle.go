@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
+	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 )
 
@@ -41,7 +42,7 @@ func reportAndCloseTC(tc *tcebpf.Attachment,logger *slog.Logger)error {
 }
 
 // managedPumpDevice serializes resource teardown and makes it idempotent:
-// detach TCX first, then release the TUN (and restore any prior interface
+// restore DNS and detach TCX first, then release the TUN (and restore any prior interface
 // configuration), then the app-level deferred route guard is closed.
 // Unexpected cleanup errors are fatal to the reconnect supervisor.
 type managedPumpDevice struct{
@@ -64,6 +65,13 @@ func(d *managedPumpDevice)Close()error{
 	return d.closeErr
 }
 
-func newManagedPumpDevice(device io.ReadWriteCloser,tc *tcebpf.Attachment,logger *slog.Logger)*managedPumpDevice{
-	return &managedPumpDevice{ReadWriteCloser:device,beforeClose:func()error{return reportAndCloseTC(tc,logger)}}
+func newManagedPumpDevice(device io.ReadWriteCloser,tc *tcebpf.Attachment,dns *dnspush.Lease,logger *slog.Logger)*managedPumpDevice{
+	return &managedPumpDevice{ReadWriteCloser:device,beforeClose:func()error{
+		// Release resolver state while the TUN is still alive, then detach
+		// TCX before releasing the interface and its routes.
+		var dnsErr error
+		if dns!=nil{dnsErr=dns.Close()}
+		if dnsErr!=nil{logger.Error("restore TUN DNS on disconnect","error",dnsErr)}
+		return errors.Join(dnsErr,reportAndCloseTC(tc,logger))
+	}}
 }

@@ -64,6 +64,7 @@ QUIC/TCP connection: every attempt starts a new authenticated session.
 | `path` | Server-specific MASQUE CONNECT path |
 | `address` | Static TUN CIDR or `auto` for Server lease |
 | `accept_routes` | Apply authenticated `push_routes` (default true) |
+| `accept_dns` | Apply authenticated `push_dns` with systemd-resolved (default true; false opts out) |
 | `reconnect` | Automatically reconnect on disconnect or dial failure (default true; false = one attempt) |
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
@@ -97,3 +98,39 @@ of redirecting an underlay path through the tunnel.
 The program does not install firewall rules, VRFs, policy routing
 rules, custom DNS or inner traffic filters. For unusual multi-WAN
 routing, specify `source_interface` and optionally `source_ip`.
+
+## Server-pushed DNS
+
+A Server instance may advertise literal IP DNS servers after authenticated
+HTTP/3 CONNECT or TCP Upgrade:
+
+~~~yaml
+# Server instance configuration (inside instances: [])
+push_dns:
+  - 10.77.0.1
+  - fd77::53
+~~~
+
+The Client accepts pushed DNS by default. Set `accept_dns: false` or
+`--accept-dns=false` to ignore the advertisement. The Server may
+advertise up to eight IPv4/IPv6 unicast DNS addresses using the
+`Mqvpn-DNS` response header. The authenticated Client validates them
+before touching system resolver state.
+
+On Linux, mqvpn configures only the session TUN through the
+`systemd-resolved` D-Bus link API, with a route-only `~.` DNS domain so
+these DNS servers are preferred for general name lookups. The Client
+snapshots the TUN's existing DNS server details (including custom ports
+and TLS names), domains and DNS default-route policy, and restores
+them before the TUN is closed or another session starts. Network
+changes by another manager are never blindly overwritten; if it cannot
+restore safely, automatic reconnect stops.
+
+`systemd-resolved` and its system D-Bus are required **only when pushed
+DNS is accepted**. This feature does not edit `/etc/resolv.conf`, and does
+not use shell commands or modify global/physical WAN DNS. The host must
+already route queries through systemd-resolved (usually its stub resolver
+or `nss-resolve`); a host using a foreign resolv.conf will not
+automatically consume per-link settings. If the DNS server is not in
+the VPN's connected TUN subnet, Server must also push a reachable
+route via `push_routes` (or the client must already have one).

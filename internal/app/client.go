@@ -17,6 +17,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
+	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
@@ -47,6 +48,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	acceptRoutes:=fs.Bool("accept-routes",true,"apply authenticated Server-pushed routes (default true)")
+	acceptDNS:=fs.Bool("accept-dns",true,"apply authenticated Server-pushed DNS using systemd-resolved (default true)")
 	reconnect:=fs.Bool("reconnect",true,"automatically reconnect on session loss or initial connection failure (default true)")
 	if err := fs.Parse(args); err != nil { return err }
 	explicit := make(map[string]bool)
@@ -90,6 +92,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 			if !explicit["tc-stats"] && file.TC.Stats!=nil {*tcStats=*file.TC.Stats}
 		}
 		if !explicit["accept-routes"] && file.AcceptRoutes!=nil {*acceptRoutes=*file.AcceptRoutes}
+		if !explicit["accept-dns"] && file.AcceptDNS!=nil {*acceptDNS=*file.AcceptDNS}
 		if !explicit["reconnect"] && file.Reconnect!=nil {*reconnect=*file.Reconnect}
 	}
 	if fs.NArg()!=0{return errors.New("unexpected positional client arguments")}
@@ -112,7 +115,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcpOptions:=clientTCPOptions{
 		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,tcpPort:*tcpPort,
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
-		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,acceptRoutes:*acceptRoutes,
+		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,acceptRoutes:*acceptRoutes,acceptDNS:*acceptDNS,
 	}
 	if *transportMode=="tcp" && (*wan2!=""||*wan2Iface!="") {
 		return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")
@@ -230,6 +233,11 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 		pushedRoutes,err=routepush.Decode(response.Header.Get(routepush.Header))
 		if err!=nil{return fmt.Errorf("CONNECT-ETHERNET pushed routes: %w",err)}
 	}
+	var pushedDNS []netip.Addr
+	if o.tcp.acceptDNS{
+		pushedDNS,err=dnspush.Decode(response.Header.Get(dnspush.Header))
+		if err!=nil{return fmt.Errorf("CONNECT-ETHERNET pushed DNS: %w",err)}
+	}
 	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName,"tunnel_address",effectiveAddress)
 
 	if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {
@@ -293,7 +301,18 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 		if errors.Is(closeErr,tun.ErrCleanup){return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr,errUnsafeReconnect)}
 		return errors.Join(fmt.Errorf("attach client TUN TC eBPF: %w",err),closeErr)
 	}
-	pumpDevice:=newManagedPumpDevice(dev,tcAttachment,logger)
+	dnsLease,err:=dnspush.Apply(o.tcp.tunName,pushedDNS)
+	if err!=nil{
+		tcErr:=reportAndCloseTC(tcAttachment,logger)
+		closeErr:=dev.Close()
+		failure:=errors.Join(fmt.Errorf("apply authenticated DNS: %w",err),tcErr,closeErr)
+		if errors.Is(err,dnspush.ErrCleanup)||errors.Is(closeErr,tun.ErrCleanup)||tcErr!=nil{
+			return errors.Join(failure,errUnsafeReconnect)
+		}
+		return failure
+	}
+	if dnsLease!=nil{logger.Info("authenticated DNS installed on TUN","tun",o.tcp.tunName,"servers",dnspush.Encode(pushedDNS))}
+	pumpDevice:=newManagedPumpDevice(dev,tcAttachment,dnsLease,logger)
 	done := make(chan struct{})
 	go printPaths(done, conn, logger)
 	logger.Info("L3 route-based TUN forwarding started", "tun", o.tcp.tunName,"address",effectiveAddress,"mtu",budget.TUNMTU)

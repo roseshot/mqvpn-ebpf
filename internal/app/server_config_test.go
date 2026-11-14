@@ -196,3 +196,20 @@ func TestSingleInstanceIPCertificateIdentity(t *testing.T){
 		if err:=cfg.Validate();err==nil{t.Fatalf("unusable IP identity %s accepted",ip)}
 	}
 }
+
+func TestInstancePushDNSValidation(t *testing.T){
+	cfg:=ServerConfig{Instances:[]ServerInstance{sampleInstance("dns","dns.example.test","mq0")}}
+	cfg.Instances[0].PushDNS=[]string{"10.77.0.1","fd77::53"}
+	if err:=cfg.Validate();err!=nil{t.Fatal(err)}
+	if got:=cfg.Instances[0].PushDNS;len(got)!=2||got[0]!="10.77.0.1"||got[1]!="fd77::53"{
+		t.Fatalf("server DNS push normalized unexpectedly: %v",got)
+	}
+	for _,bad:=range [][]string{
+		{"dns.example.test"}, {"1.1.1.1:53"}, {"0.0.0.0"}, {"ff02::1"},
+		{"10.77.0.1","10.77.0.1"}, {"10.77.0.1\r\nX-Injected: yes"},
+	}{
+		test:=ServerConfig{Instances:[]ServerInstance{sampleInstance("dns","dns.example.test","mq0")}}
+		test.Instances[0].PushDNS=bad
+		if err:=test.Validate();err==nil{t.Fatalf("invalid push_dns accepted: %v",bad)}
+	}
+}

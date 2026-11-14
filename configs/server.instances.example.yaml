@@ -43,6 +43,11 @@ instances:
     # push_routes:
     #   - 192.168.20.0/24
     #   - 0.0.0.0/0  # full tunnel, Client pins Server public IP to WAN
+    # DNS addresses delivered after mTLS authorization (no DNS change
+    # when omitted). Client applies these to its TUN via systemd-resolved.
+    # push_dns:
+    #   - 10.77.0.1
+    #   - fd77::53
     peers: /etc/mqvpn/peers-a.yaml
     # path: /.well-known/masque/ethernet/  # default; customize as needed
     cert: /etc/mqvpn/tls/a-server.crt

@@ -15,6 +15,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/capsule"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
+	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
 )
 
 // authorizeTCPRequest uses the SAME tenant SNI, current client CA, and peer
@@ -105,6 +106,9 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter,r *http.Request){
 	if assigned:=session.TunnelAddress();assigned!=""{responseHeaders+=tunnelAddressHeader+": "+assigned+"\r\n"}
 	if len(inst.prepared.spec.PushRoutes)>0 {
 		responseHeaders+=routepush.Header+": "+strings.Join(inst.prepared.spec.PushRoutes,",")+"\r\n"
+	}
+	if len(inst.prepared.spec.PushDNS)>0{
+		responseHeaders+=dnspush.Header+": "+strings.Join(inst.prepared.spec.PushDNS,",")+"\r\n"
 	}
 	_,err=rw.Writer.WriteString(responseHeaders+"\r\n")
 	if err!=nil{return}

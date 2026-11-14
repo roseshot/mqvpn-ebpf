@@ -10,6 +10,7 @@ key: /etc/mqvpn/a-client.key
 # Advanced optional overrides (uncomment only as required):
 # path: /corp/masque/connect/      # default /.well-known/masque/ethernet/
 # accept_routes: false            # default true; Server-pushed routes
+# accept_dns: false               # default true; Server-pushed DNS; uses systemd-resolved
 # reconnect: false                # default true; auto-retry after disconnect
 # connect_ip: 198.51.100.10        # pin remote UDP/TCP destination
 # source_interface: enp1s0         # select primary WAN

@@ -31,6 +31,7 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 	address:=fs.String("address","","TUN local host IPv4/IPv6 CIDR (required)")
 	tunnelPool:=fs.String("tunnel-pool","","optional per-instance connected-prefix dynamic Tunnel IP pool")
 	pushRoutes:=fs.String("push-routes","","optional comma-separated CIDRs to push to authenticated Clients")
+	pushDNS:=fs.String("push-dns","","optional comma-separated DNS IP addresses to push to authenticated Clients")
 	mtu:=fs.Int("mtu",0,"TUN MTU (0 or omitted = automatic based on WAN, capped at 1400)")
 	peers:=fs.String("peers","","peer destination mapping YAML path")
 	cert:=fs.String("cert","","TLS server certificate path")
@@ -84,6 +85,10 @@ func runInstanceCLI(args []string,logger *slog.Logger)error{
 		if updates["push-routes"] {
 			inst.PushRoutes=nil
 			if *pushRoutes!=""{inst.PushRoutes=strings.Split(*pushRoutes,",")}
+		}
+		if updates["push-dns"] {
+			inst.PushDNS=nil
+			if *pushDNS!=""{inst.PushDNS=strings.Split(*pushDNS,",")}
 		}
 		if updates["mtu"]{inst.MTU=*mtu}
 		if updates["peers"]{inst.Peers=*peers}

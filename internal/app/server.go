@@ -19,6 +19,7 @@ import (
 	"github.com/qoke/mp-quic-go/http3"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
+	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
 )
 
 // RunServer requires one YAML config with a shared UDP listener.
@@ -189,6 +190,9 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if assigned:=session.TunnelAddress();assigned!=""{w.Header().Set(tunnelAddressHeader,assigned)}
 	if len(instance.prepared.spec.PushRoutes)>0 {
 		w.Header().Set(routepush.Header,strings.Join(instance.prepared.spec.PushRoutes,","))
+	}
+	if len(instance.prepared.spec.PushDNS)>0{
+		w.Header().Set(dnspush.Header,strings.Join(instance.prepared.spec.PushDNS,","))
 	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)

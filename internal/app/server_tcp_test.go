@@ -132,6 +132,7 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	cfg,_:=testServerFiles(t)
 	cfg.Instances[0].TunnelPool="10.77.0.0/24"
 	cfg.Instances[0].PushRoutes=[]string{"0.0.0.0/0","192.168.20.0/24"}
+	cfg.Instances[0].PushDNS=[]string{"10.77.0.1","fd77::53"}
 	cfg.Instances[0].Path="/tenant/masque/connect/"
 	certBytes,err:=os.ReadFile(cfg.Instances[0].Cert)
 	if err!=nil{t.Fatal(err)}
@@ -180,5 +181,8 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	if err!=nil||assigned!="10.77.0.0/24"{t.Fatalf("client rejected server lease: %s %v",assigned,err)}
 	if got:=response.Header.Get("Mqvpn-Routes");got!="0.0.0.0/0,192.168.20.0/24" {
 		t.Fatalf("authenticated TCP Upgrade routes missing: %q",got)
+	}
+	if got:=response.Header.Get("Mqvpn-DNS");got!="10.77.0.1,fd77::53"{
+		t.Fatalf("authenticated TCP Upgrade DNS missing: %q",got)
 	}
 }
