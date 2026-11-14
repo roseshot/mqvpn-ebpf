@@ -48,7 +48,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort:=fs.Int("tcp-port",443,"TCP fallback server port (independent of QUIC URL port)")
 	acceptRoutes:=fs.Bool("accept-routes",true,"apply authenticated Server-pushed routes (default true)")
-	acceptDNS:=fs.Bool("accept-dns",true,"apply authenticated Server-pushed DNS using systemd-resolved (default true)")
+	acceptDNS:=fs.Bool("accept-dns",true,"apply authenticated Server-pushed DNS (default true)")
+	dnsRoutes:=fs.Bool("dns-routes",true,"install per-DNS /32 or /128 routes via VPN TUN (default true)")
 	reconnect:=fs.Bool("reconnect",true,"automatically reconnect on session loss or initial connection failure (default true)")
 	if err := fs.Parse(args); err != nil { return err }
 	explicit := make(map[string]bool)
@@ -93,6 +94,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		}
 		if !explicit["accept-routes"] && file.AcceptRoutes!=nil {*acceptRoutes=*file.AcceptRoutes}
 		if !explicit["accept-dns"] && file.AcceptDNS!=nil {*acceptDNS=*file.AcceptDNS}
+		if !explicit["dns-routes"] && file.DNSRoutes!=nil {*dnsRoutes=*file.DNSRoutes}
 		if !explicit["reconnect"] && file.Reconnect!=nil {*reconnect=*file.Reconnect}
 	}
 	if fs.NArg()!=0{return errors.New("unexpected positional client arguments")}
@@ -115,7 +117,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	tcpOptions:=clientTCPOptions{
 		endpoint:endpoint,wanIP:*wan1,wanInterface:*wan1Iface,tunName:*tunName,tcpPort:*tcpPort,
 		caFile:*caFile,certFile:*certFile,keyFile:*keyFile,maxFrame:*maxFrame,
-		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,acceptRoutes:*acceptRoutes,acceptDNS:*acceptDNS,
+		tunAddress:*tunAddress,tunMTU:*tunMTU,tcConfig:tcConfig,acceptRoutes:*acceptRoutes,acceptDNS:*acceptDNS,dnsRoutes:*dnsRoutes,
 	}
 	if *transportMode=="tcp" && (*wan2!=""||*wan2Iface!="") {
 		return errors.New("TCP fallback only supports primary WAN; remove WAN2 options")
@@ -238,6 +240,9 @@ func runClientSession(ctx context.Context,o clientSessionOptions,logger *slog.Lo
 		pushedDNS,err=dnspush.Decode(response.Header.Get(dnspush.Header))
 		if err!=nil{return fmt.Errorf("CONNECT-ETHERNET pushed DNS: %w",err)}
 	}
+	// DNS host routes are independent from ordinary route acceptance, and
+	// are protected by the same underlay guard and owned-route cleanup.
+	pushedRoutes=routepush.WithDNSHostRoutes(pushedRoutes,pushedDNS,o.tcp.dnsRoutes)
 	logger.Info("CONNECT-ETHERNET accepted", "remote", endpoint.dialAddress, "tenant", endpoint.serverName,"tunnel_address",effectiveAddress)
 
 	if o.secondaryWANIP != "" || o.secondaryWANInterface != "" {

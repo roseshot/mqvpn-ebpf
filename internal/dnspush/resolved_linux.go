@@ -18,6 +18,11 @@ import (
 // Client reconnect supervisor must not start another network session.
 var ErrCleanup=errors.New("VPN DNS configuration cleanup failed")
 
+// errResolvedUnavailable permits the per-interface resolvconf fallback
+// only when systemd-resolved or its D-Bus transport is genuinely absent.
+// Permission errors and incorrect per-link state must not be bypassed.
+var errResolvedUnavailable=errors.New("systemd-resolved unavailable")
+
 const (
 	resolvedService="org.freedesktop.resolve1"
 	managerPath=dbus.ObjectPath("/org/freedesktop/resolve1")
@@ -60,12 +65,19 @@ func openResolver(ifname string)(resolverBackend,error){
 	iface,err:=net.InterfaceByName(ifname)
 	if err!=nil{return nil,fmt.Errorf("DNS TUN %q: %w",ifname,err)}
 	conn,err:=dbus.ConnectSystemBus()
-	if err!=nil{return nil,fmt.Errorf("systemd-resolved requires the system D-Bus: %w",err)}
+	if err!=nil{return nil,fmt.Errorf("%w: system D-Bus: %v",errResolvedUnavailable,err)}
 	var path dbus.ObjectPath
 	err=conn.Object(resolvedService,managerPath).Call(managerIface+".GetLink",0,int32(iface.Index)).Store(&path)
 	if err!=nil{
 		_ = conn.Close()
-		return nil,fmt.Errorf("systemd-resolved has no VPN TUN %q (ensure it is running): %w",ifname,err)
+		var dbusErr *dbus.Error
+		if errors.As(err,&dbusErr) {
+			switch dbusErr.Name{
+			case "org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner":
+				return nil,fmt.Errorf("%w: %v",errResolvedUnavailable,err)
+			}
+		}
+		return nil,fmt.Errorf("query systemd-resolved VPN TUN %q: %w",ifname,err)
 	}
 	return &resolvedBackend{conn:conn,link:conn.Object(resolvedService,path)},nil
 }
@@ -102,6 +114,7 @@ func(r *resolvedBackend)Close()error{return r.conn.Close()}
 // network manager's intervening changes).
 type Lease struct{
 	backend resolverBackend
+	fallback *interfaceResolverLease
 	before,applied linkState
 	mu sync.Once
 	closeErr error
@@ -110,11 +123,19 @@ type Lease struct{
 func Apply(tunName string,servers []netip.Addr)(*Lease,error){
 	if len(servers)==0{return nil,nil}
 	if _,err:=Parse(addressStrings(servers));err!=nil{return nil,err}
-	b,err:=openResolver(tunName)
-	if err!=nil{return nil,err}
-	lease,err:=applyWithBackend(b,servers)
-	if err!=nil{return nil,err}
-	return lease,nil
+	return applyWithResolvers(tunName,servers,openResolver,applyInterfaceResolver)
+}
+
+
+// Resolver failover is intentionally narrow: do not hide an authorization
+// error from an active systemd-resolved daemon by using a second backend.
+func applyWithResolvers(tunName string,servers []netip.Addr,openResolved func(string)(resolverBackend,error),openInterface func(string,[]netip.Addr)(*Lease,error))(*Lease,error){
+	b,err:=openResolved(tunName)
+	if err!=nil{
+		if errors.Is(err,errResolvedUnavailable){return openInterface(tunName,servers)}
+		return nil,err
+	}
+	return applyWithBackend(b,servers)
 }
 
 func addressStrings(servers []netip.Addr)[]string{
@@ -204,6 +225,10 @@ func rollbackFailure(b resolverBackend,original linkState,reason error)error{
 func(l *Lease)Close()error{
 	if l==nil{return nil}
 	l.mu.Do(func(){
+		if l.fallback!=nil{
+			l.closeErr=l.fallback.Close()
+			return
+		}
 		defer func(){l.closeErr=errors.Join(l.closeErr,l.backend.Close())}()
 		current,err:=l.backend.Read()
 		if err!=nil{

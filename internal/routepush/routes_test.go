@@ -36,3 +36,22 @@ func TestPushRouteValidationAndLimits(t *testing.T){
 	if _,err:=Parse(many);err==nil{t.Fatal("route count limit ignored")}
 	if _,err:=Decode(strings.Repeat("a",MaxHeaderLength+1));err==nil{t.Fatal("header limit ignored")}
 }
+
+
+func TestDNSHostRoutesDefaultOptOutAndDeduplication(t *testing.T){
+	dns:=[]netip.Addr{
+		netip.MustParseAddr("10.77.0.1"),
+		netip.MustParseAddr("1.1.1.1"),
+		netip.MustParseAddr("fd77::53"),
+	}
+	explicit:=[]netip.Prefix{netip.MustParsePrefix("192.168.20.0/24"),netip.MustParsePrefix("1.1.1.1/32")}
+	got:=WithDNSHostRoutes(explicit,dns,true)
+	want:=[]netip.Prefix{netip.MustParsePrefix("192.168.20.0/24"),netip.MustParsePrefix("1.1.1.1/32"),
+		netip.MustParsePrefix("10.77.0.1/32"),netip.MustParsePrefix("fd77::53/128")}
+	if len(got)!=len(want){t.Fatalf("DNS host route count mismatch: %v",got)}
+	for i:=range want{if got[i]!=want[i]{t.Fatalf("DNS host route %d: got %s want %s",i,got[i],want[i])}}
+	off:=WithDNSHostRoutes(explicit,dns,false)
+	if len(off)!=len(explicit){t.Fatalf("DNS route opt-out changed explicit pushes: %v",off)}
+	if len(WithDNSHostRoutes(nil,dns,true))!=3{t.Fatal("DNS-only push must route independently of accept_routes")}
+	if len(WithDNSHostRoutes(nil,dns,false))!=0{t.Fatal("DNS host routes must be disabled with flag")}
+}

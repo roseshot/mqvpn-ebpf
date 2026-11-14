@@ -64,7 +64,8 @@ QUIC/TCP connection: every attempt starts a new authenticated session.
 | `path` | Server-specific MASQUE CONNECT path |
 | `address` | Static TUN CIDR or `auto` for Server lease |
 | `accept_routes` | Apply authenticated `push_routes` (default true) |
-| `accept_dns` | Apply authenticated `push_dns` with systemd-resolved (default true; false opts out) |
+| `accept_dns` | Apply authenticated `push_dns` through a per-interface resolver (default true) |
+| `dns_routes` | Automatically install DNS /32 IPv4 or /128 IPv6 TUN routes (default true) |
 | `reconnect` | Automatically reconnect on disconnect or dial failure (default true; false = one attempt) |
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
@@ -74,7 +75,8 @@ QUIC/TCP connection: every attempt starts a new authenticated session.
 | `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
 
 The CLI forms use hyphens, for example `--server`, `--path`,
-`--connect-ip`, `--accept-routes=false` and `--reconnect=false`.
+`--connect-ip`, `--accept-routes=false`, `--dns-routes=false` and
+`--reconnect=false`.
 Missing or invalid configuration and identity files are rejected before
 entering the reconnect loop rather than silently retried.
 
@@ -101,36 +103,43 @@ routing, specify `source_interface` and optionally `source_ip`.
 
 ## Server-pushed DNS
 
-A Server instance may advertise literal IP DNS servers after authenticated
-HTTP/3 CONNECT or TCP Upgrade:
+A Server instance advertises up to eight validated literal IPv4/IPv6 DNS
+addresses after an authenticated HTTP/3 CONNECT or TCP Upgrade:
 
 ~~~yaml
-# Server instance configuration (inside instances: [])
+# Within the Server instance:
 push_dns:
   - 10.77.0.1
   - fd77::53
 ~~~
 
-The Client accepts pushed DNS by default. Set `accept_dns: false` or
-`--accept-dns=false` to ignore the advertisement. The Server may
-advertise up to eight IPv4/IPv6 unicast DNS addresses using the
-`Mqvpn-DNS` response header. The authenticated Client validates them
-before touching system resolver state.
+The Client accepts DNS by default. Set `accept_dns: false` or
+`--accept-dns=false` to ignore `Mqvpn-DNS`. The Client validates
+these authenticated addresses before modifying the resolver.
 
-On Linux, mqvpn configures only the session TUN through the
-`systemd-resolved` D-Bus link API, with a route-only `~.` DNS domain so
-these DNS servers are preferred for general name lookups. The Client
-snapshots the TUN's existing DNS server details (including custom ports
-and TLS names), domains and DNS default-route policy, and restores
-them before the TUN is closed or another session starts. Network
-changes by another manager are never blindly overwritten; if it cannot
-restore safely, automatic reconnect stops.
+Every accepted DNS IP also gets a dedicated VPN TUN route by default:
+IPv4 `/32`, IPv6 `/128`. These host routes are independent of
+`accept_routes`, share the VPN's underlay protection and session-owned
+route rollback, and cannot override an existing host route to the VPN
+Server's Underlay IP. Disable this behavior with `dns_routes: false`
+or `--dns-routes=false` while continuing to accept pushed DNS. Normal
+`push_routes` handling is unchanged.
 
-`systemd-resolved` and its system D-Bus are required **only when pushed
-DNS is accepted**. This feature does not edit `/etc/resolv.conf`, and does
-not use shell commands or modify global/physical WAN DNS. The host must
-already route queries through systemd-resolved (usually its stub resolver
-or `nss-resolve`); a host using a foreign resolv.conf will not
-automatically consume per-link settings. If the DNS server is not in
-the VPN's connected TUN subnet, Server must also push a reachable
-route via `push_routes` (or the client must already have one).
+On Linux, mqvpn first attempts `systemd-resolved`'s D-Bus link API:
+it sets DNS on the TUN and adds the routing-only `~.` domain. At
+disconnect, the previous per-link DNS server details, domains and DNS
+default-route state are restored. Intervening modifications by another
+network manager are not silently overwritten.
+
+If systemd-resolved (or system D-Bus) is **unavailable**, Client uses
+`resolvconf` (openresolv or the resolvconf package) to register DNS
+for the VPN interface under a uniquely owned source. On disconnect,
+it deregisters only that source, preserving other interfaces'
+registrations. This fallback's priority and effective DNS order
+depend on the installed resolver manager; `~.` routing is specific
+to systemd-resolved.
+
+Linux itself has no kernel per-interface DNS setting, so at least
+one of systemd-resolved or resolvconf must be functional. The daemon
+does not edit `/etc/resolv.conf` directly; resolvconf may manage it.
+A DNS cleanup failure stops reconnect rather than stacking stale state.

@@ -1,5 +1,5 @@
 // Package dnspush validates authenticated Server-pushed DNS addresses.
-// Linux implementation applies them only through per-link systemd-resolved.
+// Linux uses systemd-resolved or a per-interface resolvconf entry.
 package dnspush
 
 import (

@@ -101,3 +101,16 @@ func TestClientDNSConsentConfiguration(t *testing.T){
 	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\n"))
 	if err!=nil||cfg.AcceptDNS!=nil{t.Fatalf("omitted accept_dns should use default true: %+v %v",cfg.AcceptDNS,err)}
 }
+
+func TestClientDNSHostRoutesSwitch(t *testing.T){
+	for _,tc:=range []struct{raw string;want bool}{
+		{"true",true},{"false",false},
+	}{
+		cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\ndns_routes: "+tc.raw+"\n"))
+		if err!=nil||cfg.DNSRoutes==nil||*cfg.DNSRoutes!=tc.want{
+			t.Fatalf("dns_routes %s parse: %+v %v",tc.raw,cfg.DNSRoutes,err)
+		}
+	}
+	cfg,err:=loadClientFile(writeClientTestYAML(t,"server: vpn.example.com\n"))
+	if err!=nil||cfg.DNSRoutes!=nil{t.Fatalf("omitted dns_routes uses default true: %+v %v",cfg.DNSRoutes,err)}
+}

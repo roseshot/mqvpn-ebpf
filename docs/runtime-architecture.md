@@ -18,7 +18,7 @@ standard-library APIs and Go modules.
 | XDP attach and maps | `internal/xdp/dispatcher_linux.go` | `github.com/cilium/ebpf` |
 | QUIC/HTTP3/MPQUIC | Go `github.com/qoke/mp-quic-go` | Pure Go networking |
 | HTTP/1.1/TCP fallback capsules | `internal/capsule` | Pure Go framing |
-| Per-session DNS configuration and restoration | `internal/dnspush` | systemd-resolved D-Bus per-link DNS, domains and default route |
+| Per-session DNS configuration and restoration | `internal/dnspush` | systemd-resolved D-Bus or per-interface resolvconf entry |
 | Client reconnect supervisor | `internal/app/client_reconnect.go` | Context-aware serial attempts and capped exponential backoff |
 
 The Client reconnect supervisor uses sequential sessions. A TUN created
@@ -26,9 +26,10 @@ for a Client session is deleted at disconnect. When attaching to an
 existing TUN, Client snapshots and restores the address set it touched,
 the previous MTU and the interface's original UP/DOWN state. Existing
 unrelated addresses are never removed. Managed pushed routes and WAN
-host routes are cleaned before another session. DNS is configured only for a session's TUN when accepting authenticated
-DNS pushes; per-link systemd-resolved settings are restored first at
-disconnect, without writing global resolver files. An incomplete route or TUN restoration
+host routes are cleaned before another session. Accepted DNS pushes configure per-TUN DNS through systemd-resolved
+or fallback resolvconf, restored before disconnect. Every accepted
+DNS IP also receives a TUN /32 or /128 host route unless dns_routes
+is disabled, without directly editing global resolver files. An incomplete route or TUN restoration
 stops auto-reconnect rather than stacking corrupt network state. Each attempt
 re-resolves the physical Server destination and renegotiates a dynamic
 Tunnel IP; a reconnect is not an in-place QUIC path handoff.

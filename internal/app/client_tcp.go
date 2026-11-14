@@ -36,6 +36,7 @@ type clientTCPOptions struct {
 	tcpPort int
 	acceptRoutes bool
 	acceptDNS bool
+	dnsRoutes bool
 }
 
 // tcpTarget supports an independent TCP port without weakening tenant TLS
@@ -114,6 +115,7 @@ func runTCPFallback(ctx context.Context,o clientTCPOptions,logger *slog.Logger)(
 		pushedDNS,err=dnspush.Decode(response.Header.Get(dnspush.Header))
 		if err!=nil{return fmt.Errorf("TCP pushed DNS: %w",err)}
 	}
+	pushedRoutes=routepush.WithDNSHostRoutes(pushedRoutes,pushedDNS,o.dnsRoutes)
 	var underlays []mtu.Underlay
 	if o.tunMTU==0 {
 		link,err:=wan.SourceUnderlay(ip,o.wanInterface)

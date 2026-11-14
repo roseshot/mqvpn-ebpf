@@ -185,8 +185,8 @@ reapplies authorized Server-pushed routes. The previous session's managed
 routes, underlay host pin, sockets, TUN state and TCX attachments are
 released before the next attempt. A Client-created TUN is removed; an
 existing TUN has its previous addresses, MTU and administrative UP flag
-restored. Only authenticated DNS pushes create per-link systemd-resolved DNS
-settings; those are restored before reconnect. Cleanup failures prevent unsafe automatic retries. IP leases are
+restored. Only authenticated DNS pushes register per-interface resolver settings
+(via systemd-resolved or resolvconf); those are restored before reconnect. Cleanup failures prevent unsafe automatic retries. IP leases are
 session-scoped; the assigned Tunnel IP may change after reconnect.
 TCP fallback **still occurs only if the initial QUIC handshake times
 out**, never on a post-handshake error or an authentication failure.
@@ -311,34 +311,39 @@ to reach an existing Client.
 
 ## Authenticated Server-pushed DNS
 
-Each Server instance may also advertise DNS IP addresses, independently
-of `push_routes`. Both HTTP/3 CONNECT and TCP Upgrade send the DNS
-addresses only after successful mTLS/Peer authorization.
+The Server may advertise DNS IPs in the authenticated CONNECT/Upgrade
+response, independent of pushed routes:
 
 ~~~yaml
 # Within a Server instance:
 push_dns:
   - 10.77.0.1
   - fd77::53
-# push_routes:
-#   - 10.90.0.0/24   # only needed if the chosen DNS is outside the TUN subnet
 ~~~
 
 ~~~yaml
-# client.yaml: default is true
+# Client: defaults shown
 accept_dns: true
-# accept_dns: false  # opt out; --accept-dns=false also works
+dns_routes: true
+# accept_dns: false      # ignore Server DNS
+# dns_routes: false      # skip DNS host routes
 ~~~
 
-On Linux Client uses `systemd-resolved` D-Bus to set DNS on the VPN TUN,
-plus the route-only `~.` domain to prefer the VPN DNS for normal lookups.
-Before disconnect/reconnect it restores the link's previous DNS servers,
-DNS routing domains and DNS default-route setting; it does not overwrite
-`/etc/resolv.conf` or host-wide/WAN DNS. If `systemd-resolved` is
-unavailable or rejects the link update, an accepted DNS push fails the
-connection attempt rather than silently leaving system DNS unchanged.
-Hosts must use systemd-resolved for lookups, and pushed DNS server IPs
-must be reachable through the TUN. DNS behavior without a push is unchanged.
+For each accepted DNS IP, Client installs a dedicated `/32` IPv4 or
+`/128` IPv6 TUN route by default, even with `accept_routes: false`.
+Disable with `dns_routes: false` / `--dns-routes=false`. DNS routes
+share existing Underlay protection, ownership and reconnect cleanup.
+A DNS IP equal to the VPN Server public IP must not redirect the
+control transport into the TUN.
+
+Client configures per-interface DNS through `systemd-resolved` D-Bus,
+with the route-only `~.` domain, and restores the previous link DNS
+on disconnect. If systemd-resolved is absent, it instead registers an
+interface-scoped entry through `resolvconf`, removing only its own
+entry when disconnected. One functional resolver manager is required:
+Linux has no kernel link DNS API. mqvpn does not directly edit
+`/etc/resolv.conf`, though resolvconf may maintain that file.
+Without a DNS push, resolver behavior remains unchanged.
 
 ## Overlapping subnets and host routing
 

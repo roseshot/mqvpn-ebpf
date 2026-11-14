@@ -54,3 +54,23 @@ func Decode(header string)([]netip.Prefix,error){
 	for i,p:=range parts {parts[i]=strings.TrimSpace(p)}
 	return Parse(parts)
 }
+
+// WithDNSHostRoutes adds exactly one /32 (IPv4) or /128 (IPv6) host
+// route for each authenticated DNS server when enabled. It does not
+// change ordinary pushed routes, and never appends duplicate prefixes.
+// Using the existing route Guard makes DNS routes participate in underlay
+// protection, conflict detection, rollback, and disconnect cleanup.
+func WithDNSHostRoutes(pushed []netip.Prefix,servers []netip.Addr,enabled bool)[]netip.Prefix{
+	result:=append([]netip.Prefix(nil),pushed...)
+	if !enabled || len(servers)==0{return result}
+	seen:=make(map[netip.Prefix]bool,len(pushed)+len(servers))
+	for _,p:=range pushed{seen[p]=true}
+	for _,ip:=range servers{
+		if !ip.IsValid(){continue}
+		host:=netip.PrefixFrom(ip,ip.BitLen())
+		if seen[host]{continue}
+		seen[host]=true
+		result=append(result,host)
+	}
+	return result
+}

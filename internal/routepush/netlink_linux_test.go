@@ -5,6 +5,7 @@ package routepush
 import (
 	"errors"
 	"net"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -110,4 +111,32 @@ func TestGuardRejectsDualWANDefaultAndExistingTUNUnderlay(t *testing.T){
 	k.links["mq0"].Attrs().Index=3
 	_,err=protectWithKernel(k,net.ParseIP("198.51.100.10"),net.ParseIP("192.0.2.20"),"","mq0",push,false)
 	if err==nil{t.Fatal("underlay via tunnel accepted")}
+}
+
+
+func TestDNSHostRoutesShareOwnedGuardAndUnderlayProtection(t *testing.T){
+	k:=newFakeKernel()
+	dns:=[]netip.Addr{netip.MustParseAddr("10.77.0.1"),netip.MustParseAddr("2001:db8::53")}
+	pushed:=WithDNSHostRoutes(nil,dns,true)
+	g,err:=protectWithKernel(k,net.ParseIP("198.51.100.10"),net.ParseIP("192.0.2.20"),"eth0","mq0",pushed,false)
+	if err!=nil{t.Fatal(err)}
+	if err:=g.Install("mq0",pushed);err!=nil{t.Fatal(err)}
+	if len(k.added)!=3 || k.added[1].Dst.String()!="10.77.0.1/32" ||
+		k.added[2].Dst.String()!="2001:db8::53/128" {
+		t.Fatalf("DNS host routes must use TUN: %+v",k.added)
+	}
+	route,_:=k.RouteGetWithOptions(net.ParseIP("198.51.100.10"),nil)
+	if route[0].LinkIndex!=3{t.Fatalf("VPN underlay redirected by DNS: %+v",route)}
+	if err:=g.Close();err!=nil{t.Fatal(err)}
+	if len(k.added)!=0 {t.Fatalf("DNS route cleanup left routes: %+v",k.added)}
+}
+func TestDNSHostRouteConflictDoesNotHijackServerPin(t *testing.T){
+	k:=newFakeKernel()
+	remote:=net.ParseIP("198.51.100.10")
+	pushed:=WithDNSHostRoutes(nil,[]netip.Addr{netip.MustParseAddr("198.51.100.10")},true)
+	g,err:=protectWithKernel(k,remote,net.ParseIP("192.0.2.20"),"eth0","mq0",pushed,false)
+	if err!=nil{t.Fatal(err)}
+	err=g.Install("mq0",pushed)
+	if err==nil{t.Fatal("DNS host route may not override WAN server IP pin")}
+	if len(k.added)!=0{t.Fatalf("conflict left managed routes: %+v",k.added)}
 }
