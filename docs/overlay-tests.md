@@ -160,6 +160,39 @@ sudo bash tests/integration/overlay-netns.sh wan-regional
 sudo bash tests/integration/overlay-netns.sh wan-poor
 ```
 
+### Four independent WANs (MPQUIC)
+
+The `wan4` test uses **four separate Linux veth WANs** between the
+Server and Client namespaces, with distinct underlay source addresses:
+
+| WAN | Client source | Server veth IP | One-way netem delay | Jitter | Random loss | Rate |
+|---|---|---|---:|---:|---:|---:|
+| wan0 | 192.0.2.2 | 192.0.2.1 | 10 ms | 2 ms | 0% | 50 Mbit/s |
+| wan1 | 198.51.100.2 | 198.51.100.1 | 35 ms | 8 ms | 0.5% | 20 Mbit/s |
+| wan2 | 203.0.113.2 | 203.0.113.1 | 70 ms | 20 ms | 1% | 10 Mbit/s |
+| wan3 | 192.0.2.6 | 192.0.2.5 | 120 ms | 40 ms | 3% | 5 Mbit/s |
+
+Every Client path dials the same authenticated Server address,
+192.0.2.1:8443; additional interface-specific source IP policy tables
+prevent Linux from silently routing secondary connections through
+wan0. The Client uses four repeated `--wan IP@INTERFACE` options.
+
+The test **requires all three additional MPQUIC AddPath/Probe steps
+to succeed** before attaching `tc netem` to both egress endpoints of
+each underlay. It then makes two full-duplex synthetic SIP/G.711 RTP
+calls, checks receive-side loss, jitter, DSCP and RTCP reports, and
+checks nonzero traffic counters for *all eight* WAN interface egress
+qdiscs. This verifies that a single connection truly uses four paths,
+rather than simply parsing four configuration entries.
+
+~~~bash
+sudo bash tests/integration/overlay-netns.sh wan4
+~~~
+
+See `docs/client-config.md` for the ordered WAN configuration and
+the current **64 active-path ceiling inside the upstream MPQUIC
+library**, which is separate from mqvpn's uncapped WAN-list parser.
+
 ### FRRouting eBGP peer on TUN
 
 The BGP scenario uses **FRRouting's official signed stable Debian/Ubuntu
@@ -203,6 +236,7 @@ sudo bash tests/integration/overlay-netns.sh voip
 sudo bash tests/integration/overlay-netns.sh mixed
 sudo bash tests/integration/overlay-netns.sh wan-regional
 sudo bash tests/integration/overlay-netns.sh wan-poor
+sudo bash tests/integration/overlay-netns.sh wan4
 sudo bash tests/integration/overlay-netns.sh bgp
 ```
 
