@@ -183,14 +183,17 @@ capture_pids=""
 start_crypto_capture() {
   local ns="$1" side="$2" iface="$3" filter="$4"
   local path="$work/$side-$iface.pcap"
+  local log="$work/capture-$side-$iface.log"
   ip netns exec "$ns" tcpdump -n -p -s 0 -U -i "$iface" -w "$path" "$filter" \
-    >"$work/capture-$side-$iface.log" 2>&1 &
+    >"$log" 2>&1 &
   local cap_pid="$!"
   pids="$pids $cap_pid"
   capture_pids="$capture_pids $cap_pid"
   local up=0
   for attempt in $(seq 1 100); do
-    if [[ -s "$path" ]]; then up=1; break; fi
+    # tcpdump creates a PCAP header before installing its filter.
+    # Require the interface-listening log before sending packets.
+    if [[ -s "$path" ]] && grep -q 'listening on ' "$log"; then up=1; break; fi
     kill -0 "$cap_pid" 2>/dev/null || fail "tcpdump $side $iface died"
     sleep 0.05
   done
@@ -202,7 +205,11 @@ if [[ "$is_crypto" == true ]]; then
   done
   capture_filter="udp port 8443"
   if [[ "$mode" == crypto-tcp ]]; then capture_filter="tcp port 8443"; fi
+  # Capture both directions of WAN0 from the initial TLS/QUIC
+  # handshake. With four live paths the traffic scheduler can leave
+  # WAN0 idle during later probes, even though it was validated.
   start_crypto_capture "$client_ns" client wan0 "$capture_filter"
+  start_crypto_capture "$server_ns" server wan0 "$capture_filter"
 fi
 client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
 if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
@@ -273,7 +280,6 @@ if [[ "$is_crypto" == true ]]; then
       fail "forced TLS/TCP VPN did not establish"
   fi
   start_crypto_capture "$server_ns" server mq0 "ip"
-  start_crypto_capture "$server_ns" server wan0 "$capture_filter"
   if [[ "$mode" == crypto-wan4 ]]; then
     for side in server client; do
       if [[ "$side" == server ]]; then ns="$server_ns"; else ns="$client_ns"; fi
