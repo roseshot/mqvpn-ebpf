@@ -15,7 +15,7 @@ This guide distinguishes **availability of a Server service** from **lossless co
 
 ## Non-negotiable cluster invariants
 
-- All Servers serving the same public name present a trusted certificate with the **same DNS SAN** and an equivalent authorized **Client certificate-fingerprint policy**. The public Client's TLS identity never changes when the VIP moves.
+- All Servers serving the same public name present a trusted certificate with the **same DNS SAN** and the same tenant-isolated Client CA trust, CN/Peer mapping and **revocation policy**. The public Client's TLS identity never changes when the VIP moves.
 - All Servers agree on tenant SNI, CONNECT path and relevant transport features, although they may have distinct physical interfaces and IPs.
 - VIP ownership and return routing must remain symmetric. A QUIC Server sends replies **from the Server public endpoint that the Client expects**; a separate backend must not send replies directly from an unexpected private address. Use a VIP on the active node or a verified symmetric UDP L4 proxy with correct source-NAT handling.
 - Server peer destination maps, Linux FIB routes, forwarding, VRF ownership and externally managed BGP/OSPF must converge on the **active peer owner**. Merely load-balancing QUIC or TCP sessions is not enough to enable forwarding between Clients on different backend hubs.
