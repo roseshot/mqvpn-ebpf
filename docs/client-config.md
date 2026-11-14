@@ -57,6 +57,61 @@ after removing the previous session's managed routes. A Server-assigned
 lease may change after reconnect. This does not migrate an existing
 QUIC/TCP connection: every attempt starts a new authenticated session.
 
+## WAN path configuration (ordered list)
+
+Client WANs are an **ordered list**, not a fixed pair. First entry is
+the initial QUIC handshake path; remaining entries are attached with
+`Conn.AddPath` and explicitly validated with `Probe`. To configure
+four WANs:
+
+~~~yaml
+server: vpn.example.com:8443
+connect_ip: 192.0.2.1
+transport: quic
+wans:
+  - source_ip: 192.0.2.2
+    interface: wan0
+  - source_ip: 198.51.100.2
+    interface: wan1
+  - source_ip: 203.0.113.2
+    interface: wan2
+  - source_ip: 192.0.2.6
+    interface: wan3
+~~~
+
+CLI equivalent:
+
+~~~bash
+mqvpn-client --server vpn.example.com:8443 --connect-ip 192.0.2.1 \
+  --wan 192.0.2.2@wan0 \
+  --wan 198.51.100.2@wan1 \
+  --wan 203.0.113.2@wan2 \
+  --wan 192.0.2.6@wan3
+~~~
+
+Repeat `--wan` for each interface. The CLI list replaces any YAML
+`wans` list. Mixing a WAN list with legacy `source_ip` /
+`source_interface` / `wan2_ip` / `wan2_interface` fields is rejected
+rather than silently merging them. Single- and dual-WAN legacy flags
+are still accepted and mapped to the common ordered representation.
+
+**No fixed WAN maximum is imposed by mqvpn's configuration or loop.**
+The current `github.com/qoke/mp-quic-go v0.3.1` dependency has an
+independent internal maximum of **64 simultaneously active paths**.
+The client requests the configured path count (and the Server advertises
+the largest count supported by its QUIC library), but exceeding the
+dependency limit cannot work without updating that library. Resource
+limits and route/connection-ID limits may further restrict usable paths.
+Never interpret an accepted configuration with more than 64 WANs as a
+guarantee that all will connect.
+
+All configured WAN interfaces must be physically and routably distinct.
+Using source IPs and `SO_BINDTODEVICE` is not enough to create routing:
+for same-destination multi-WAN links, add the required per-source policy
+routing externally. mqvpn does not install or remove these Linux rules.
+The TUN's automatic MTU considers **every validated WAN**, and the
+TCP fallback remains intentionally single-WAN.
+
 ## Optional YAML fields
 
 | Key | Purpose |
@@ -70,7 +125,7 @@ QUIC/TCP connection: every attempt starts a new authenticated session.
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
 | `source_ip`, `source_interface` | Primary WAN binding |
-| `wan2_ip`, `wan2_interface` | MPQUIC secondary WAN |
+| `wans` | Ordered list of MPQUIC WANs: `source_ip` and `interface` |\n| `wan2_ip`, `wan2_interface` | Legacy secondary WAN parameters (still supported) |
 | `transport`, `udp_dial_timeout`, `tcp_port` | Transport and fallback policy |
 | `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
 
@@ -93,7 +148,7 @@ deleted at session end; pre-existing TUNs regain their original IP
 addresses, MTU and administrative UP/DOWN state. The Client does not
 install system DNS settings; it does not modify or reset DNS on
 disconnect. Cleanup failures stop retries instead of compounding stale
-kernel state. If dual-WAN MPQUIC receives
+kernel state. If multi-WAN MPQUIC receives
 a push that covers the Server public IP, Client rejects it instead
 of redirecting an underlay path through the tunnel.
 
