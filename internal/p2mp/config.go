@@ -150,6 +150,7 @@ func Parse(f FileConfig) (*Config, error) {
 func (c *Config) PeerByCertificate(certDER []byte) *Rule {
 	sum := sha256.Sum256(certDER)
 	var cert *x509.Certificate
+	parsed := false
 	for _, p := range c.Peers {
 		if p.CertificateCN == "" {
 			if p.Fingerprint == sum {
@@ -157,14 +158,15 @@ func (c *Config) PeerByCertificate(certDER []byte) *Rule {
 			}
 			continue
 		}
-		if cert == nil {
+		if !parsed {
+			parsed = true
 			var err error
 			cert, err = x509.ParseCertificate(certDER)
 			if err != nil || cert.IsCA || cert.Subject.CommonName == "" {
-				return nil
+				cert = nil
 			}
 		}
-		if cert.Subject.CommonName == p.CertificateCN {
+		if cert != nil && cert.Subject.CommonName == p.CertificateCN {
 			return p
 		}
 	}
