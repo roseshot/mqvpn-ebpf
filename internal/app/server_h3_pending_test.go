@@ -10,6 +10,7 @@ import (
 type headerStreamStub struct {
 	sent chan []byte
 }
+
 func (s *headerStreamStub) SendDatagram(p []byte) error {
 	s.sent <- append([]byte(nil), p...)
 	return nil
