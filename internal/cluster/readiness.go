@@ -20,21 +20,39 @@ type AppliedState struct {
 	Policy             PolicyReference
 }
 
-// CheckApplied performs a fresh linearizable quorum read and returns success
-// only if this node is a current member and has applied the exact current
-// membership, policy, CA and CRL generations. On quorum loss, stale state,
-// uninitialized store or cancellation it fails closed. It does not check
-// the P2MP peer-owner lease, FIB convergence or the QUIC listener.
+// CheckApplied is the strict, authoritative control-plane check for a
+// security-critical admission or revocation decision. It performs a fresh
+// linearizable quorum read. Do NOT call it on every /readyz request or use it
+// to collect local TUN/WAN/OS health telemetry.
 func CheckApplied(ctx context.Context, store Store, applied AppliedState) error {
-	if store == nil || !validID(applied.ClusterID) || !validID(applied.NodeID) ||
+	if store == nil {
+		return fmt.Errorf("%w: missing quorum control store", ErrNotReady)
+	}
+	if err := validateAppliedState(applied); err != nil {
+		return err
+	}
+	committed, err := store.Read(ctx, applied.ClusterID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrNotReady, err)
+	}
+	return checkAppliedSnapshot(committed, applied)
+}
+
+func validateAppliedState(applied AppliedState) error {
+	if !validID(applied.ClusterID) || !validID(applied.NodeID) ||
 		applied.MembershipRevision == 0 || applied.Policy.Revision == 0 ||
 		!validDigest(applied.Policy.Digest) ||
 		(applied.Policy.CRLDigest != "" && !validDigest(applied.Policy.CRLDigest)) {
 		return fmt.Errorf("%w: missing verified local policy or node identity", ErrNotReady)
 	}
-	committed, err := store.Read(ctx, applied.ClusterID)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNotReady, err)
+	return nil
+}
+
+// checkAppliedSnapshot is the common comparison used by both an explicit
+// fresh quorum read and an asynchronously refreshed local observation.
+func checkAppliedSnapshot(committed ControlSnapshot, applied AppliedState) error {
+	if err := validateAppliedState(applied); err != nil {
+		return err
 	}
 	if committed.ClusterID != applied.ClusterID ||
 		committed.MembershipRevision != applied.MembershipRevision ||
