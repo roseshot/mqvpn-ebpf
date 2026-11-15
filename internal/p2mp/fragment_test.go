@@ -96,7 +96,7 @@ func TestServerMTU1500FragmentedRoundTrip(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	stream := &fakeStream{out: make(chan []byte, 8)}
-	enabled, err := h.AttachWithFeatures(ctx, h.cfg.Peers[1], stream, false, false, true)
+	enabled, err := h.AttachWithTrafficRole(ctx, h.cfg.Peers[1], stream, false, false, true, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
