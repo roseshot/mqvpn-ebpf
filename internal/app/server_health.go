@@ -1,17 +1,12 @@
 package app
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
-	"strconv"
 	"sync/atomic"
 	"time"
-
-	"github.com/roseshot/mqvpn-ebpf/internal/cluster"
 )
 
 // newServerHAHealthHandler only advertises local process readiness, not
@@ -102,61 +97,48 @@ func probeLocalTUN(name, address string, mtu int) error {
 	return fmt.Errorf("local TUN %q missing configured host IP %s", name, expected.Addr())
 }
 
-// refreshLocalReadiness is called only on the Server manager's event loop.
-// HTTP handlers read m.ready atomically and do not perform syscalls or
-// contact the quorum store. Required TUNs and enabled listeners are checked;
-// loss of a *single* WAN link is not a global failure when MPQUIC has an
-// alternative path. Cluster admission/fencing remains a separate gate.
+// localReadinessError inspects only this Server's runtime resources. It is
+// called by the manager run loop, not the HTTP handler. There is no cluster
+// membership or quorum dependency in standalone local health.
+func (m *serverManager) localReadinessError() error {
+	if err := m.ctx.Err(); err != nil {
+		return err
+	}
+	if m.packetConn == nil || m.server == nil {
+		return fmt.Errorf("shared QUIC/UDP listener is not initialized")
+	}
+	if m.tcpEnabled && m.tcpListener == nil {
+		return fmt.Errorf("configured TCP fallback listener is not initialized")
+	}
+	if len(m.instances) == 0 {
+		return fmt.Errorf("no active VPN instances")
+	}
+	for name, live := range m.instances {
+		if live == nil || live.hub == nil || live.done == nil {
+			return fmt.Errorf("VPN instance %s is not initialized", name)
+		}
+		select {
+		case <-live.done:
+			return fmt.Errorf("VPN instance %s has stopped", name)
+		default:
+		}
+		spec := live.prepared.spec
+		if err := probeLocalTUN(spec.TUN, spec.Address, spec.MTU); err != nil {
+			return fmt.Errorf("VPN instance %s: %w", name, err)
+		}
+	}
+	return m.ctx.Err()
+}
+
+// refreshLocalReadiness runs on the Server manager's event loop. /readyz
+// serves one cached atomic bit without syscalls or network requests; a
+// single WAN link failure does not mark a multi-WAN node down. Cluster
+// policy admission and peer fencing remain separate security decisions.
 func (m *serverManager) refreshLocalReadiness() {
 	if m.readinessListen == "" {
 		return
 	}
-	probes := []cluster.LocalProbe{{
-		Name: "udp-listener",
-		Check: func(context.Context) error {
-			if m.packetConn == nil || m.server == nil {
-				return errors.New("shared QUIC/UDP listener is not initialized")
-			}
-			return nil
-		},
-	}}
-	if m.tcpEnabled {
-		probes = append(probes, cluster.LocalProbe{
-			Name: "tcp-listener",
-			Check: func(context.Context) error {
-				if m.tcpListener == nil {
-					return errors.New("configured TCP fallback listener is not initialized")
-				}
-				return nil
-			},
-		})
-	}
-	if len(m.instances) == 0 {
-		m.updateLocalReady(errors.New("no active VPN instances"))
-		return
-	}
-	i := 0
-	for _, instance := range m.instances {
-		live := instance
-		probeName := "tun-" + strconv.Itoa(i)
-		i++
-		probes = append(probes, cluster.LocalProbe{
-			Name: probeName,
-			Check: func(context.Context) error {
-				if live == nil || live.hub == nil || live.done == nil {
-					return errors.New("VPN instance is not initialized")
-				}
-				select {
-				case <-live.done:
-					return fmt.Errorf("VPN instance %s has stopped", live.prepared.spec.Name)
-				default:
-				}
-				spec := live.prepared.spec
-				return probeLocalTUN(spec.TUN, spec.Address, spec.MTU)
-			},
-		})
-	}
-	m.updateLocalReady(cluster.CheckNodeLocal(m.ctx, probes))
+	m.updateLocalReady(m.localReadinessError())
 }
 
 func (m *serverManager) updateLocalReady(err error) {
