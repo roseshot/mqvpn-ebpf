@@ -15,6 +15,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tun"
+	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
 // openClientNetworkSession is the single network-resource setup path for
@@ -43,13 +44,13 @@ func openClientNetworkSession(
 		logger.InfoContext(ctx, "authenticated VPN routes installed", "routes", routepush.Encode(routes))
 	}
 
-	tc, err := attachConfiguredTC(ctx, config.tunName, config.tcConfig, budget.TUNMTU, logger)
+	tc, err := tcebpf.AttachConfigured(ctx, config.tunName, config.tcConfig, budget.TUNMTU, logger)
 	if err != nil {
 		return nil, classifyClientCleanup(errors.Join(fmt.Errorf("attach TUN TC eBPF: %w", err), device.Close()))
 	}
 	lease, err := dnspush.Apply(config.tunName, dns)
 	if err != nil {
-		tcErr := reportAndCloseTC(ctx, tc, logger)
+		tcErr := tcebpf.ReportAndClose(ctx, tc, logger)
 		closeErr := device.Close()
 		combined := errors.Join(fmt.Errorf("apply authenticated DNS: %w", err), tcErr, closeErr)
 		if tcErr != nil {

@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/roseshot/mqvpn-ebpf/internal/app"
+	"github.com/roseshot/mqvpn-ebpf/internal/server"
 	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 )
 
@@ -23,7 +23,7 @@ func main() {
 		logger.ErrorContext(ctx, "invalid logging options", "error", err)
 		os.Exit(2)
 	}
-	err = app.RunServer(ctx, args, logger)
+	err = server.Run(ctx, args, logger)
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, flag.ErrHelp) {
 		logger.ErrorContext(ctx, "mqvpn terminated", "error", err)
 		os.Exit(1)

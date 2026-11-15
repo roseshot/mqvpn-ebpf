@@ -102,7 +102,7 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 // data for the "instance list" CLI; it is not a diagnostic log.
 func TestProductionLoggingUsesSlog(t *testing.T) {
 	root := filepath.Join("..", "..")
-	allowedDataOutput := filepath.Join(root, "internal", "app", "server_cli.go")
+	allowedDataOutput := filepath.Join(root, "internal", "server", "cli_linux.go")
 	for _, directory := range []string{"internal", filepath.Join("cmd", "mqvpn-server"), filepath.Join("cmd", "mqvpn-client")} {
 		err := filepath.WalkDir(filepath.Join(root, directory), func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
