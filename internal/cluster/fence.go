@@ -200,6 +200,29 @@ func (f *Fence) Apply(next Record, now time.Time) error {
 func (f *Fence) Allowed(peer Peer, epoch uint64, tunnelIP netip.Addr, now time.Time) bool {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	return f.allowedLocked(peer, epoch, tunnelIP, now)
+}
+
+// WithAuthorized holds the local read barrier across a caller's final
+// ingress/egress action. Applying a tombstone or membership removal cannot
+// complete while an already-authorized action is in flight, and no action
+// can begin after that update returns. The action MUST NOT recursively
+// call Apply or SetMembers, or acquire a lock in the reverse order.
+// This is not a distributed ownership or quorum barrier.
+func (f *Fence) WithAuthorized(peer Peer, epoch uint64, tunnelIP netip.Addr, now time.Time, action func()) bool {
+	if action == nil {
+		return false
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if !f.allowedLocked(peer, epoch, tunnelIP, now) {
+		return false
+	}
+	action()
+	return true
+}
+
+func (f *Fence) allowedLocked(peer Peer, epoch uint64, tunnelIP netip.Addr, now time.Time) bool {
 	if _, member := f.members[f.localNode]; !member {
 		return false
 	}
