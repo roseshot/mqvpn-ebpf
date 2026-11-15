@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"errors"
@@ -7,10 +7,10 @@ import (
 	"unicode/utf8"
 )
 
-// validateMasquePath enforces a canonical absolute path with no request
+// ValidateMASQUEPath enforces a canonical absolute path with no request
 // query, fragment, CRLF, percent-encoded delimiters or dot-segment
 // ambiguity. Both Server and Client use the same exact string.
-func validateMasquePath(path string) error {
+func ValidateMASQUEPath(path string) error {
 	if path == "" || len(path) > 1024 || !utf8.ValidString(path) || path[0] != '/' {
 		return errors.New("MASQUE path must be an absolute URL path (1..1024 bytes)")
 	}

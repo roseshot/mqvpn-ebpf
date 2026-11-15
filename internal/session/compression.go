@@ -1,4 +1,4 @@
-package app
+package session
 
 import "fmt"
 
@@ -6,19 +6,19 @@ import "fmt"
 // CONNECT-ETHERNET session. An absent header selects uncompressed frames.
 // No compressor state or dictionaries span packets or authenticated peers.
 const (
-	compressionHeader = "Mqvpn-Compression"
-	compressionZstd   = "zstd-v1"
+	CompressionHeader = "Mqvpn-Compression"
+	CompressionZstd   = "zstd-v1"
 )
 
-func acceptCompression(requested string) bool {
-	return requested == compressionZstd && localCompressionAvailable()
+func AcceptCompression(requested string) bool {
+	return requested == CompressionZstd && LocalCompressionAvailable()
 }
 
-func negotiatedCompression(response string, advertised bool) (bool, error) {
+func NegotiatedCompression(response string, advertised bool) (bool, error) {
 	switch response {
 	case "":
 		return false, nil // Older or CPU-limited peer: safe fallback.
-	case compressionZstd:
+	case CompressionZstd:
 		if !advertised {
 			// A slow Client must not enable compression just because a
 			// Server returned a capability it never offered.

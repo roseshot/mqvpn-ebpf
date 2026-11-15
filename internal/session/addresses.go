@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"errors"
@@ -9,13 +9,13 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 )
 
-const tunnelAddressHeader = "Mqvpn-Tunnel-Address"
+const TunnelAddressHeader = "Mqvpn-Tunnel-Address"
 
-func dynamicAddressRequested(address string) bool {
+func DynamicAddressRequested(address string) bool {
 	return address == "" || strings.EqualFold(address, "auto")
 }
 
-func wantsTunnelIP(header string) (bool, error) {
+func WantsTunnelIP(header string) (bool, error) {
 	if header == "" {
 		return false, nil
 	}
@@ -27,8 +27,8 @@ func wantsTunnelIP(header string) (bool, error) {
 
 // Delay IP validation until the authenticated Server has supplied a lease.
 // Still validate the interface name and explicit MTU/frame before dialing.
-func validateClientAddressRequest(name, address string, mtuValue, frame int) error {
-	if dynamicAddressRequested(address) {
+func ValidateClientAddressRequest(name, address string, mtuValue, frame int) error {
+	if DynamicAddressRequested(address) {
 		address = "192.0.2.2/24"
 	}
 	return mtu.ValidateRequest(name, address, mtuValue, frame)
@@ -36,8 +36,8 @@ func validateClientAddressRequest(name, address string, mtuValue, frame int) err
 
 // The client never trusts a non-requested assignment or an absent reply.
 // The server's TLS SNI and mTLS identity were verified before this call.
-func resolveClientTunnelAddress(requested, response string) (string, error) {
-	if !dynamicAddressRequested(requested) {
+func ResolveClientTunnelAddress(requested, response string) (string, error) {
+	if !DynamicAddressRequested(requested) {
 		if response != "" {
 			return "", errors.New("unexpected tunnel IP assignment for static client")
 		}

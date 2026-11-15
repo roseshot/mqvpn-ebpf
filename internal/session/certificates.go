@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"crypto/tls"
@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-func certPool(pemFile string) (*x509.CertPool, error) {
+func CertPool(pemFile string) (*x509.CertPool, error) {
 	if pemFile == "" {
 		return nil, errors.New("a CA certificate file is required")
 	}
@@ -23,7 +23,7 @@ func certPool(pemFile string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func keyPair(certFile, keyFile string) (tls.Certificate, error) {
+func KeyPair(certFile, keyFile string) (tls.Certificate, error) {
 	if certFile == "" || keyFile == "" {
 		return tls.Certificate{}, errors.New("a TLS certificate and private key are required for every VPN instance")
 	}

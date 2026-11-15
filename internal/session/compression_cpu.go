@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"runtime"
@@ -53,7 +53,7 @@ func detectCompressionCPU() cpuCompressionProfile {
 	return p
 }
 
-func localCompressionAvailable() bool {
+func LocalCompressionAvailable() bool {
 	return localCompressionProfile().enabled
 }
 

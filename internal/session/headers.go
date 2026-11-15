@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"fmt"
@@ -6,21 +6,14 @@ import (
 	"strings"
 )
 
-// ClientRevocationConfig controls optional RFC 5280 leaf certificate CRL checks.
-// "off" does not disable mTLS or peer-identity authorization.
-type ClientRevocationConfig struct {
-	Mode    string `yaml:"mode,omitempty"` // off (default), crl
-	CRLFile string `yaml:"crl_file,omitempty"`
-}
-
 const (
-	stickySessionHeader = "X-Mqvpn-Sticky-Voip"
-	trafficRoleHeader   = "X-Mqvpn-Traffic-Role"
+	StickySessionHeader = "X-Mqvpn-Sticky-Voip"
+	TrafficRoleHeader   = "X-Mqvpn-Traffic-Role"
 )
 
 // SNI must be an unambiguous DNS hostname, not an IP literal or wildcard.
 // An IP-literal HTTPS URL cannot reliably transmit SNI for demultiplexing.
-func validateSNI(s string) error {
+func ValidateSNI(s string) error {
 	// Go 1.27 CutLast checks for a non-empty terminal DNS label without
 	// allocating a temporary slice or assuming that any dot is valid.
 	_, topLevel, qualified := strings.CutLast(s, ".")
@@ -41,7 +34,7 @@ func validateSNI(s string) error {
 	return nil
 }
 
-func hasHeaderToken(value, token string) bool {
+func HasHeaderToken(value, token string) bool {
 	for _, part := range strings.Split(value, ",") {
 		if strings.EqualFold(strings.TrimSpace(part), token) {
 			return true

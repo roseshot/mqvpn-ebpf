@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"fmt"
@@ -7,21 +7,21 @@ import (
 )
 
 const (
-	framingHeader = "Mqvpn-Framing"
-	framingValue  = l3.FramingVersion
+	FramingHeader = "Mqvpn-Framing"
+	FramingValue  = l3.FramingVersion
 )
 
 // Fragmentation requires both peers to opt into the exact framing version.
 // An absent negotiation header selects the uncompressed base framing.
-func acceptFraming(request string) bool {
-	return request == framingValue
+func AcceptFraming(request string) bool {
+	return request == FramingValue
 }
 
-func negotiatedFraming(response string, offered bool) (bool, error) {
+func NegotiatedFraming(response string, offered bool) (bool, error) {
 	switch response {
 	case "":
 		return false, nil
-	case framingValue:
+	case FramingValue:
 		if !offered {
 			return false, fmt.Errorf("unsolicited VPN fragment framing %q", response)
 		}
