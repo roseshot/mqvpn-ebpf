@@ -274,6 +274,38 @@ func TestRejectStaleMembershipAndMalformedRecords(t *testing.T) {
 	}
 }
 
+func TestCertificateCNAndURISANPeerIdentities(t *testing.T) {
+	now := time.Now()
+	for _, identity := range []string{
+		"CN with internal spaces", "operator+vpn@example.test",
+		"spiffe://mesh.example.test/workload/client-1",
+	} {
+		f := testFence(t, "server-0")
+		if err := f.SetMembers("cluster-1", 1, members(3)); err != nil {
+			t.Fatal(err)
+		}
+		record := sampleRecord("server-0", 1, 1, now.Add(10*time.Second))
+		record.Peer.ID = identity
+		if err := f.Apply(record, now); err != nil {
+			t.Fatalf("valid identity %q rejected: %v", identity, err)
+		}
+		if !f.Allowed(record.Peer, record.Epoch, record.TunnelIP, now) {
+			t.Fatalf("valid identity %q not authorized", identity)
+		}
+	}
+	for _, bad := range []string{"", " tenant", "bad\nname", "bad\x00name"} {
+		f := testFence(t, "server-0")
+		if err := f.SetMembers("cluster-1", 1, members(3)); err != nil {
+			t.Fatal(err)
+		}
+		record := sampleRecord("server-0", 1, 1, now.Add(10*time.Second))
+		record.Peer.ID = bad
+		if err := f.Apply(record, now); err == nil {
+			t.Fatalf("invalid identity %q accepted", bad)
+		}
+	}
+}
+
 // Parallel arrivals to one local checker cannot grant the same peer's epoch
 // to multiple owners. This is NOT a substitute for cross-process quorum CAS.
 func TestConcurrentFiveNodeEpochConflict(t *testing.T) {
