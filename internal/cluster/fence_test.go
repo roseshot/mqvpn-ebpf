@@ -306,6 +306,68 @@ func TestCertificateCNAndURISANPeerIdentities(t *testing.T) {
 	}
 }
 
+func TestFinalActionBarrierWaitsForInFlightWrite(t *testing.T) {
+	now := time.Now()
+	f := testFence(t, "server-0")
+	if err := f.SetMembers("cluster-1", 1, members(3)); err != nil {
+		t.Fatal(err)
+	}
+	record := sampleRecord("server-0", 1, 1, now.Add(10*time.Second))
+	if err := f.Apply(record, now); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	actionDone := make(chan bool, 1)
+	go func() {
+		actionDone <- f.WithAuthorized(record.Peer, 1, record.TunnelIP, now, func() {
+			close(started)
+			<-release
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("authorized action never started")
+	}
+	fenceDone := make(chan error, 1)
+	go func() {
+		fenceDone <- f.Apply(Record{
+			ClusterID: "cluster-1", Peer: record.Peer,
+			Epoch: 2, MembershipRevision: 1,
+		}, now)
+	}()
+	select {
+	case err := <-fenceDone:
+		t.Fatalf("fence completed during authorized action: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case ok := <-actionDone:
+		if !ok {
+			t.Fatal("already authorized action was incorrectly dropped")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("authorized action did not finish")
+	}
+	select {
+	case err := <-fenceDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fence did not finish after action")
+	}
+	var executed atomic.Bool
+	if f.WithAuthorized(record.Peer, 1, record.TunnelIP, now, func() { executed.Store(true) }) || executed.Load() {
+		t.Fatal("fenced epoch executed a final write")
+	}
+	if f.WithAuthorized(record.Peer, 1, record.TunnelIP, now, nil) {
+		t.Fatal("nil final action accepted")
+	}
+}
+
 // Parallel arrivals to one local checker cannot grant the same peer's epoch
 // to multiple owners. This is NOT a substitute for cross-process quorum CAS.
 func TestConcurrentFiveNodeEpochConflict(t *testing.T) {
