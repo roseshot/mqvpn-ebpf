@@ -3,10 +3,10 @@
 package client
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"errors"
 	"fmt"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"log/slog"
 	"net/netip"
 
@@ -14,8 +14,8 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
-	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
+	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 )
 
 // openClientNetworkSession is the single network-resource setup path for

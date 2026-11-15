@@ -1,12 +1,12 @@
 package client
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"io"
 	"log/slog"
 	"net"

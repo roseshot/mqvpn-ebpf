@@ -14,7 +14,7 @@ type fileConfig struct {
 	Key            string        `yaml:"key,omitempty"`
 	TUN            string        `yaml:"tun,omitempty"`
 	ConnectIP      string        `yaml:"connect_ip,omitempty"`
-	WANs           []wanPath   `yaml:"wans,omitempty"`
+	WANs           []wanPath     `yaml:"wans,omitempty"`
 	UseServerWANs  *bool         `yaml:"use_server_wans,omitempty"`
 	MTU            int           `yaml:"mtu,omitempty"`
 	MaxFrame       int           `yaml:"max_frame,omitempty"`

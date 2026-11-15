@@ -1,9 +1,9 @@
 package client
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"errors"
 	"fmt"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"net"
 	"net/netip"
 	"net/url"

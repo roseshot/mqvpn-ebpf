@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/roseshot/mqvpn-ebpf/internal/server"
 	"github.com/roseshot/mqvpn-ebpf/internal/logging"
+	"github.com/roseshot/mqvpn-ebpf/internal/server"
 )
 
 func main() {

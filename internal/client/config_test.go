@@ -1,8 +1,8 @@
 package client
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"io"
 	"log/slog"
 	"os"
