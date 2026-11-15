@@ -1,4 +1,4 @@
-package app
+package session
 
 import (
 	"testing"
@@ -12,24 +12,24 @@ func TestPathSchedulerValidationAndCompatibility(t *testing.T) {
 		value string
 		want  string
 	}{
-		{"", pathSchedulerRoundRobin},
-		{pathSchedulerRoundRobin, pathSchedulerRoundRobin},
-		{pathSchedulerLowLatency, pathSchedulerLowLatency},
+		{"", SchedulerRoundRobin},
+		{SchedulerRoundRobin, SchedulerRoundRobin},
+		{SchedulerLowLatency, SchedulerLowLatency},
 	} {
-		got, err := normalizePathScheduler(tc.value)
+		got, err := NormalizePathScheduler(tc.value)
 		if err != nil || got != tc.want {
 			t.Errorf("policy %q: got %q, err %v, want %q", tc.value, got, err, tc.want)
 		}
 	}
 	for _, invalid := range []string{"min_rtt", "random", "ROUND_ROBIN", "low-latency"} {
-		if _, err := normalizePathScheduler(invalid); err == nil {
+		if _, err := NormalizePathScheduler(invalid); err == nil {
 			t.Errorf("invalid scheduler %q accepted", invalid)
 		}
 	}
 }
 
 func TestLowLatencySchedulerPrefersFastHealthyPathAndFailsOver(t *testing.T) {
-	s := newPathScheduler(pathSchedulerLowLatency)
+	s := NewPathScheduler(SchedulerLowLatency)
 	paths := []quic.SchedulerPathInfo{
 		{PathID: 1, SendingAllowed: true, SmoothedRTT: 150 * time.Millisecond},
 		{PathID: 2, SendingAllowed: true, SmoothedRTT: 20 * time.Millisecond},
@@ -61,13 +61,13 @@ func TestLowLatencySchedulerPrefersFastHealthyPathAndFailsOver(t *testing.T) {
 func TestServerPathSchedulerConfigurationValidation(t *testing.T) {
 	cfg := ServerConfig{
 		Listen:        "0.0.0.0:8443",
-		PathScheduler: pathSchedulerLowLatency,
+		PathScheduler: SchedulerLowLatency,
 		Instances:     []ServerInstance{sampleInstance("lab", "vpn.example.test", "mq0")},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid low-latency Server policy: %v", err)
 	}
-	if cfg.PathScheduler != pathSchedulerLowLatency {
+	if cfg.PathScheduler != SchedulerLowLatency {
 		t.Fatalf("Server scheduler changed unexpectedly: %q", cfg.PathScheduler)
 	}
 	cfg.PathScheduler = "random"
@@ -77,7 +77,7 @@ func TestServerPathSchedulerConfigurationValidation(t *testing.T) {
 }
 
 func TestSharedHTTP3ServerSchedulerPolicy(t *testing.T) {
-	srv := newSharedHTTP3ServerWithScheduler(newServerMux(), pathSchedulerLowLatency)
+	srv := newSharedHTTP3ServerWithScheduler(newServerMux(), SchedulerLowLatency)
 	if srv.QUICConfig == nil || srv.QUICConfig.MultipathControllerFactory == nil {
 		t.Fatal("missing connection-local scheduling policy factory")
 	}

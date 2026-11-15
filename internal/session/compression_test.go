@@ -1,4 +1,4 @@
-package app
+package session
 
 import "testing"
 
@@ -35,14 +35,14 @@ func TestCompressionNegotiation(t *testing.T) {
 	}{
 		{response: "", advertised: false},
 		{response: "", advertised: true},
-		{response: compressionZstd, advertised: true, enabled: true},
-		{response: compressionZstd, advertised: false, errorWant: true},
+		{response: CompressionZstd, advertised: true, enabled: true},
+		{response: CompressionZstd, advertised: false, errorWant: true},
 		{response: "unknown", advertised: true, errorWant: true},
 	}
 	for _, tc := range cases {
-		got, err := negotiatedCompression(tc.response, tc.advertised)
+		got, err := NegotiatedCompression(tc.response, tc.advertised)
 		if got != tc.enabled || (err != nil) != tc.errorWant {
-			t.Fatalf("negotiatedCompression(%q,%v)=(%v,%v), expected enabled=%v error=%v",
+			t.Fatalf("NegotiatedCompression(%q,%v)=(%v,%v), expected enabled=%v error=%v",
 				tc.response, tc.advertised, got, err, tc.enabled, tc.errorWant)
 		}
 	}
