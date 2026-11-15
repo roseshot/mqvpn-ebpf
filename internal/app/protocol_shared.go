@@ -49,4 +49,3 @@ func hasHeaderToken(value, token string) bool {
 	}
 	return false
 }
-
