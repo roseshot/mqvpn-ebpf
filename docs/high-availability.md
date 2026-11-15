@@ -37,6 +37,28 @@ This guide distinguishes **availability of a Server service** from **lossless co
 - Server tunnel-IP pools are **local and not replicated**. Start with static addresses or design a durable shared lease allocator before supporting automatic leases across nodes.
 - Keepalived VRRP on a shared L2 requires a reliable failure domain and fencing/routing controls to prevent split-brain. For multi-AZ/subnet ingress use an external managed L4 ingress or BGP-based VIP advertisement instead.
 
+## Node-local status is not replicated
+
+Each Server is authoritative for observations of its **own** listener
+bindings, TUN devices, WAN link/carrier, packet loss, routing/FIB state,
+resource use and whether its *local* policy/CRL files were actually validated.
+These transient observations must be collected locally and may differ across
+N Servers. They are not consensus records and do not belong in Raft/etcd.
+
+Only shared desired state and facts requiring a unique cluster-wide owner
+need quorum: membership, policy/PKI/CRL manifest revisions, tunnel IP leases
+and fenced peer ownership. A local health HTTP request must not block on an
+etcd/Raft read. Phase B provides optional background-refresh primitives
+documented in [ClusterStore](ha-cluster-store.md), but these are not
+connected to the Server manager or readiness endpoints yet.
+
+The existing `/livez` and `/readyz` remain purely local. Local readiness
+**does not** mean that a new shared lease can be allocated or a revoked Client
+can be admitted while isolated from quorum: those distributed decisions
+require authoritative fencing and up-to-date committed policy. A bounded
+local status cache is never a lease allocator or proof of immediate CRL
+revocation.
+
 ## 1. Enable Server readiness checks
 
 On **each Server**, add only this optional Server YAML section:
