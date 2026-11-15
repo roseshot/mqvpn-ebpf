@@ -33,6 +33,8 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [ -n "$files" ]; then
             printf 'Go files requiring gofmt:\n%s\n' "$files"
+            # Print an actionable patch for remote cross-platform contributors.
+            gofmt -d $files
             exit 1
           fi
       - name: Verify reproducible Go modules
