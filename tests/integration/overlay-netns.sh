@@ -202,7 +202,7 @@ if [[ "$is_crypto" == true ]]; then
   start_crypto_capture "$client_ns" client wan0 "$capture_filter"
   start_crypto_capture "$server_ns" server wan0 "$capture_filter"
 fi
-client_wan_flags=(--source-ip 192.0.2.2 --source-interface wan0)
+client_wan_flags=(--wan 192.0.2.2@wan0)
 if [[ "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == wan4-latency || "$mode" == wan4-sticky ]]; then
   client_wan_flags=(
     --use-server-wans=true
