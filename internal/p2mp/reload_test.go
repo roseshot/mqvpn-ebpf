@@ -2,10 +2,7 @@ package p2mp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/netip"
-	"strings"
 	"testing"
 	"time"
 )
@@ -20,10 +17,8 @@ func testRuleFile(t *testing.T, entries ...PeerConfig) *Config {
 }
 
 func TestPeerMapHotReloadKeepsValidConnection(t *testing.T) {
-	key := sha256.Sum256([]byte("peer-a"))
-	fingerprint := hex.EncodeToString(key[:])
 	before := testRuleFile(t, PeerConfig{
-		ID: "A", CertificateSHA256: fingerprint, Routes: []string{"10.77.0.2/32"},
+		ID: "A", Routes: []string{"10.77.0.2/32"},
 	})
 	h, err := New(&fakeDevice{}, before, 1160, nil)
 	if err != nil {
@@ -38,7 +33,7 @@ func TestPeerMapHotReloadKeepsValidConnection(t *testing.T) {
 	}
 	defer h.Detach(session)
 	next := testRuleFile(t, PeerConfig{
-		ID: "A", CertificateSHA256: fingerprint, Routes: []string{"10.77.0.22/32"},
+		ID: "A", Routes: []string{"10.77.0.22/32"},
 	})
 	if err := h.ReplaceConfig(next); err != nil {
 		t.Fatal(err)
@@ -64,10 +59,7 @@ func TestPeerMapHotReloadKeepsValidConnection(t *testing.T) {
 }
 
 func TestPeerRevocationStopsOldSession(t *testing.T) {
-	a := sha256.Sum256([]byte("peer-a"))
-	b := sha256.Sum256([]byte("peer-b"))
-	fa, fb := hex.EncodeToString(a[:]), hex.EncodeToString(b[:])
-	before := testRuleFile(t, PeerConfig{ID: "A", CertificateSHA256: fa, Routes: []string{"10.77.0.2/32"}})
+	before := testRuleFile(t, PeerConfig{ID: "A", Routes: []string{"10.77.0.2/32"}})
 	h, err := New(&fakeDevice{}, before, 1160, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -78,14 +70,14 @@ func TestPeerRevocationStopsOldSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := testRuleFile(t, PeerConfig{ID: "A", CertificateSHA256: fb, Routes: []string{"10.77.0.2/32"}})
+	next := testRuleFile(t, PeerConfig{ID: "A", CertificateCN: "rotated-site-cn", Routes: []string{"10.77.0.2/32"}})
 	if err := h.ReplaceConfig(next); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-session.ctx.Done():
 	case <-time.After(time.Second):
-		t.Fatal("rotated certificate did not revoke session")
+		t.Fatal("changed authorized CN did not revoke session")
 	}
 	if _, err := h.AttachWithTrafficRole(ctx, before.Peers[0], &fakeStream{out: make(chan []byte, 8)}, false, false, false, false, false); err == nil {
 		t.Fatal("stale authorization must not attach after rotation")
@@ -97,8 +89,7 @@ func TestPeerRevocationStopsOldSession(t *testing.T) {
 }
 
 func TestReloadEmptyRejected(t *testing.T) {
-	sum := strings.Repeat("a", 64)
-	before := testRuleFile(t, PeerConfig{ID: "A", CertificateSHA256: sum, Routes: []string{"10.77.0.2/32"}})
+	before := testRuleFile(t, PeerConfig{ID: "A", Routes: []string{"10.77.0.2/32"}})
 	h, err := New(&fakeDevice{}, before, 1160, nil)
 	if err != nil {
 		t.Fatal(err)
