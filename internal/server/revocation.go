@@ -1,3 +1,5 @@
+//go:build linux
+
 package server
 
 // RevocationConfig controls optional RFC 5280 client certificate CRL checks.
