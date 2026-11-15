@@ -174,7 +174,7 @@ func (lease *AddressLease) Close() error {
 		}
 		if check.InterfaceLuid != lease.row.InterfaceLuid ||
 			check.OnLinkPrefixLength != lease.row.OnLinkPrefixLength ||
-			check.Address != lease.row.Address {
+			!sameSockaddrIP(check.Address, lease.row.Address) {
 			lease.err = ErrAddressChanged
 			return
 		}
@@ -184,4 +184,19 @@ func (lease *AddressLease) Close() error {
 		}
 	})
 	return lease.err
+}
+
+func sameSockaddrIP(a, b windows.RawSockaddrInet6) bool {
+	if a.Family != b.Family {
+		return false
+	}
+	switch a.Family {
+	case windows.AF_INET:
+		return (*windows.RawSockaddrInet4)(unsafe.Pointer(&a)).Addr ==
+			(*windows.RawSockaddrInet4)(unsafe.Pointer(&b)).Addr
+	case windows.AF_INET6:
+		return a.Addr == b.Addr
+	default:
+		return false
+	}
 }
