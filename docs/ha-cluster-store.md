@@ -12,7 +12,7 @@ N-node HA feature.
 
 | Responsibility | Who owns it | Implementation boundary |
 | --- | --- | --- |
-| **Node-local operation**: TUN state, listeners, WAN health, local routing/FIB, resource metrics | Each Server reads its own kernel and process | `internal/app/server_health.go`; no cluster package or quorum dependency |
+| **Node-local operation**: TUN state, listeners, WAN health, local routing/FIB, resource metrics | Each Server reads its own kernel and process | `internal/server/health_linux.go`; no cluster package or quorum dependency |
 | **Shared desired configuration**: Server membership and policy/PKI/CRL manifest generations | One quorum-backed control plane | `internal/cluster.Store`; real backend and reconciler pending |
 | **Exclusive peer/IP ownership**: tunnel-IP allocation and monotonically fenced peer epoch | Quorum-backed keyed lease authority | `internal/cluster.Fence` is a local verifier only; allocator and datapath integration pending |
 
