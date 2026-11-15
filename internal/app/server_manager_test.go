@@ -41,10 +41,10 @@ func testServerFiles(t *testing.T) (ServerConfig, string) {
 	caPub, caKey := newKey()
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{CommonName: "mqvpn-test-ca"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		Subject:      pkix.Name{CommonName: "mqvpn-test-ca"},
+		NotBefore:    time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		IsCA: true, BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		SubjectKeyId: []byte{1, 2, 3, 4},
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPub, caKey)
@@ -62,9 +62,9 @@ func testServerFiles(t *testing.T) (ServerConfig, string) {
 		template := &x509.Certificate{
 			SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: cn},
 			NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
-			KeyUsage: x509.KeyUsageDigitalSignature,
+			KeyUsage:    x509.KeyUsageDigitalSignature,
 			ExtKeyUsage: []x509.ExtKeyUsage{usage},
-			DNSNames: dns,
+			DNSNames:    dns,
 		}
 		der, err := x509.CreateCertificate(rand.Reader, template, ca, pub, caKey)
 		if err != nil {
@@ -108,7 +108,7 @@ func TestPrepareServerPeerHotReloadKeepsListenerAndTLS(t *testing.T) {
 	before := first.instances["edge-a"]
 
 	data, err := configfile.Marshal(path, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-		ID: "site-a",
+		ID:     "site-a",
 		Routes: []string{"10.77.0.2/32", "192.168.20.0/24"},
 	}}})
 	if err != nil {
