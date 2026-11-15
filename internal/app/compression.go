@@ -3,7 +3,7 @@ package app
 import "fmt"
 
 // Mqvpn-Compression is authenticated inside TLS and scoped to a single
-// CONNECT-ETHERNET session. Silence means legacy uncompressed frames.
+// CONNECT-ETHERNET session. An absent header selects uncompressed frames.
 // No compressor state or dictionaries span packets or authenticated peers.
 const (
 	compressionHeader = "Mqvpn-Compression"
