@@ -6,7 +6,10 @@ instance CRL checks are in the dependent PKI PR. **This page does not claim
 cross-node replication is already running.** A working VRRP address alone
 is not a distributed session database.
 
-For the backend-neutral Phase B quorum/CAS interface (embedded Raft intended, etcd optional), see [ClusterStore contract](ha-cluster-store.md). The current MemoryStore and applied-policy checker are test primitives, not production distributed HA.
+For the minimal Phase B quorum/CAS interface (no required etcd), see
+[ClusterStore contract](ha-cluster-store.md). Its in-memory store is
+compiled only in Go tests; the policy verification helper remains
+unwired to Server admission. There is no production consensus backend.
 
 ## What is local (never replicated by Raft)?
 
@@ -23,10 +26,10 @@ membership, immutable policy/PKI/CRL manifest revisions, peer owner epoch,
 and tunnel IP lease allocation. A Server separately confirms it has locally
 applied the required committed manifest. A node may be locally healthy but
 **not authorized** to admit new Clients or change global ownership if its
-committed policy is stale or it lacks quorum. A locally cached view has a
-finite freshness horizon and cannot substitute for security-critical,
-linearizable admission/fencing. See [Node-local status and ClusterStore
-contract](ha-cluster-store.md).
+committed policy is stale or it lacks quorum. Local `/readyz` does
+not cache or authorize global leases, and a local health observation
+cannot replace authoritative, linearizable admission/fencing.
+See [ClusterStore contract](ha-cluster-store.md).
 
 ## What must be synchronized?
 
