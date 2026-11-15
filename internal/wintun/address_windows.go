@@ -168,8 +168,9 @@ func (lease *AddressLease) Close() error {
 	lease.once.Do(func() {
 		check := lease.row
 		if err := lease.api.Get(&check); err != nil {
-			if errors.Is(err, windows.ERROR_NOT_FOUND) {
-				return // Adapter was removed; the owned address is already gone.
+			if errors.Is(err, windows.ERROR_NOT_FOUND) ||
+				errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+				return // Address or owner-created adapter is already gone.
 			}
 			lease.err = fmt.Errorf("inspect Wintun address before cleanup: %w", err)
 			return
