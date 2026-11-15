@@ -18,8 +18,8 @@ authenticated route/DNS parsers, and reconnection semantics on all hosts.
 Do not introduce an alternate VPN protocol or move Server eBPF, cluster
 Raft, leases or HA authority into the Client.
 
-The Linux Client now selects `linuxClientPlatform` and routes these
-operations through the internal `clientPlatform` boundary:
+The Linux Client now selects `linuxPlatform` and routes these
+operations through the internal `networkPlatform` boundary:
 
 | Client operation | Linux implementation | Native adapter responsibility |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ The `OpenNetworkSession` resource stays alive through the packet pump;
 its `Close` returns network cleanup failures to the reconnect supervisor.
 The route guard outlives the device, as it did before refactoring. The
 Linux-only TUN, DNS, netlink, optional TCX and source-socket code is still
-used unchanged by `linuxClientPlatform`. The platform boundary must not
+used unchanged by `linuxPlatform`. The platform boundary must not
 hide cleanup failures or silently bypass the authenticated Server route.
 
 ## Windows packet device increment
@@ -61,7 +61,7 @@ Client because route/DNS, endpoint protection, MTU and safe session cleanup
 are still missing.
 
 **The DLL and packet device are not sufficient for a safe VPN session.**
-A production Windows `clientPlatform` still has to configure address/MTU,
+A production Windows `networkPlatform` still has to configure address/MTU,
 add authenticated VPN routes and DNS, preserve a physical route to every
 QUIC/TCP Server endpoint, and restore exactly its owned changes after
 disconnect or partial failure. It must protect against Client traffic
