@@ -47,16 +47,10 @@ func (w *clientWANFlags) Set(value string) error {
 	return nil
 }
 
-// planClientWANs converts both the new ordered list and the historical
-// two-WAN flags to one representation. Do not silently merge the two
-// configuration models: it makes the handshake path ambiguous.
-func planClientWANs(list, cli []clientWAN, primaryIP, primaryInterface, secondIP, secondInterface string, explicitLegacy bool) ([]clientWAN, error) {
-	if len(cli) != 0 && explicitLegacy {
-		return nil, errors.New("--wan cannot be combined with legacy --source-* or --wan2-* flags")
-	}
-	if len(list) != 0 && explicitLegacy && len(cli) == 0 {
-		return nil, errors.New("YAML wans cannot be combined with legacy WAN CLI flags; override with repeated --wan")
-	}
+// planClientWANs chooses a single ordered representation. Repeated --wan
+// arguments override the YAML list; if both are absent, the kernel selects
+// the source address and interface for the only initial path.
+func planClientWANs(list, cli []clientWAN) ([]clientWAN, error) {
 	var selected []clientWAN
 	switch {
 	case len(cli) != 0:
@@ -64,10 +58,7 @@ func planClientWANs(list, cli []clientWAN, primaryIP, primaryInterface, secondIP
 	case len(list) != 0:
 		selected = append(selected, list...)
 	default:
-		selected = append(selected, clientWAN{SourceIP: primaryIP, Interface: primaryInterface})
-		if secondIP != "" || secondInterface != "" {
-			selected = append(selected, clientWAN{SourceIP: secondIP, Interface: secondInterface})
-		}
+		selected = []clientWAN{{}}
 	}
 	seenIPs := make(map[netip.Addr]bool, len(selected))
 	seenInterfaces := make(map[string]bool, len(selected))
