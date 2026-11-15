@@ -1,6 +1,7 @@
-package app
+package client
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"bufio"
 	"context"
 	"crypto/tls"
@@ -24,9 +25,9 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
-type clientTCPOptions struct {
-	platform                     clientPlatform
-	endpoint                     clientEndpoint
+type tcpOptions struct {
+	platform                     networkPlatform
+	endpoint                     endpoint
 	wanIP, wanInterface, tunName string
 	tunAddress                   string
 	tunMTU                       int
@@ -42,7 +43,7 @@ type clientTCPOptions struct {
 
 // tcpTarget supports an independent TCP port without weakening tenant TLS
 // SNI validation or the HTTP Host authority.
-func tcpTarget(o clientTCPOptions) (string, string, error) {
+func tcpTarget(o tcpOptions) (string, string, error) {
 	host, _, err := net.SplitHostPort(o.endpoint.dialAddress)
 	if err != nil {
 		return "", "", err
@@ -58,7 +59,7 @@ func tcpTarget(o clientTCPOptions) (string, string, error) {
 
 // runTCPFallback sends HTTP/1.1 GET Upgrade and then exchanges RFC 9297
 // DATAGRAM Capsules bidirectionally over an authenticated TLS 1.3 stream.
-func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger) (result error) {
+func runTCPFallback(ctx context.Context, o tcpOptions, logger *slog.Logger) (result error) {
 	platform := platformForClient(o.platform)
 	dialAddress, requestURL, err := tcpTarget(o)
 	if err != nil {
@@ -74,11 +75,11 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	}
 	defer raw.Close()
 	logger.InfoContext(ctx, "TCP fallback primary WAN connected", "local", raw.LocalAddr(), "remote", raw.RemoteAddr(), "source", ip)
-	roots, err := certPool(o.caFile)
+	roots, err := vpnwire.CertPool(o.caFile)
 	if err != nil {
 		return err
 	}
-	cert, err := keyPair(o.certFile, o.keyFile)
+	cert, err := vpnwire.KeyPair(o.certFile, o.keyFile)
 	if err != nil {
 		return err
 	}
@@ -110,13 +111,13 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "connect-ethernet")
 	request.Header.Set("Capsule-Protocol", "?1")
-	request.Header.Set(framingHeader, framingValue)
-	compressionOffered := localCompressionAvailable()
+	request.Header.Set(vpnwire.FramingHeader, vpnwire.FramingValue)
+	compressionOffered := vpnwire.LocalCompressionAvailable()
 	if compressionOffered {
-		request.Header.Set(compressionHeader, compressionZstd)
+		request.Header.Set(vpnwire.CompressionHeader, vpnwire.CompressionZstd)
 	}
-	if dynamicAddressRequested(o.tunAddress) {
-		request.Header.Set(tunnelAddressHeader, "auto")
+	if vpnwire.DynamicAddressRequested(o.tunAddress) {
+		request.Header.Set(vpnwire.TunnelAddressHeader, "auto")
 	}
 	if err := request.Write(conn); err != nil {
 		return fmt.Errorf("send TCP CONNECT-ETHERNET Upgrade: %w", err)
@@ -128,22 +129,22 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 		return fmt.Errorf("read TCP Upgrade response: %w", err)
 	}
 	if response.StatusCode != http.StatusSwitchingProtocols ||
-		!hasHeaderToken(response.Header.Get("Connection"), "Upgrade") ||
+		!vpnwire.HasHeaderToken(response.Header.Get("Connection"), "Upgrade") ||
 		!strings.EqualFold(response.Header.Get("Upgrade"), "connect-ethernet") ||
 		response.Header.Get("Capsule-Protocol") != "?1" {
 		_ = response.Body.Close()
 		return fmt.Errorf("TCP CONNECT-ETHERNET rejected: %s", response.Status)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
+	compression, err := vpnwire.NegotiatedCompression(response.Header.Get(vpnwire.CompressionHeader), compressionOffered)
 	if err != nil {
 		return err
 	}
-	fragmentation, err := negotiatedFraming(response.Header.Get(framingHeader), true)
+	fragmentation, err := vpnwire.NegotiatedFraming(response.Header.Get(vpnwire.FramingHeader), true)
 	if err != nil {
 		return err
 	}
-	effectiveAddress, err := resolveClientTunnelAddress(o.tunAddress, response.Header.Get(tunnelAddressHeader))
+	effectiveAddress, err := vpnwire.ResolveClientTunnelAddress(o.tunAddress, response.Header.Get(vpnwire.TunnelAddressHeader))
 	if err != nil {
 		return fmt.Errorf("TCP tunnel IP negotiation: %w", err)
 	}

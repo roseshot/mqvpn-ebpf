@@ -1,6 +1,7 @@
-package app
+package client
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -23,14 +24,14 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
-func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
+func Run(ctx context.Context, args []string, logger *slog.Logger) error {
 	logger = logging.Ensure(logger)
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
 	configPath := fs.String("config", "", "optional concise client YAML configuration")
 	server := fs.String("server", "", "authenticated tenant DNS hostname[:port]")
 	pathFlag := fs.String("path", "", "optional MASQUE CONNECT path (default /.well-known/masque/ethernet/)")
 	connectIP := fs.String("connect-ip", "", "connect to server IP without DNS resolution")
-	var wanCLI clientWANFlags
+	var wanCLI wanFlags
 	fs.Var(&wanCLI, "wan", "WAN path SOURCE_IP@INTERFACE[=SERVER_IP] (repeat; first is handshake path)")
 	useServerWANs := fs.Bool("use-server-wans", false, "use authenticated Server ADD_ADDRESS announcements for secondary WAN destinations")
 	tunName := fs.String("tun", "mq0", "Linux L3 TUN name (created and configured by daemon)")
@@ -45,7 +46,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	mssClamp := fs.String("mss-clamp", "auto", "TUN TCP SYN MSS clamp: off|auto|numeric")
 	tcStats := fs.Bool("tc-stats", true, "collect TUN ingress/egress BPF counters")
 	transportMode := fs.String("transport", "auto", "VPN transport: auto (QUIC first, TCP on UDP timeout), quic or tcp")
-	pathScheduler := fs.String("path-scheduler", pathSchedulerRoundRobin, "MPQUIC scheduling: round_robin (default) or low_latency")
+	pathScheduler := fs.String("path-scheduler", vpnwire.SchedulerRoundRobin, "MPQUIC scheduling: round_robin (default) or low_latency")
 	stickyVoIP := fs.Bool("sticky-voip", false, "strict SIP/DSCP-EF WAN affinity via separate single-path authenticated QUIC session")
 	udpTimeout := fs.Duration("udp-dial-timeout", 5*time.Second, "QUIC connection timeout before auto mode tries TCP")
 	tcpPort := fs.Int("tcp-port", 443, "TCP fallback server port (independent of QUIC URL port)")
@@ -65,7 +66,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	var configuredWANs []clientWAN
+	var configuredWANs []wanPath
 	if *configPath != "" {
 		file, err := loadClientFile(*configPath)
 		if err != nil {
@@ -137,14 +138,14 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if *maxFrame != 0 && (*maxFrame < 64 || *maxFrame > 65535) {
 		return fmt.Errorf("invalid --max-frame %d", *maxFrame)
 	}
-	if err := validateClientAddressRequest(*tunName, *tunAddress, *tunMTU, *maxFrame); err != nil {
+	if err := vpnwire.ValidateClientAddressRequest(*tunName, *tunAddress, *tunMTU, *maxFrame); err != nil {
 		return err
 	}
 	tcConfig, err := (tcebpf.Config{Mode: *tcMode, Object: *tcObject, MSSClamp: *mssClamp, Stats: *tcStats}).Normalize()
 	if err != nil {
 		return fmt.Errorf("TUN TC eBPF config: %w", err)
 	}
-	normalizedScheduler, err := normalizePathScheduler(*pathScheduler)
+	normalizedScheduler, err := vpnwire.NormalizePathScheduler(*pathScheduler)
 	if err != nil {
 		return err
 	}
@@ -171,7 +172,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	logger = logger.With("tun", *tunName, "path_scheduler", normalizedScheduler)
 	logger.InfoContext(ctx, "VPN endpoint configured", "destination", endpoint.dialAddress, "tls_server_name", endpoint.serverName, "transport", *transportMode)
-	tcpOptions := clientTCPOptions{
+	tcpOptions := tcpOptions{
 		platform: defaultClientPlatform(),
 		endpoint: endpoint, wanIP: wans[0].SourceIP, wanInterface: wans[0].Interface, tunName: *tunName, tcpPort: *tcpPort,
 		caFile: *caFile, certFile: *certFile, keyFile: *keyFile, maxFrame: *maxFrame,
@@ -182,10 +183,10 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	// Configuration and identity-file failures are not transient network
 	// outages. Validate them once before starting the retry supervisor.
-	if _, err := certPool(*caFile); err != nil {
+	if _, err := vpnwire.CertPool(*caFile); err != nil {
 		return err
 	}
-	if _, err := keyPair(*certFile, *keyFile); err != nil {
+	if _, err := vpnwire.KeyPair(*certFile, *keyFile); err != nil {
 		return err
 	}
 	keyLog, err := openTestTLSKeyLog(*testKeyLog)
@@ -197,7 +198,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		tcpOptions.tlsKeyLog = keyLog
 		logger.WarnContext(ctx, "UNSAFE TEST TLS secrets logging enabled; never use outside isolated test environment")
 	}
-	options := clientSessionOptions{
+	options := sessionOptions{
 		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
 		wans: wans, useServerWANs: *useServerWANs, pathScheduler: normalizedScheduler, stickyVoIP: *stickyVoIP,
 	}
@@ -206,11 +207,11 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	})
 }
 
-type clientSessionOptions struct {
-	tcp            clientTCPOptions
+type sessionOptions struct {
+	tcp            tcpOptions
 	transport      string
 	udpDialTimeout time.Duration
-	wans           []clientWAN
+	wans           []wanPath
 	useServerWANs  bool
 	pathScheduler  string
 	stickyVoIP     bool
@@ -219,17 +220,17 @@ type clientSessionOptions struct {
 // runClientSession owns exactly one transport and TUN session. On every
 // return its defers close the transport, TUN/TCX attachment and session
 // routes before the reconnect supervisor starts another attempt.
-func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.Logger) (result error) {
+func runClientSession(ctx context.Context, o sessionOptions, logger *slog.Logger) (result error) {
 	o.tcp.platform = platformForClient(o.tcp.platform)
 	if o.transport == "tcp" {
 		return runTCPFallback(ctx, o.tcp, logger)
 	}
 	endpoint := o.tcp.endpoint
-	pool, err := certPool(o.tcp.caFile)
+	pool, err := vpnwire.CertPool(o.tcp.caFile)
 	if err != nil {
 		return err
 	}
-	cert, err := keyPair(o.tcp.certFile, o.tcp.keyFile)
+	cert, err := vpnwire.KeyPair(o.tcp.certFile, o.tcp.keyFile)
 	if err != nil {
 		return err
 	}
@@ -283,7 +284,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		EnableDatagrams:            true,
 		EnableAddressAdvertisement: true,
 		MaxPaths:                   max(2, len(o.wans)),
-		MultipathController:        quic.NewDefaultMultipathController(newPathScheduler(o.pathScheduler)),
+		MultipathController:        quic.NewDefaultMultipathController(vpnwire.NewPathScheduler(o.pathScheduler)),
 		KeepAlivePeriod:            10 * time.Second,
 		MaxIdleTimeout:             30 * time.Second,
 	}
@@ -352,16 +353,16 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	// mp-quic-go's HTTP/3 request writer maps req.Proto to the :protocol pseudo-header.
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
-	request.Header.Set(framingHeader, framingValue)
+	request.Header.Set(vpnwire.FramingHeader, vpnwire.FramingValue)
 	if o.stickyVoIP {
-		request.Header.Set(stickySessionHeader, "sticky-v1")
+		request.Header.Set(vpnwire.StickySessionHeader, "sticky-v1")
 	}
-	compressionOffered := localCompressionAvailable()
+	compressionOffered := vpnwire.LocalCompressionAvailable()
 	if compressionOffered {
-		request.Header.Set(compressionHeader, compressionZstd)
+		request.Header.Set(vpnwire.CompressionHeader, vpnwire.CompressionZstd)
 	}
-	if dynamicAddressRequested(o.tcp.tunAddress) {
-		request.Header.Set(tunnelAddressHeader, "auto")
+	if vpnwire.DynamicAddressRequested(o.tcp.tunAddress) {
+		request.Header.Set(vpnwire.TunnelAddressHeader, "auto")
 	}
 	stream, err := h3.OpenRequestStream(ctx)
 	if err != nil {
@@ -382,18 +383,18 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if response.Header.Get("Capsule-Protocol") != "?1" {
 		return errors.New("missing successful Capsule-Protocol response")
 	}
-	if o.stickyVoIP && response.Header.Get(stickySessionHeader) != "sticky-v1" {
+	if o.stickyVoIP && response.Header.Get(vpnwire.StickySessionHeader) != "sticky-v1" {
 		return errors.New("Server did not negotiate strict sticky realtime companion support")
 	}
-	effectiveAddress, err := resolveClientTunnelAddress(o.tcp.tunAddress, response.Header.Get(tunnelAddressHeader))
+	effectiveAddress, err := vpnwire.ResolveClientTunnelAddress(o.tcp.tunAddress, response.Header.Get(vpnwire.TunnelAddressHeader))
 	if err != nil {
 		return fmt.Errorf("CONNECT-ETHERNET tunnel IP negotiation: %w", err)
 	}
-	compression, err := negotiatedCompression(response.Header.Get(compressionHeader), compressionOffered)
+	compression, err := vpnwire.NegotiatedCompression(response.Header.Get(vpnwire.CompressionHeader), compressionOffered)
 	if err != nil {
 		return err
 	}
-	fragmentation, err := negotiatedFraming(response.Header.Get(framingHeader), true)
+	fragmentation, err := vpnwire.NegotiatedFraming(response.Header.Get(vpnwire.FramingHeader), true)
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package app
+package client
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // per-WAN server_ip overrides an advertised address; in discovery mode the
 // remaining Client WANs are paired with the Server's authenticated
 // ADD_ADDRESS announcements in sequence, cycling when N > M.
-func selectServerTargets(primary *net.UDPAddr, wans []clientWAN, advertised []quic.AdvertisedAddress, discover bool) ([]*net.UDPAddr, error) {
+func selectServerTargets(primary *net.UDPAddr, wans []wanPath, advertised []quic.AdvertisedAddress, discover bool) ([]*net.UDPAddr, error) {
 	if primary == nil || primary.IP == nil {
 		return nil, errors.New("primary authenticated QUIC Server address is required")
 	}
@@ -59,7 +59,7 @@ func selectServerTargets(primary *net.UDPAddr, wans []clientWAN, advertised []qu
 	return out, nil
 }
 
-func getServerTargets(ctx context.Context, conn *quic.Conn, primary *net.UDPAddr, wans []clientWAN, discover bool) ([]*net.UDPAddr, error) {
+func getServerTargets(ctx context.Context, conn *quic.Conn, primary *net.UDPAddr, wans []wanPath, discover bool) ([]*net.UDPAddr, error) {
 	if !discover {
 		return selectServerTargets(primary, wans, nil, false)
 	}

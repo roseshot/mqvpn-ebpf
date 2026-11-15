@@ -1,4 +1,4 @@
-package app
+package client
 
 import (
 	"errors"
@@ -7,22 +7,22 @@ import (
 	"strings"
 )
 
-// clientWAN describes one physical underlay path. Its position in the
+// wanPath describes one physical underlay path. Its position in the
 // list determines the initial handshake path; remaining entries are
 // validated as MPQUIC paths. No mqvpn-specific path-count ceiling is
 // imposed. The underlying mp-quic-go library independently limits
 // concurrently active paths (64 in v0.3.1).
-type clientWAN struct {
+type wanPath struct {
 	SourceIP  string `yaml:"source_ip,omitempty"`
 	Interface string `yaml:"interface,omitempty"`
 	ServerIP  string `yaml:"server_ip,omitempty"`
 }
 
-// clientWANFlags accepts repeated --wan=source_ip@interface arguments.
+// wanFlags accepts repeated --wan=source_ip@interface arguments.
 // The list replaces YAML wans rather than appending a different set.
-type clientWANFlags []clientWAN
+type wanFlags []wanPath
 
-func (w *clientWANFlags) String() string {
+func (w *wanFlags) String() string {
 	parts := make([]string, 0, len(*w))
 	for _, item := range *w {
 		spec := item.SourceIP + "@" + item.Interface
@@ -34,7 +34,7 @@ func (w *clientWANFlags) String() string {
 	return strings.Join(parts, ",")
 }
 
-func (w *clientWANFlags) Set(value string) error {
+func (w *wanFlags) Set(value string) error {
 	source, remainder, ok := strings.Cut(value, "@")
 	if !ok || source == "" || remainder == "" {
 		return errors.New("--wan expects SOURCE_IP@INTERFACE[=SERVER_IP] (repeat for each WAN)")
@@ -43,22 +43,22 @@ func (w *clientWANFlags) Set(value string) error {
 	if iface == "" || (specified && server == "") {
 		return errors.New("--wan expects SOURCE_IP@INTERFACE[=SERVER_IP]")
 	}
-	*w = append(*w, clientWAN{SourceIP: source, Interface: iface, ServerIP: server})
+	*w = append(*w, wanPath{SourceIP: source, Interface: iface, ServerIP: server})
 	return nil
 }
 
 // planClientWANs chooses a single ordered representation. Repeated --wan
 // arguments override the YAML list; if both are absent, the kernel selects
 // the source address and interface for the only initial path.
-func planClientWANs(list, cli []clientWAN) ([]clientWAN, error) {
-	var selected []clientWAN
+func planClientWANs(list, cli []wanPath) ([]wanPath, error) {
+	var selected []wanPath
 	switch {
 	case len(cli) != 0:
 		selected = append(selected, cli...)
 	case len(list) != 0:
 		selected = append(selected, list...)
 	default:
-		selected = []clientWAN{{}}
+		selected = []wanPath{{}}
 	}
 	seenIPs := make(map[netip.Addr]bool, len(selected))
 	seenInterfaces := make(map[string]bool, len(selected))

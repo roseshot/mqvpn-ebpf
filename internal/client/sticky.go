@@ -1,6 +1,7 @@
-package app
+package client
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
@@ -196,7 +197,7 @@ func (m *stickyClientStream) close() {
 // realtime QUIC connection there for its entire lifetime. Only a lost
 // session advances to the NEXT configured WAN; it never reacts to a
 // transient RTT change or jumps back automatically after recovery.
-func (m *stickyClientStream) runStickyCompanions(o clientSessionOptions, destinations []*net.UDPAddr, ca *tls.Config, compression, fragmentation bool) {
+func (m *stickyClientStream) runStickyCompanions(o sessionOptions, destinations []*net.UDPAddr, ca *tls.Config, compression, fragmentation bool) {
 	defer m.wg.Done()
 	if len(o.wans) == 0 || len(destinations) != len(o.wans) {
 		m.logger.ErrorContext(m.ctx, "sticky WAN destination count mismatch", "destinations", len(destinations), "wans", len(o.wans))
@@ -217,7 +218,7 @@ func (m *stickyClientStream) runStickyCompanions(o clientSessionOptions, destina
 	}
 }
 
-func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remote *net.UDPAddr, tlsTemplate *tls.Config, o clientSessionOptions, compression, fragmentation bool) error {
+func (m *stickyClientStream) runOneStickySession(index int, link wanPath, remote *net.UDPAddr, tlsTemplate *tls.Config, o sessionOptions, compression, fragmentation bool) error {
 	packetConn, source, err := platformForClient(o.tcp.platform).ListenUDP(m.ctx, link.SourceIP, link.Interface, remote)
 	if err != nil {
 		return fmt.Errorf("open pinned realtime WAN: %w", err)
@@ -255,12 +256,12 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	request.Proto = "connect-ethernet"
 	request.Header.Set("Capsule-Protocol", "?1")
 	if fragmentation {
-		request.Header.Set(framingHeader, framingValue)
+		request.Header.Set(vpnwire.FramingHeader, vpnwire.FramingValue)
 	}
-	request.Header.Set(stickySessionHeader, "sticky-v1")
-	request.Header.Set(trafficRoleHeader, "realtime")
+	request.Header.Set(vpnwire.StickySessionHeader, "sticky-v1")
+	request.Header.Set(vpnwire.TrafficRoleHeader, "realtime")
 	if compression {
-		request.Header.Set(compressionHeader, compressionZstd)
+		request.Header.Set(vpnwire.CompressionHeader, vpnwire.CompressionZstd)
 	}
 	stream, err := h3.OpenRequestStream(m.ctx)
 	if err != nil {
@@ -277,10 +278,10 @@ func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remo
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 ||
 		response.Header.Get("Capsule-Protocol") != "?1" ||
-		response.Header.Get(stickySessionHeader) != "sticky-v1" {
+		response.Header.Get(vpnwire.StickySessionHeader) != "sticky-v1" {
 		return fmt.Errorf("Server rejected pinned realtime session: %s", response.Status)
 	}
-	if fragmentation && response.Header.Get(framingHeader) != framingValue {
+	if fragmentation && response.Header.Get(vpnwire.FramingHeader) != vpnwire.FramingValue {
 		return errors.New("realtime companion did not negotiate frag-v1")
 	}
 	acks := make(chan uint64, 8)

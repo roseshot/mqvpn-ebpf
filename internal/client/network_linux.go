@@ -1,8 +1,9 @@
 //go:build linux
 
-package app
+package client
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"errors"
 	"fmt"
@@ -22,8 +23,8 @@ import (
 // Setup failures close partially initialized resources in the same order.
 func openClientNetworkSession(
 	ctx context.Context,
-	guard clientRouteGuard,
-	config clientTCPOptions,
+	guard routeGuard,
+	config tcpOptions,
 	address string,
 	budget mtu.Result,
 	routes []netip.Prefix,
@@ -31,7 +32,7 @@ func openClientNetworkSession(
 	logger *slog.Logger,
 ) (*managedPumpDevice, error) {
 	logger = logging.Ensure(logger).With("subsystem", "network")
-	device, err := tun.OpenClient(config.tunName, address, budget.TUNMTU, dynamicAddressRequested(config.tunAddress))
+	device, err := tun.OpenClient(config.tunName, address, budget.TUNMTU, vpnwire.DynamicAddressRequested(config.tunAddress))
 	if err != nil {
 		return nil, classifyClientCleanup(err)
 	}
