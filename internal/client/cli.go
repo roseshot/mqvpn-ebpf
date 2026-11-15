@@ -195,4 +195,3 @@ func Run(ctx context.Context, args []string, logger *slog.Logger) error {
 		return runClientSession(sessionCtx, options, logger)
 	})
 }
-
