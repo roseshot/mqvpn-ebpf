@@ -32,7 +32,7 @@ func TestPeerMapHotReloadKeepsValidConnection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := &fakeStream{out: make(chan []byte, 8)}
-	session, err := h.AttachWithTunnelIP(ctx, before.Peers[0], stream, false)
+	session, err := h.AttachWithTrafficRole(ctx, before.Peers[0], stream, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestPeerRevocationStopsOldSession(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	session, err := h.AttachWithTunnelIP(ctx, before.Peers[0], &fakeStream{out: make(chan []byte, 8)}, false)
+	session, err := h.AttachWithTrafficRole(ctx, before.Peers[0], &fakeStream{out: make(chan []byte, 8)}, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestPeerRevocationStopsOldSession(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("rotated certificate did not revoke session")
 	}
-	if _, err := h.AttachWithTunnelIP(ctx, before.Peers[0], &fakeStream{out: make(chan []byte, 8)}, false); err == nil {
+	if _, err := h.AttachWithTrafficRole(ctx, before.Peers[0], &fakeStream{out: make(chan []byte, 8)}, false, false, false, false, false); err == nil {
 		t.Fatal("stale authorization must not attach after rotation")
 	}
 	if _, err := h.Authorize([]byte("unregistered")); err == nil {
