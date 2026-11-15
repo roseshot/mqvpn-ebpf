@@ -2,10 +2,7 @@ package p2mp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/netip"
-	"strings"
 	"testing"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
@@ -16,8 +13,7 @@ func dynamicPeerConfig(t *testing.T, n int) *Config {
 	var peers []PeerConfig
 	for i := 0; i < n; i++ {
 		id := string(rune('A' + i))
-		fp := sha256.Sum256([]byte(id))
-		peers = append(peers, PeerConfig{ID: id, CertificateSHA256: hex.EncodeToString(fp[:]), DynamicTunnelIP: true})
+		peers = append(peers, PeerConfig{ID: id, DynamicTunnelIP: true})
 	}
 	c, err := Parse(FileConfig{Peers: peers})
 	if err != nil {
@@ -91,10 +87,9 @@ func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T) {
 			t.Fatalf("invalid tunnel_pool %q allowed", tc.pool)
 		}
 	}
-	fp := sha256.Sum256([]byte("static"))
 	mixed, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "dynamic", CertificateSHA256: strings.Repeat("a", 64), DynamicTunnelIP: true},
-		{ID: "static", CertificateSHA256: hex.EncodeToString(fp[:]), Routes: []string{"10.77.0.2/32"}},
+		{ID: "dynamic", DynamicTunnelIP: true},
+		{ID: "static", Routes: []string{"10.77.0.2/32"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -110,8 +105,8 @@ func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T) {
 		t.Fatal("static forwarding broken")
 	}
 	broad, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "dynamic", CertificateSHA256: strings.Repeat("a", 64), DynamicTunnelIP: true},
-		{ID: "static", CertificateSHA256: hex.EncodeToString(fp[:]), Routes: []string{"10.77.0.0/25"}},
+		{ID: "dynamic", DynamicTunnelIP: true},
+		{ID: "static", Routes: []string{"10.77.0.0/25"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
