@@ -50,9 +50,15 @@ need quorum: membership, policy/PKI/CRL manifest revisions, tunnel IP leases
 and fenced peer ownership. A local health HTTP request must not block on an
 etcd/Raft read. Phase B provides optional background-refresh primitives
 documented in [ClusterStore](ha-cluster-store.md), but these are not
-connected to the Server manager or readiness endpoints yet.
+connected to the Server's distributed policy/ownership admission path yet.
+The Server now samples required local TUN interfaces every two seconds,
+independently of configuration reload polling, with no Store/etcd/Raft request.
 
-The existing `/livez` and `/readyz` remain purely local. Local readiness
+The existing `/livez` and `/readyz` remain purely local. The
+`/readyz` status also reflects each active local TUN's UP flag, configured
+host IP and MTU, and required listener presence; a single failed WAN path
+does not disable a multi-WAN node that can fail over. The probe loop also
+runs when `--reload-interval=0`. Local readiness
 **does not** mean that a new shared lease can be allocated or a revoked Client
 can be admitted while isolated from quorum: those distributed decisions
 require authoritative fencing and up-to-date committed policy. A bounded
@@ -89,11 +95,11 @@ curl --fail --silent http://127.0.0.1:9090/readyz
 | Probe | HTTP result | Meaning |
 | --- | --- | --- |
 | `GET /livez` | 200 | HTTP health listener is serving; basic liveness only |
-| `GET /readyz` | 200 | Required instances are configured and the Server has bound the shared QUIC listener and requested TCP fallback listener |
-| `GET /readyz` | 503 | Startup incomplete, or Server shutting down |
+| `GET /readyz` | 200 | Required instances are attached, each local TUN is UP with its configured host IP and MTU, and the shared UDP and configured TCP listeners are initialized |
+| `GET /readyz` | 503 | Startup incomplete, required TUN absent/DOWN/misconfigured, or Server shutting down |
 | Other path/method | 404 / 405 | Not a health endpoint |
 
-**Limits:** Readiness is a **local control-plane check**, not a synthetic authenticated CONNECT, QUIC path probe, BGP FIB convergence check or proof that every tenant's traffic forwards. Use an external synthetic test and FIB check if your SLA needs them. This port must remain loopback-only; do not forward it as an unauthenticated public HTTP service.
+**Limits:** TUN/listener state is sampled on the Server manager loop every 2 seconds and HTTP serves the last local atomic result. This check neither synchronizes per-node statistics nor detects WAN loss when alternate paths remain usable. Readiness is a **local operational check**, not a synthetic authenticated CONNECT, QUIC path probe, BGP FIB convergence check or proof that every tenant's traffic forwards. Use an external synthetic test and FIB check if your SLA needs them. This port must remain loopback-only; do not forward it as an unauthenticated public HTTP service.
 
 ## 2. Autonomous active/standby with Keepalived/VRRP
 
