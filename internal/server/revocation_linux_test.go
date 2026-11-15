@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"crypto/ecdsa"
@@ -101,14 +103,14 @@ func TestTenantClientCRLValidRevokedAndExpired(t *testing.T) {
 		{"revoked serial", "crl", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			policy, err := loadClientCRL(&ClientRevocationConfig{Mode: tc.mode, CRLFile: ""})
+			policy, err := loadCRL(&RevocationConfig{Mode: tc.mode, CRLFile: ""})
 			if tc.mode == "crl" {
-				policy, err = loadClientCRL(&ClientRevocationConfig{Mode: tc.mode, CRLFile: testSignedClientCRL(t, ca, key, tc.revoked)})
+				policy, err = loadCRL(&RevocationConfig{Mode: tc.mode, CRLFile: testSignedClientCRL(t, ca, key, tc.revoked)})
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = verifyClientCertificate(state, roots, policy)
+			err = verifyCertificate(state, roots, policy)
 			if (err != nil) != tc.wantFailure {
 				t.Fatalf("unexpected CRL policy decision: %v", err)
 			}
@@ -122,10 +124,10 @@ func TestTenantClientCRLValidRevokedAndExpired(t *testing.T) {
 			}
 		})
 	}
-	if err := verifyClientCertificate(state, x509.NewCertPool(), nil); err == nil {
+	if err := verifyCertificate(state, x509.NewCertPool(), nil); err == nil {
 		t.Fatal("revocation-off must not bypass Client CA verification")
 	}
-	if err := verifyClientCertificate(&tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}, roots, nil); err == nil {
+	if err := verifyCertificate(&tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}, roots, nil); err == nil {
 		t.Fatal("missing verified chain must not authorize")
 	}
 }
@@ -134,37 +136,37 @@ func TestTenantCRLMustBeSignedByVerifiedIssuer(t *testing.T) {
 	_, _, leaf, roots := testTenantCRLIdentity(t)
 	otherCA, otherKey, _, _ := testTenantCRLIdentity(t)
 	path := testSignedClientCRL(t, otherCA, otherKey, false)
-	policy, err := loadClientCRL(&ClientRevocationConfig{Mode: "crl", CRLFile: path})
+	policy, err := loadCRL(&RevocationConfig{Mode: "crl", CRLFile: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
-	if err := verifyClientCertificate(state, roots, policy); err == nil || !strings.Contains(err.Error(), "no valid direct-issuer CRL") {
+	if err := verifyCertificate(state, roots, policy); err == nil || !strings.Contains(err.Error(), "no valid direct-issuer CRL") {
 		t.Fatalf("wrong issuer CRL authorized: %v", err)
 	}
 }
 
 func TestClientRevocationConfigStrictModesAndFiles(t *testing.T) {
 	for _, tc := range []struct {
-		config    ClientRevocationConfig
+		config    RevocationConfig
 		wantError bool
 	}{
-		{ClientRevocationConfig{Mode: "off"}, false},
-		{ClientRevocationConfig{Mode: ""}, false},
-		{ClientRevocationConfig{Mode: "crl", CRLFile: "clients.crl"}, false},
-		{ClientRevocationConfig{Mode: "crl"}, true},
-		{ClientRevocationConfig{Mode: "off", CRLFile: "ignored.crl"}, true},
-		{ClientRevocationConfig{Mode: "insecure"}, true},
+		{RevocationConfig{Mode: "off"}, false},
+		{RevocationConfig{Mode: ""}, false},
+		{RevocationConfig{Mode: "crl", CRLFile: "clients.crl"}, false},
+		{RevocationConfig{Mode: "crl"}, true},
+		{RevocationConfig{Mode: "off", CRLFile: "ignored.crl"}, true},
+		{RevocationConfig{Mode: "insecure"}, true},
 	} {
 		inst := sampleInstance("vpn", "vpn.example.test", "mq0")
 		inst.ClientRevocation = &tc.config
-		cfg := ServerConfig{Instances: []ServerInstance{inst}}
+		cfg := Config{Instances: []Instance{inst}}
 		err := cfg.Validate()
 		if (err != nil) != tc.wantError {
 			t.Fatalf("config %+v unexpected result: %v", tc.config, err)
 		}
 	}
-	if _, err := loadClientCRL(&ClientRevocationConfig{Mode: "crl", CRLFile: "/missing/this-file.crl"}); err == nil {
+	if _, err := loadCRL(&RevocationConfig{Mode: "crl", CRLFile: "/missing/this-file.crl"}); err == nil {
 		t.Fatal("missing configured CRL accepted")
 	}
 }

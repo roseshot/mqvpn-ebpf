@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"context"
@@ -14,9 +16,9 @@ import (
 func TestServerHAReadinessValidatesLoopbackOnly(t *testing.T) {
 	good := []string{"127.0.0.1:9090", "[::1]:9090"}
 	for _, address := range good {
-		cfg := ServerConfig{
-			HA:        ServerHAConfig{ReadinessListen: address},
-			Instances: []ServerInstance{sampleInstance("a", "vpn.example.test", "mq0")},
+		cfg := Config{
+			HA:        HAConfig{ReadinessListen: address},
+			Instances: []Instance{sampleInstance("a", "vpn.example.test", "mq0")},
 		}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("valid local HA health listener %q rejected: %v", address, err)
@@ -28,9 +30,9 @@ func TestServerHAReadinessValidatesLoopbackOnly(t *testing.T) {
 		"[::1]:65536", "[::1%lo]:9090", "127.0.0.1",
 	}
 	for _, address := range bad {
-		cfg := ServerConfig{
-			HA:        ServerHAConfig{ReadinessListen: address},
-			Instances: []ServerInstance{sampleInstance("a", "vpn.example.test", "mq0")},
+		cfg := Config{
+			HA:        HAConfig{ReadinessListen: address},
+			Instances: []Instance{sampleInstance("a", "vpn.example.test", "mq0")},
 		}
 		if err := cfg.Validate(); err == nil {
 			t.Errorf("unsafe/non-listening HA health %q accepted", address)
@@ -67,7 +69,7 @@ func TestServerHAReadinessRespondsOnlyWhenReady(t *testing.T) {
 
 func TestServerHAReadinessLoopbackSocketLifecycle(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m := newServerManager(context.Background(), logger)
+	m := newManager(context.Background(), logger)
 	defer m.close()
 	m.readinessListen = "127.0.0.1:0" // runtime-only ephemeral port in test
 	if err := m.startHealthListener(); err != nil {

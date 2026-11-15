@@ -1,6 +1,9 @@
-package app
+//go:build linux
+
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -19,7 +22,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 )
 
-func testServerFiles(t *testing.T) (ServerConfig, string) {
+func testServerFiles(t *testing.T) (Config, string) {
 	t.Helper()
 	dir := t.TempDir()
 	write := func(name string, data []byte) string {
@@ -89,9 +92,9 @@ func testServerFiles(t *testing.T) (ServerConfig, string) {
 		t.Fatal(err)
 	}
 	write("peers.yaml", data)
-	return ServerConfig{
+	return Config{
 		Listen: "0.0.0.0:4433",
-		Instances: []ServerInstance{{
+		Instances: []Instance{{
 			Name: "edge-a", ServerName: "edge-a.example.test", TUN: "mq0",
 			Address: "10.77.0.1/24", MTU: 1400, MaxFrame: 1414,
 			Peers: peerPath, Cert: certPath, Key: keyPath, ClientCA: caPath,
@@ -324,10 +327,10 @@ func TestPreparedSingleIPCertAndTLSWithoutSNI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IP SAN single instance preparation: %v", err)
 	}
-	mux := newServerMux()
+	mux := newMux()
 	live := &liveInstance{prepared: prepared.instances["edge-a"]}
 	mux.Publish(map[string]*liveInstance{"edge-a": live})
-	root, err := certPool(cfg.Instances[0].ClientCA)
+	root, err := vpnwire.CertPool(cfg.Instances[0].ClientCA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +340,7 @@ func TestPreparedSingleIPCertAndTLSWithoutSNI(t *testing.T) {
 	if !root.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) {
 		t.Fatal("could not trust the isolated IP SAN Server test identity")
 	}
-	cert, err := keyPair(
+	cert, err := vpnwire.KeyPair(
 		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.pem"),
 		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.key"))
 	if err != nil {

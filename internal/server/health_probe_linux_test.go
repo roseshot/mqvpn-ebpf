@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"context"
@@ -51,13 +53,13 @@ func TestServerHAReadinessProbesLiveResourcesAndRecovers(t *testing.T) {
 	defer conn.Close()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	live := &liveInstance{
-		prepared: preparedInstance{spec: ServerInstance{
+		prepared: preparedInstance{spec: Instance{
 			Name: "edge-a", TUN: "lo", Address: "127.0.0.1/8", MTU: iface.MTU,
 		}},
 		hub:  &p2mp.Hub{},
 		done: make(chan struct{}),
 	}
-	m := &serverManager{
+	m := &manager{
 		ctx: context.Background(), logger: logger,
 		readinessListen: "127.0.0.1:9090",
 		server:          &http3.Server{},
@@ -114,7 +116,7 @@ func TestServerHAReadinessProbesLiveResourcesAndRecovers(t *testing.T) {
 
 func TestServerHAReadinessNoInstancesOrQUICListener(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	m := &serverManager{
+	m := &manager{
 		ctx: context.Background(), logger: logger,
 		readinessListen: "127.0.0.1:9090",
 	}

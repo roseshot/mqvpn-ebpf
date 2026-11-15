@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"os"
@@ -8,7 +10,7 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
-func writeTestServerYAML(t *testing.T, cfg ServerConfig, perm os.FileMode) string {
+func writeTestServerYAML(t *testing.T, cfg Config, perm os.FileMode) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "server.yaml")
 	b, err := configfile.Marshal(path, cfg)

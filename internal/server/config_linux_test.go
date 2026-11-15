@@ -1,6 +1,9 @@
-package app
+//go:build linux
+
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
 	"os"
 	"path/filepath"
@@ -8,16 +11,16 @@ import (
 	"testing"
 )
 
-func sampleInstance(name, serverName, tunName string) ServerInstance {
-	return ServerInstance{
+func sampleInstance(name, serverName, tunName string) Instance {
+	return Instance{
 		Name: name, ServerName: serverName, TUN: tunName, Address: "10.77.0.1/24",
 		Peers: "peers.yaml", Cert: "server.crt", Key: "server.key", ClientCA: "ca.crt",
 	}
 }
 
 func TestSharedUDPConfigAndDefaults(t *testing.T) {
-	cfg := ServerConfig{
-		Instances: []ServerInstance{
+	cfg := Config{
+		Instances: []Instance{
 			sampleInstance("a", "a.example.test", "mq0"),
 			sampleInstance("b", "b.example.test", "mq1"),
 		},
@@ -31,26 +34,26 @@ func TestSharedUDPConfigAndDefaults(t *testing.T) {
 	if cfg.Instances[0].TC == nil || cfg.Instances[0].TC.Mode != "auto" || !cfg.Instances[0].TC.Stats || cfg.Instances[0].TC.MSSClamp != "auto" || cfg.Instances[0].TC.Object != "" {
 		t.Fatal("default TCX must use bundled ELF, auto MSS clamp and stats")
 	}
-	if cfg.Instances[0].Path != defaultPath || cfg.Instances[1].MaxFrame != 0 || cfg.Instances[0].MTU != 0 {
+	if cfg.Instances[0].Path != vpnwire.DefaultPath || cfg.Instances[1].MaxFrame != 0 || cfg.Instances[0].MTU != 0 {
 		t.Fatal("auto MTU/frame must stay omitted until runtime WAN discovery")
 	}
 }
 
 func TestDuplicateSNIAndTUNRejected(t *testing.T) {
 	first := sampleInstance("a", "a.example.test", "mq0")
-	for _, second := range []ServerInstance{
+	for _, second := range []Instance{
 		sampleInstance("b", "b.example.test", "mq0"),
 		sampleInstance("b", "a.example.test", "mq1"),
 		sampleInstance("a", "b.example.test", "mq1"),
 	} {
-		cfg := ServerConfig{Listen: ":4433", Instances: []ServerInstance{first, second}}
+		cfg := Config{Listen: ":4433", Instances: []Instance{first, second}}
 		if err := cfg.Validate(); err == nil {
 			t.Fatalf("accepted conflicting instance %+v", second)
 		}
 	}
 }
 func TestMissingSNIRejected(t *testing.T) {
-	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("a", "a.example.test", "mq0")}}
+	cfg := Config{Instances: []Instance{sampleInstance("a", "a.example.test", "mq0")}}
 	if err := cfg.Validate(); err != nil || cfg.Listen != defaultServerListen {
 		t.Fatalf("default listen: %q, %v", cfg.Listen, err)
 	}
@@ -59,7 +62,7 @@ func TestMissingSNIRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range []string{"10.77.0.1", "*.vpn.test", "a", "a..test", "-a.test", "a.test."} {
-		if err := validateSNI(s); err == nil {
+		if err := vpnwire.ValidateSNI(s); err == nil {
 			t.Fatalf("bad SNI accepted %q", s)
 		}
 	}
@@ -81,7 +84,7 @@ func TestRejectUnknownInstanceListenerAndNonYAML(t *testing.T) {
 }
 
 func TestExplicitSharedUDPPortPreserved(t *testing.T) {
-	cfg := ServerConfig{Listen: "127.0.0.1:54433", Instances: []ServerInstance{sampleInstance("a", "a.example.test", "mq0")}}
+	cfg := Config{Listen: "127.0.0.1:54433", Instances: []Instance{sampleInstance("a", "a.example.test", "mq0")}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -91,8 +94,8 @@ func TestExplicitSharedUDPPortPreserved(t *testing.T) {
 }
 
 func TestTCPFallbackEnabledDefaultPortAndExplicitPort(t *testing.T) {
-	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("vpn", "vpn.example.test", "mq0")}}
-	cfg.TCPFallback = TCPFallbackConfig{Enabled: true}
+	cfg := Config{Instances: []Instance{sampleInstance("vpn", "vpn.example.test", "mq0")}}
+	cfg.TCPFallback = TCPFallback{Enabled: true}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +109,7 @@ func TestTCPFallbackEnabledDefaultPortAndExplicitPort(t *testing.T) {
 }
 
 func TestTCPFallbackDisabledListenerRejected(t *testing.T) {
-	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("vpn", "vpn.example.test", "mq0")}}
+	cfg := Config{Instances: []Instance{sampleInstance("vpn", "vpn.example.test", "mq0")}}
 	cfg.TCPFallback.Listen = "127.0.0.1:8443"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("disabled TCP listener configuration accepted")
@@ -138,7 +141,7 @@ func TestInstanceAddressAndMTUValidation(t *testing.T) {
 		inst.Address = tc.address
 		inst.MTU = tc.mtu
 		inst.MaxFrame = tc.frame
-		cfg := ServerConfig{Instances: []ServerInstance{inst}}
+		cfg := Config{Instances: []Instance{inst}}
 		err := cfg.Validate()
 		if (err == nil) != tc.valid {
 			t.Fatalf("address %q mtu %d max-frame %d: %v", tc.address, tc.mtu, tc.frame, err)
@@ -159,7 +162,7 @@ func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
 		inst.Address = tc.address
 		inst.MTU = tc.mtu
 		inst.MaxFrame = tc.frame
-		cfg := ServerConfig{Instances: []ServerInstance{inst}}
+		cfg := Config{Instances: []Instance{inst}}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("TUN MTU %d and max_frame %d unexpectedly rejected: %v", tc.mtu, tc.frame, err)
 		}
@@ -169,7 +172,7 @@ func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
 func TestServerTCConfigWithoutLegacyObjectRequirements(t *testing.T) {
 	inst := sampleInstance("tc", "tc.example.test", "mq0")
 	inst.TC = &tcebpf.Config{MSSClamp: "auto", Stats: true}
-	cfg := ServerConfig{Instances: []ServerInstance{inst}}
+	cfg := Config{Instances: []Instance{inst}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -177,17 +180,17 @@ func TestServerTCConfigWithoutLegacyObjectRequirements(t *testing.T) {
 		t.Fatal("no TC mode must mean auto")
 	}
 	inst.TC = &tcebpf.Config{Mode: "off"}
-	cfg = ServerConfig{Instances: []ServerInstance{inst}}
+	cfg = Config{Instances: []Instance{inst}}
 	if err := cfg.Validate(); err != nil || cfg.Instances[0].TC.Mode != "off" {
 		t.Fatalf("off TC mode not respected: %v", err)
 	}
 	inst.TC = &tcebpf.Config{Object: "bpf/tun_tc.o", MSSClamp: "auto", Stats: true}
-	cfg = ServerConfig{Instances: []ServerInstance{inst}}
+	cfg = Config{Instances: []Instance{inst}}
 	if err := cfg.Validate(); err != nil || cfg.Instances[0].TC.Mode != "auto" {
 		t.Fatalf("object override unexpectedly required fail-closed TC: %v", err)
 	}
 	inst.TC = &tcebpf.Config{Mode: "required", MSSClamp: "auto", Stats: true}
-	cfg = ServerConfig{Instances: []ServerInstance{inst}}
+	cfg = Config{Instances: []Instance{inst}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("explicit required mode: %v", err)
 	}
@@ -197,7 +200,7 @@ func TestServerTCConfigWithoutLegacyObjectRequirements(t *testing.T) {
 }
 
 func TestInstancePushRoutesValidatedAndCanonical(t *testing.T) {
-	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("a", "a.example.test", "mq0")}}
+	cfg := Config{Instances: []Instance{sampleInstance("a", "a.example.test", "mq0")}}
 	cfg.Instances[0].PushRoutes = []string{"192.168.99.6/24", "0.0.0.0/0", "2001:db8:2::1/64"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -212,7 +215,7 @@ func TestInstancePushRoutesValidatedAndCanonical(t *testing.T) {
 		{"224.0.0.0/4"},
 		{"127.0.0.0/8"},
 	} {
-		c := ServerConfig{Instances: []ServerInstance{sampleInstance("a", "a.example.test", "mq0")}}
+		c := Config{Instances: []Instance{sampleInstance("a", "a.example.test", "mq0")}}
 		c.Instances[0].PushRoutes = bad
 		if err := c.Validate(); err == nil {
 			t.Fatalf("unsafe push_routes accepted: %v", bad)
@@ -222,23 +225,23 @@ func TestInstancePushRoutesValidatedAndCanonical(t *testing.T) {
 
 func TestServerMasquePathDefaultAndCustom(t *testing.T) {
 	inst := sampleInstance("a", "a.example.test", "mq0")
-	cfg := ServerConfig{Instances: []ServerInstance{inst}}
+	cfg := Config{Instances: []Instance{inst}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Instances[0].Path != defaultPath {
+	if cfg.Instances[0].Path != vpnwire.DefaultPath {
 		t.Fatalf("server default path changed: %q", cfg.Instances[0].Path)
 	}
 	for _, good := range []string{"/corp/connect/", "/vpn", "/tenant-a/masque/ethernet/"} {
 		inst.Path = good
-		cfg = ServerConfig{Instances: []ServerInstance{inst}}
+		cfg = Config{Instances: []Instance{inst}}
 		if err := cfg.Validate(); err != nil || cfg.Instances[0].Path != good {
 			t.Fatalf("custom path %q rejected: %v", good, err)
 		}
 	}
 	for _, bad := range []string{"vpn", "//tenant", "/tenant//path", "/tenant/../path", "/tenant?query=1", "/tenant#fragment", "/tenant%2fpath"} {
 		inst.Path = bad
-		cfg = ServerConfig{Instances: []ServerInstance{inst}}
+		cfg = Config{Instances: []Instance{inst}}
 		if err := cfg.Validate(); err == nil {
 			t.Fatalf("unsafe path %q accepted", bad)
 		}
@@ -247,7 +250,7 @@ func TestServerMasquePathDefaultAndCustom(t *testing.T) {
 
 func TestSingleInstanceIPCertificateIdentity(t *testing.T) {
 	for _, identity := range []string{"198.51.100.7", "2001:db8::7"} {
-		cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("only", identity, "mq0")}}
+		cfg := Config{Instances: []Instance{sampleInstance("only", identity, "mq0")}}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("single IP identity %s: %v", identity, err)
 		}
@@ -257,7 +260,7 @@ func TestSingleInstanceIPCertificateIdentity(t *testing.T) {
 		}
 	}
 	for _, ip := range []string{"0.0.0.0", "::", "224.0.0.1", "ff02::1", "127.0.0.1", "fe80::1%eth0"} {
-		cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("only", ip, "mq0")}}
+		cfg := Config{Instances: []Instance{sampleInstance("only", ip, "mq0")}}
 		if err := cfg.Validate(); err == nil {
 			t.Fatalf("unusable IP identity %s accepted", ip)
 		}
@@ -265,7 +268,7 @@ func TestSingleInstanceIPCertificateIdentity(t *testing.T) {
 }
 
 func TestInstancePushDNSValidation(t *testing.T) {
-	cfg := ServerConfig{Instances: []ServerInstance{sampleInstance("dns", "dns.example.test", "mq0")}}
+	cfg := Config{Instances: []Instance{sampleInstance("dns", "dns.example.test", "mq0")}}
 	cfg.Instances[0].PushDNS = []string{"10.77.0.1", "fd77::53"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -277,7 +280,7 @@ func TestInstancePushDNSValidation(t *testing.T) {
 		{"dns.example.test"}, {"1.1.1.1:53"}, {"0.0.0.0"}, {"ff02::1"},
 		{"10.77.0.1", "10.77.0.1"}, {"10.77.0.1\r\nX-Injected: yes"},
 	} {
-		test := ServerConfig{Instances: []ServerInstance{sampleInstance("dns", "dns.example.test", "mq0")}}
+		test := Config{Instances: []Instance{sampleInstance("dns", "dns.example.test", "mq0")}}
 		test.Instances[0].PushDNS = bad
 		if err := test.Validate(); err == nil {
 			t.Fatalf("invalid push_dns accepted: %v", bad)
@@ -287,12 +290,12 @@ func TestInstancePushDNSValidation(t *testing.T) {
 
 func TestGo127QualifiedSNIRequiresValidTerminalLabel(t *testing.T) {
 	for _, domain := range []string{"edge.example.com", "tenant.co.uk"} {
-		if err := validateSNI(domain); err != nil {
+		if err := vpnwire.ValidateSNI(domain); err != nil {
 			t.Fatalf("valid multi-label DNS SNI %q rejected: %v", domain, err)
 		}
 	}
 	for _, domain := range []string{"edge", "edge.", ".edge", "edge..com", "192.0.2.1"} {
-		if err := validateSNI(domain); err == nil {
+		if err := vpnwire.ValidateSNI(domain); err == nil {
 			t.Fatalf("invalid DNS SNI %q accepted", domain)
 		}
 	}
