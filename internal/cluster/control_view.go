@@ -73,7 +73,7 @@ func (v *LocalControlView) Refresh(ctx context.Context, store Store, clusterID s
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.valid {
+	if v.committed.Revision != 0 {
 		old := v.committed
 		oldMembers, _ := memberSet(old.Members)
 		if at.Before(v.refreshedAt) || committed.ClusterID != old.ClusterID ||
