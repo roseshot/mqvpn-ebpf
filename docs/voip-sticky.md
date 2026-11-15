@@ -2,7 +2,7 @@
 
 Enable strict realtime WAN affinity with `sticky_voip: true` on the
 **Client**, or `--sticky-voip`. The authenticated Server supports this
-opt-in automatically; older Clients and all non-opted-in sessions retain
+opt-in automatically; non-opted-in sessions retain
 their original single-session behavior.
 
 ```yaml
