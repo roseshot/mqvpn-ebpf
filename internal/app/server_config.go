@@ -1,3 +1,5 @@
+//go:build linux
+
 package app
 
 import (
@@ -26,13 +28,6 @@ const defaultServerListen = "0.0.0.0:443"
 type serverWAN struct {
 	Interface string `yaml:"interface"`
 	IP        string `yaml:"ip"`
-}
-
-// ClientRevocationConfig controls optional RFC 5280 leaf certificate CRL checks.
-// "off" does not disable mTLS or peer-identity authorization.
-type ClientRevocationConfig struct {
-	Mode    string `yaml:"mode,omitempty"` // off (default), crl
-	CRLFile string `yaml:"crl_file,omitempty"`
 }
 
 // ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
@@ -253,29 +248,6 @@ func (c *ServerConfig) Validate() error {
 			return fmt.Errorf("duplicate instance name, TUN or TLS server_name in %s", inst.Name)
 		}
 		names[inst.Name], tuns[inst.TUN], sni[inst.ServerName] = true, true, true
-	}
-	return nil
-}
-
-// SNI must be an unambiguous DNS hostname, not an IP literal or wildcard.
-// An IP-literal HTTPS URL cannot reliably transmit SNI for demultiplexing.
-func validateSNI(s string) error {
-	// Go 1.27 CutLast checks for a non-empty terminal DNS label without
-	// allocating a temporary slice or assuming that any dot is valid.
-	_, topLevel, qualified := strings.CutLast(s, ".")
-	if len(s) == 0 || len(s) > 253 || net.ParseIP(s) != nil || !qualified || topLevel == "" {
-		return fmt.Errorf("invalid server_name %q: use a DNS hostname, not an IP", s)
-	}
-	for _, label := range strings.Split(s, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return fmt.Errorf("invalid DNS server_name %q", s)
-		}
-		for _, b := range []byte(label) {
-			if (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-' {
-				continue
-			}
-			return fmt.Errorf("invalid DNS server_name %q", s)
-		}
 	}
 	return nil
 }

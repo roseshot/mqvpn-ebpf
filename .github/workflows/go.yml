@@ -33,6 +33,8 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [ -n "$files" ]; then
             printf 'Go files requiring gofmt:\n%s\n' "$files"
+            # Print an actionable patch for remote cross-platform contributors.
+            gofmt -d $files
             exit 1
           fi
       - name: Verify reproducible Go modules
@@ -68,6 +70,42 @@ jobs:
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -mod=readonly github.com/qoke/mp-quic-go github.com/qoke/mp-quic-go/http3
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go test -mod=readonly -c -o "$RUNNER_TEMP/mqvpn-client-pump-$1-$2.test" ./internal/p2mp
           done
+
+  windows-client:
+    name: Windows Client binary and Wintun packet component
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      # The Server is intentionally Linux-only; cross-compile only Client.
+      - name: Build Windows Client and native Wintun packet component
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -mod=readonly -o "$env:RUNNER_TEMP/mqvpn-client.exe" ./cmd/mqvpn-client
+          go build -mod=readonly ./internal/wintun
+      - name: Validate Windows Wintun adapter safety without a driver
+        shell: pwsh
+        run: go test -mod=readonly -v ./internal/wintun
+      - name: Refuse an incomplete Windows VPN session before dialing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = & "$env:RUNNER_TEMP/mqvpn-client.exe" --server vpn.example.invalid --transport quic 2>&1 | Out-String
+          if ($LASTEXITCODE -eq 0 -or $output -notmatch 'native VPN network session is not implemented') {
+            Write-Error "Windows Client did not fail closed: $output"
+            exit 1
+          }
+          Write-Output "Windows native VPN admission correctly disabled pending route/DNS/underlay integration"
+          # PowerShell action wrapper exits with $LASTEXITCODE unless reset.
+          # A rejected native VPN startup is the EXPECTED successful test.
+          exit 0
 
   native:
     name: Native Go (CGO=0)

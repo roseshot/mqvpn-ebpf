@@ -1,3 +1,5 @@
+//go:build linux
+
 package app
 
 import (
@@ -269,11 +271,6 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	peerLogger.InfoContext(r.Context(), "peer disconnected")
 }
-
-const (
-	stickySessionHeader = "X-Mqvpn-Sticky-Voip"
-	trafficRoleHeader   = "X-Mqvpn-Traffic-Role"
-)
 
 func newSharedHTTP3Server(mux *serverMux, wans ...serverWAN) *http3.Server {
 	return newSharedHTTP3ServerWithScheduler(mux, pathSchedulerRoundRobin, wans...)

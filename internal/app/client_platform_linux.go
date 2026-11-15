@@ -25,6 +25,8 @@ func defaultClientPlatform() clientPlatform {
 	return linuxClientPlatform{}
 }
 
+func clientPlatformPreflight() error { return nil }
+
 func (linuxClientPlatform) ListenUDP(ctx context.Context, sourceIP, interfaceName string, remote *net.UDPAddr) (*net.UDPConn, net.IP, error) {
 	return wan.Listen(ctx, sourceIP, interfaceName, remote)
 }

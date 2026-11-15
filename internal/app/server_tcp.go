@@ -1,3 +1,5 @@
+//go:build linux
+
 package app
 
 import (
@@ -35,15 +37,6 @@ func (m *serverMux) authorizeTCPRequest(r *http.Request) (*liveInstance, *p2mp.R
 		return nil, nil, http.StatusForbidden, err
 	}
 	return inst, rule, 0, nil
-}
-
-func hasHeaderToken(value, token string) bool {
-	for _, part := range strings.Split(value, ",") {
-		if strings.EqualFold(strings.TrimSpace(part), token) {
-			return true
-		}
-	}
-	return false
 }
 
 // delayedCapsule prevents the active hub egress goroutine from writing a
