@@ -112,7 +112,7 @@ func (m *serverManager) refreshLocalReadiness() {
 		return
 	}
 	probes := []cluster.LocalProbe{{
-		Name: "udp-listener",
+		Name:  "udp-listener",
 		Check: func(context.Context) error {
 			if m.packetConn == nil || m.server == nil {
 				return errors.New("shared QUIC/UDP listener is not initialized")
@@ -122,7 +122,7 @@ func (m *serverManager) refreshLocalReadiness() {
 	}}
 	if m.tcpEnabled {
 		probes = append(probes, cluster.LocalProbe{
-			Name: "tcp-listener",
+			Name:  "tcp-listener",
 			Check: func(context.Context) error {
 				if m.tcpListener == nil {
 					return errors.New("configured TCP fallback listener is not initialized")
@@ -141,7 +141,7 @@ func (m *serverManager) refreshLocalReadiness() {
 		probeName := "tun-" + strconv.Itoa(i)
 		i++
 		probes = append(probes, cluster.LocalProbe{
-			Name: probeName,
+			Name:  probeName,
 			Check: func(context.Context) error {
 				if live == nil || live.hub == nil || live.done == nil {
 					return errors.New("VPN instance is not initialized")
