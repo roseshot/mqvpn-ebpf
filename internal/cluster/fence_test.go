@@ -259,7 +259,7 @@ func TestRejectStaleMembershipAndMalformedRecords(t *testing.T) {
 		sampleRecord("server-0", 1, 2, now.Add(time.Second)),
 	}
 	cases[5].TunnelIP = netip.MustParseAddr("224.0.0.1")
-	cases[6].Peer.Tenant = "tenant with spaces"
+	cases[6].Peer.Tenant = " tenant-with-leading-space"
 	for i, record := range cases {
 		if err := f.Apply(record, now); err == nil {
 			t.Fatalf("invalid owner record %d accepted: %+v", i, record)
