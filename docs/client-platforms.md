@@ -52,16 +52,16 @@ internally: this must also become platform-protectable before Android
 multi-WAN or endpoint announcement can be enabled. Sticky VoIP uses the
 same platform `ListenUDP` and is subject to the same safety rule.
 
-Do not assume `github.com/qoke/mp-quic-go` is mobile-ready just because
-the pure packet core cross-compiles. The full transport and OS network
-integration must pass compile checks and device tests separately.
+Even when `github.com/qoke/mp-quic-go` cross-compiles, this is **not** proof
+its socket binding, MPQUIC multipath, or mobile network switching works.
+Those behaviors require device-level transport tests before enablement.
 
 ## Validation and future acceptance
 
 The `client-core-cross` GitHub Actions job builds pure protocol and
-packet-processing packages for `windows/amd64`, `darwin/arm64`, and
-`android/arm64`, and **compiles but does not run** the portable
-`internal/p2mp` tests. The existing Linux tests, race detector,
+packet-processing packages and the actual `mp-quic-go` and `http3` Go
+libraries for `windows/amd64`, `darwin/arm64`, and `android/arm64`, and
+**compiles but does not run** the portable `internal/p2mp` tests. The existing Linux tests, race detector,
 eBPF/TUN and QUIC/multi-WAN network integration remain the regression gate.
 
 Before promoting each platform to supported, add a native test environment
