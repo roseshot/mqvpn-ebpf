@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"crypto/tls"
@@ -13,14 +15,14 @@ func TestConcurrentSNISelectionAndHotPublish(t *testing.T) {
 	b.Name = "edge-b"
 	b.ServerName = "edge-b.example.test"
 	b.TUN = "mq1"
-	cfg.Instances = []ServerInstance{a, b}
+	cfg.Instances = []Instance{a, b}
 	prepared, err := prepareServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	liveA := &liveInstance{prepared: prepared.instances[a.Name]}
 	liveB := &liveInstance{prepared: prepared.instances[b.Name]}
-	mux := newServerMux()
+	mux := newMux()
 	onlyA := map[string]*liveInstance{a.Name: liveA}
 	both := map[string]*liveInstance{a.Name: liveA, b.Name: liveB}
 	mux.Publish(both)

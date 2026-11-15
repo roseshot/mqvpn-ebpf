@@ -1,6 +1,9 @@
-package app
+//go:build linux
+
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"bufio"
 	"bytes"
 	"context"
@@ -57,7 +60,7 @@ func TestTCPFallbackStrictHTTP1UpgradeAndCapsules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr := newServerManager(context.Background(), slog.Default())
+	mgr := newManager(context.Background(), slog.Default())
 	mgr.tcpListen = "127.0.0.1:0"
 	mgr.mux.Publish(map[string]*liveInstance{
 		"edge-a": {prepared: p, hub: hub, logger: slog.Default()},
@@ -77,7 +80,7 @@ func TestTCPFallbackStrictHTTP1UpgradeAndCapsules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca, err := certPool(cfg.Instances[0].ClientCA)
+	ca, err := vpnwire.CertPool(cfg.Instances[0].ClientCA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +145,7 @@ func TestTCPFallbackStrictHTTP1UpgradeAndCapsules(t *testing.T) {
 }
 
 func TestTCPFallbackHTTPAndAuthRejection(t *testing.T) {
-	mux := newServerMux()
+	mux := newMux()
 	for _, tc := range []struct {
 		host, sni, method, upgrade string
 		want                       int
@@ -198,7 +201,7 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	if err := hub.SetTunnelPool(p.pool); err != nil {
 		t.Fatal(err)
 	}
-	mgr := newServerManager(context.Background(), slog.Default())
+	mgr := newManager(context.Background(), slog.Default())
 	mgr.tcpListen = "127.0.0.1:0"
 	mgr.mux.Publish(map[string]*liveInstance{"edge-a": {prepared: p, hub: hub, logger: slog.Default()}})
 	if err := mgr.startTCPListener(); err != nil {
@@ -211,7 +214,7 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca, err := certPool(cfg.Instances[0].ClientCA)
+	ca, err := vpnwire.CertPool(cfg.Instances[0].ClientCA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +233,7 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "connect-ethernet")
 	req.Header.Set("Capsule-Protocol", "?1")
-	req.Header.Set(tunnelAddressHeader, "auto")
+	req.Header.Set(vpnwire.TunnelAddressHeader, "auto")
 	if err := req.Write(conn); err != nil {
 		t.Fatal(err)
 	}
@@ -238,10 +241,10 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != 101 || response.Header.Get(tunnelAddressHeader) != "10.77.0.0/24" {
-		t.Fatalf("expected assigned address in TCP 101: %s / %q", response.Status, response.Header.Get(tunnelAddressHeader))
+	if response.StatusCode != 101 || response.Header.Get(vpnwire.TunnelAddressHeader) != "10.77.0.0/24" {
+		t.Fatalf("expected assigned address in TCP 101: %s / %q", response.Status, response.Header.Get(vpnwire.TunnelAddressHeader))
 	}
-	assigned, err := resolveClientTunnelAddress("auto", response.Header.Get(tunnelAddressHeader))
+	assigned, err := vpnwire.ResolveClientTunnelAddress("auto", response.Header.Get(vpnwire.TunnelAddressHeader))
 	if err != nil || assigned != "10.77.0.0/24" {
 		t.Fatalf("client rejected server lease: %s %v", assigned, err)
 	}

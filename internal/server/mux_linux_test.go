@@ -1,6 +1,9 @@
-package app
+//go:build linux
+
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"crypto/tls"
 	"net"
 	"net/http"
@@ -16,12 +19,12 @@ func TestSNIMuxTLSSelectionAndRemoval(t *testing.T) {
 	b.Name = "edge-b"
 	b.ServerName = "edge-b.example.test"
 	b.TUN = "mq1"
-	cfg.Instances = []ServerInstance{a, b}
+	cfg.Instances = []Instance{a, b}
 	prepared, err := prepareServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := newServerMux()
+	mux := newMux()
 	liveA := &liveInstance{prepared: prepared.instances["edge-a"]}
 	liveB := &liveInstance{prepared: prepared.instances["edge-b"]}
 	mux.Publish(map[string]*liveInstance{"a": liveA, "b": liveB})
@@ -61,7 +64,7 @@ func TestAuthorityMustMatchSNI(t *testing.T) {
 	if requestAuthorityMatchesSNI("edge-b.example.test:4433", "edge-a.example.test") {
 		t.Fatal("cross-tenant authority accepted")
 	}
-	mux := newServerMux()
+	mux := newMux()
 	req := httptest.NewRequest(http.MethodConnect, "https://edge-a.example.test/.well-known/masque/ethernet/", nil)
 	req.TLS = &tls.ConnectionState{ServerName: "unknown.example.test"}
 	out := httptest.NewRecorder()
@@ -77,7 +80,7 @@ func TestSharedPortChangeRequiresRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr := newServerManager(t.Context(), nil)
+	mgr := newManager(t.Context(), nil)
 	mgr.listen = ":4433"
 	defer mgr.xdp.Close()
 	cfg.Listen = ":4434"
@@ -89,8 +92,8 @@ func TestSharedPortChangeRequiresRestart(t *testing.T) {
 
 func TestSingleInstanceIPCertificateWithoutSNI(t *testing.T) {
 	for _, ip := range []string{"198.51.100.7", "2001:db8::7"} {
-		mux := newServerMux()
-		live := &liveInstance{prepared: preparedInstance{spec: ServerInstance{ServerName: ip}, tlsConfig: &tls.Config{}}}
+		mux := newMux()
+		live := &liveInstance{prepared: preparedInstance{spec: Instance{ServerName: ip}, tlsConfig: &tls.Config{}}}
 		mux.Publish(map[string]*liveInstance{"only": live})
 		selected, err := mux.TLSConfigFor(&tls.ClientHelloInfo{})
 		if err != nil || selected != live.prepared.tlsConfig {
@@ -106,14 +109,14 @@ func TestSingleInstanceIPCertificateWithoutSNI(t *testing.T) {
 		// httptest's CONNECT constructor interprets an absolute URL as
 		// authority-form and sets Host="https:". Use GET to check
 		// tenant selection/Host matching; method validation follows.
-		req := httptest.NewRequest(http.MethodGet, "https://"+net.JoinHostPort(ip, "443")+defaultPath, nil)
+		req := httptest.NewRequest(http.MethodGet, "https://"+net.JoinHostPort(ip, "443")+vpnwire.DefaultPath, nil)
 		req.TLS = &tls.ConnectionState{}
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		if w.Code == http.StatusMisdirectedRequest {
 			t.Fatalf("single IP SAN request denied before mTLS authentication: %s", ip)
 		}
-		mux.Publish(map[string]*liveInstance{"only": live, "other": {prepared: preparedInstance{spec: ServerInstance{ServerName: "two.example.test"}, tlsConfig: &tls.Config{}}}})
+		mux.Publish(map[string]*liveInstance{"only": live, "other": {prepared: preparedInstance{spec: Instance{ServerName: "two.example.test"}, tlsConfig: &tls.Config{}}}})
 		if _, err := mux.TLSConfigFor(&tls.ClientHelloInfo{}); err == nil {
 			t.Fatalf("multi-instance missing-SNI accepted")
 		}

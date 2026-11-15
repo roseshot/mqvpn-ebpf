@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"testing"
@@ -42,7 +44,7 @@ func TestServerExplicitMTUDoesNotNeedWANDiscovery(t *testing.T) {
 }
 
 func TestRemovedServerWANInterfacesYAMLIsRejected(t *testing.T) {
-	var cfg ServerConfig
+	var cfg Config
 	err := configfile.Decode("server.yaml", []byte(`listen: ":8443"
 wan_interfaces: [wan0, wan1]
 instances: []

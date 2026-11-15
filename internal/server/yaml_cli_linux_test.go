@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"os"

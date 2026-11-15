@@ -1,4 +1,6 @@
-package app
+//go:build linux
+
+package server
 
 import (
 	"net/netip"
@@ -22,7 +24,7 @@ func TestMultipleInstancesSamePortAndOverlappingSubnets(t *testing.T) {
 	second.ServerName = "customer-b.example.test"
 	second.TUN = "mq1"
 	second.Address = "10.77.0.1/24"
-	for _, spec := range []*ServerInstance{&first, &second} {
+	for _, spec := range []*Instance{&first, &second} {
 		peerCfg := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
 			ID:     spec.Name + "-peer",
 			Routes: []string{"10.77.0.2/32", "192.168.20.0/24"},
@@ -37,7 +39,7 @@ func TestMultipleInstancesSamePortAndOverlappingSubnets(t *testing.T) {
 		}
 		spec.Peers = path
 	}
-	cfg.Instances = []ServerInstance{first, second}
+	cfg.Instances = []Instance{first, second}
 	prepared, err := prepareServer(cfg)
 	if err != nil {
 		t.Fatal(err)
