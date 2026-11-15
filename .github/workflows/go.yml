@@ -42,6 +42,31 @@ jobs:
       - name: Check local documentation links and heading anchors
         run: python3 scripts/check-doc-links.py
 
+  client-core-cross:
+    name: Portable Client Core (Windows macOS Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      # This tests reusable protocol/packet processing only. The complete
+      # Client executable remains Linux-only until native TUN, routes,
+      # underlay socket protection and app lifecycle adapters are present.
+      - name: Cross-compile shared Client Core and packet-pump tests
+        run: |
+          set -eu
+          packages="./internal/p2mp ./internal/l3 ./internal/capsule ./internal/qos ./internal/mtu ./internal/routepush ./internal/dnspush ./internal/logging"
+          for target in "windows amd64" "darwin arm64" "android arm64"; do
+            set -- $target
+            echo "Compiling portable Client Core for GOOS=$1 GOARCH=$2"
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -mod=readonly $packages
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go test -mod=readonly -c -o "$RUNNER_TEMP/mqvpn-client-pump-$1-$2.test" ./internal/p2mp
+          done
+
   native:
     name: Native Go (CGO=0)
     runs-on: ubuntu-latest
