@@ -21,7 +21,7 @@ func TestHubShutdownRevokesActiveSessions(t *testing.T) {
 			t.Fatalf("session %s did not terminate", s.ID())
 		}
 	}
-	if _, err := h.AttachWithTunnelIP(context.Background(), a.rule, &fakeStream{out: make(chan []byte, 1)}, false); err == nil {
+	if _, err := h.AttachWithTrafficRole(context.Background(), a.rule, &fakeStream{out: make(chan []byte, 1)}, false, false, false, false, false); err == nil {
 		t.Fatal("a retired VPN instance accepted a new session")
 	}
 	h.Detach(a)
@@ -61,7 +61,7 @@ func TestRevokedPeerCannotInjectLateSuccessfulDatagram(t *testing.T) {
 		payload: payload,
 	}
 	h.Detach(a)
-	reactivated, err := h.AttachWithTunnelIP(context.Background(), a.rule, late, false)
+	reactivated, err := h.AttachWithTrafficRole(context.Background(), a.rule, late, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestOldSessionCannotInjectIntoReauthenticatedPeerSession(t *testing.T) {
 	defer h.Detach(other)
 	h.Detach(old)
 	newStream := &fakeStream{out: make(chan []byte, 8)}
-	current, err := h.AttachWithTunnelIP(context.Background(), old.rule, newStream, false)
+	current, err := h.AttachWithTrafficRole(context.Background(), old.rule, newStream, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestAttachRejectsAlreadyCanceledContext(t *testing.T) {
 	defer h.Detach(b)
 	ctx, stop := context.WithCancel(context.Background())
 	stop()
-	if _, err := h.AttachWithTunnelIP(ctx, a.rule, &fakeStream{out: make(chan []byte, 1)}, false); !errors.Is(err, context.Canceled) {
+	if _, err := h.AttachWithTrafficRole(ctx, a.rule, &fakeStream{out: make(chan []byte, 1)}, false, false, false, false, false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled context accepted for new peer: %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestPeerDetachNeverWaitsOnBlockedTransportSend(t *testing.T) {
 	defer h.Detach(b)
 	h.Detach(a)
 	stream := &blockedSendDatagramStream{entered: make(chan struct{}), release: make(chan struct{})}
-	current, err := h.AttachWithTunnelIP(context.Background(), a.rule, stream, false)
+	current, err := h.AttachWithTrafficRole(context.Background(), a.rule, stream, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
