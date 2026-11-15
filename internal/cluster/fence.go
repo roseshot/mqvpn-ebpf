@@ -159,7 +159,7 @@ func (f *Fence) Apply(next Record, now time.Time) error {
 			return errors.New("ownership record names a nonmember Server")
 		}
 		ip := next.TunnelIP.Unmap()
-		if !ip.IsValid() || ip.IsUnspecified() || ip.IsMulticast() || ip.Zone() != "" {
+		if !ip.IsValid() || !ip.IsGlobalUnicast() || ip.Zone() != "" {
 			return errors.New("ownership record requires a valid unicast tunnel IP")
 		}
 		next.TunnelIP = ip
@@ -227,7 +227,8 @@ func (f *Fence) allowedLocked(peer Peer, epoch uint64, tunnelIP netip.Addr, now 
 		return false
 	}
 	record, found := f.records[peer]
-	return found && record.OwnerNode == f.localNode && record.Epoch == epoch &&
+	return found && record.MembershipRevision == f.membershipRevision &&
+		record.OwnerNode == f.localNode && record.Epoch == epoch &&
 		record.TunnelIP == tunnelIP.Unmap() && now.Before(record.ValidUntil)
 }
 

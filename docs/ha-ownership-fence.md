@@ -37,6 +37,12 @@ The in-memory mutex prevents races inside **one process**. It does **not**
 create a distributed linearizable register, prove quorum, fence a disconnected
 old Server, or safely arbitrate simultaneous claims across machines.
 
+A separate [keyed lease state machine](ha-keyed-lease-state.md) now models
+atomic per-peer epoch CAS, tenant/IP uniqueness, revoke-before-transfer and
+expiry-plus-grace handoff. It is an **in-process deterministic command
+applier**, not a distributed quorum, and remains disconnected from the
+running Server.
+
 ## Control-plane integration required before production HA
 
 The future consensus-backed adapter must authenticate the node to etcd/Consul

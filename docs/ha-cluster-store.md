@@ -92,6 +92,11 @@ partitions, no epoch rollback after restart, no duplicate IP allocation,
 fenced owner cutover, and inter-Server forwarding across real QUIC/TUN
 paths. Do not equate load-balancer failover with live QUIC session transfer.
 
+A deterministic, **non-distributed** keyed lease-command implementation
+(`LeaseStateMachine`) now enforces owner epochs, explicit tombstones, per-tenant
+IP uniqueness and a safety grace interval; see [keyed lease semantics](ha-keyed-lease-state.md).
+It is not a durable backend and is not connected to Server admission.
+
 See [HA state sync](ha-cluster-state-sync.md),
 [local ownership fence](ha-ownership-fence.md), and
 [tracking issue #43](https://github.com/roseshot/mqvpn-ebpf/issues/43).
