@@ -50,8 +50,8 @@ func (f *fakeAddressAPI) Delete(row *windows.MibUnicastIpAddressRow) error {
 
 func TestWindowsAddressRowPreservesIPv4IPv6HostBits(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		cidr string
+		name   string
+		cidr   string
 		family uint16
 	}{
 		{"IPv4", "10.77.5.26/24", windows.AF_INET},
