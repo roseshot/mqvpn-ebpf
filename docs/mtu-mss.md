@@ -36,7 +36,11 @@ interface; otherwise the main-table default route is consulted.
 For servers with two or more WAN uplinks, explicitly provide:
 
 ~~~yaml
-wan_interfaces: [enp1s0, enp2s0]
+wans:
+  - interface: enp1s0
+    ip: 192.0.2.1
+  - interface: enp2s0
+    ip: 198.51.100.1
 instances:
   - name: a
     server_name: a.example.com
@@ -118,7 +122,7 @@ This is **not** QUIC retransmission or measured PMTU discovery. Loss of
 any fragment loses the original inner packet, so sustained packet loss or
 paths that cannot carry even the 1024-byte DATAGRAM payload can still
 disrupt traffic. The initial version caps each frame at 16 fragments.
-Legacy peers with no `frag-v1` negotiation retain the original framing
+Sessions without `frag-v1` negotiation use unfragmented base framing
 and must continue to obey actual DATAGRAM limits. Auto TUN MTU still
 uses the local-WAN conservative heuristic and defaults to at most 1400;
 selecting TUN MTU 1500 remains an **explicit** configuration choice.
