@@ -108,11 +108,10 @@ fi
 
 bash "$root/scripts/gen-dev-certs.sh" "$work/certs" vpn.ci.example >"$work/certs.log" 2>&1
 cert="$work/certs"
-fingerprint="$(openssl x509 -in "$cert/client.crt" -outform DER | sha256sum | awk '{print $1}')"
 cat >"$work/peers.yaml" <<EOF
 peers:
   - id: ci-client
-    certificate_sha256: "$fingerprint"
+    certificate_cn: mqvpn-client
     routes:
       - 10.77.0.2/32
       - 198.18.202.1/32

@@ -123,9 +123,10 @@ done
 
 cert="$work/certs"
 bash "$root/scripts/gen-dev-certs.sh" "$cert" vpn.ci.example >"$work/certs.log" 2>&1
-mv "$cert/client.crt" "$cert/site1.crt"
-mv "$cert/client.key" "$cert/site1.key"
-for i in 2 3 4; do
+# Generate four distinct Client certificates with CNs matching the
+# explicitly authorized Peer identities. The generic demo client cert has
+# CN=mqvpn-client and must never masquerade as Site 1.
+for i in 1 2 3 4; do
   openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
     -keyout "$cert/site$i.key" -out "$cert/site$i.csr" \
     -subj "/CN=mqvpn-site$i" >>"$work/certs.log" 2>&1
@@ -137,9 +138,8 @@ done
 {
   echo "peers:"
   for i in 1 2 3 4; do
-    fingerprint="$(openssl x509 -in "$cert/site$i.crt" -outform DER | sha256sum | awk '{print $1}')"
-    printf '  - id: site%d\n    certificate_sha256: "%s"\n    routes:\n      - %s/32\n      - %s/32\n' \
-      "$i" "$fingerprint" "${tunnel[i]}" "${loopback[i]}"
+    printf '  - id: site%d\n    certificate_cn: mqvpn-site%d\n    routes:\n      - %s/32\n      - %s/32\n' \
+      "$i" "$i" "${tunnel[i]}" "${loopback[i]}"
   done
 } >"$work/peers.yaml"
 

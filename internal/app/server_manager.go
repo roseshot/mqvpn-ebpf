@@ -36,6 +36,7 @@ type preparedInstance struct {
 	peers      *p2mp.Config
 	pool       *p2mp.TunnelPool
 	tlsConfig  *tls.Config
+	revocation *clientCRLPolicy
 	peerHash   [32]byte
 	staticHash [32]byte
 }
@@ -152,6 +153,10 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		if err != nil {
 			return preparedServer{}, fmt.Errorf("instance %s: %w", spec.Name, err)
 		}
+		policy, err := loadClientCRL(spec.ClientRevocation)
+		if err != nil {
+			return preparedServer{}, fmt.Errorf("instance %s: %w", spec.Name, err)
+		}
 		leaf, err := x509.ParseCertificate(cert.Certificate[0])
 		if err != nil {
 			return preparedServer{}, fmt.Errorf("instance %s parse TLS leaf: %w", spec.Name, err)
@@ -166,6 +171,12 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 			Certificates: []tls.Certificate{cert},
 			ClientCAs:    ca,
 			ClientAuth:   tls.RequireAndVerifyClientCert,
+			VerifyConnection: func(state tls.ConnectionState) error {
+				if len(state.VerifiedChains) == 0 {
+					return errors.New("missing verified Client certificate chain")
+				}
+				return policy.verify(state.VerifiedChains, time.Now())
+			},
 		}
 		hash := sha256.New()
 		specBytes, err := yaml.Marshal(spec)
@@ -186,7 +197,11 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 				hashRecord(hash, object)
 			}
 		}
-		for _, path := range []string{spec.Cert, spec.Key, spec.ClientCA} {
+		certificateFiles := []string{spec.Cert, spec.Key, spec.ClientCA}
+		if spec.ClientRevocation != nil && spec.ClientRevocation.Mode == "crl" {
+			certificateFiles = append(certificateFiles, spec.ClientRevocation.CRLFile)
+		}
+		for _, path := range certificateFiles {
 			b, err := os.ReadFile(path)
 			if err != nil {
 				return preparedServer{}, fmt.Errorf("instance %s TLS file %q: %w", spec.Name, path, err)
@@ -196,7 +211,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 		var static [32]byte
 		copy(static[:], hash.Sum(nil))
 		next.instances[spec.Name] = preparedInstance{
-			spec: spec, peers: peers, pool: pool, tlsConfig: perInstanceTLS,
+			spec: spec, peers: peers, pool: pool, tlsConfig: perInstanceTLS, revocation: policy,
 			peerHash: sha256.Sum256(raw), staticHash: static,
 		}
 	}

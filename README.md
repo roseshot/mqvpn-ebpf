@@ -26,7 +26,7 @@ The tunnel carries **IPv4 and IPv6 packets** in MASQUE CONNECT-ETHERNET DATAGRAM
 
 | Feature | What to expect |
 | --- | --- |
-| Encrypted transport | HTTP/3 over QUIC, TLS 1.3, mTLS certificate and peer-fingerprint authorization |
+| Encrypted transport | HTTP/3 over QUIC, TLS 1.3, mTLS certificate-chain validation, per-instance CN peer identity and optional CRL checks |
 | Multi-WAN | Ordered, validated MPQUIC paths; `round_robin` or connection-wide `low_latency` scheduling |
 | Server HA ingress | Optional local Server readiness probe; Keepalived UDP VIP failover or HAProxy TLS/TCP backend balancing, with no Client HA settings |
 | QoS | Separate realtime, assured and best-effort queues (4:2:1 weighted service) |
@@ -54,7 +54,7 @@ sudo bash tests/integration/overlay-netns.sh udp
 
 This test needs root or the appropriate Linux network capabilities. It creates test-only interfaces, certificates and namespaces and cleans them up. It is **not** a production deployment.
 
-For a two-host deployment, continue with the [step-by-step setup guide](docs/getting-started.md). It covers certificates, authorized peer fingerprints, Server/Client YAML, validation, connection and a first ping. Use a trusted CA and protected keys in production—not the generated demo certificates.
+For a two-host deployment, continue with the [step-by-step setup guide](docs/getting-started.md). It covers certificates, authorized peer identities, Server/Client YAML, validation, connection and a first ping. Use a trusted CA and protected keys in production—not the generated demo certificates.
 
 ## Find the right guide
 
@@ -92,7 +92,7 @@ See [test coverage](docs/README.md#testing) for real TUN/WAN, encrypted packet c
 
 ## Limits and security
 
-- Each site must have a trusted CA relationship and a Server-authorized certificate fingerprint. A matching certificate **alone** is not enough to join a VPN.
+- Every Client must pass tenant-isolated mTLS validation and match a configured Peer certificate CN/identity. A trusted CA alone does **not** grant VPN access. Optional CRLs enforce certificate revocation.
 - Configure Linux forwarding, firewall rules, source-policy routing, VRFs and FRRouting **externally** when your topology needs them. Peer destination mapping is **not** a Linux kernel route.
 - A Server can host multiple tenants on one UDP port only when each tenant has a distinct, certificate-verified SNI identity. A single instance may alternatively use a certificate-verified IP SAN.
 - The default TUN MTU is selected from available WANs and capped at 1400; it does not guarantee a particular end-to-end path MTU.

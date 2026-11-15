@@ -34,11 +34,10 @@ On the **Server** host, from the repository root:
 ```bash
 bash scripts/gen-dev-certs.sh "$PWD/demo-certs" vpn.example.test
 openssl x509 -in demo-certs/server.crt -noout -text | grep -A2 "Subject Alternative Name"
-openssl x509 -in demo-certs/client.crt -outform DER |
-  sha256sum | cut -d' ' -f1
+openssl x509 -in demo-certs/client.crt -noout -subject
 ```
 
-Record the **64-character SHA-256 fingerprint** from the final command. You will put it in the Server's peer authorization file.
+The Client certificate **CN** from the final command is `mqvpn-client`. This identity will be explicitly mapped to a Server-authorized Peer. You no longer need to compute or copy an SHA-256 fingerprint.
 
 Copy **only** the appropriate test materials to the Client using a secure transfer: `ca.crt`, `client.crt` and `client.key`. Keep `ca.key` and `server.key` on the Server. Use paths readable by the daemon without relaxing private-key permissions.
 
@@ -49,12 +48,12 @@ Create `/etc/mqvpn/peers.yaml` on the **Server**:
 ```yaml
 peers:
   - id: site-1
-    certificate_sha256: "REPLACE_WITH_THE_64_CHARACTER_CLIENT_CERT_SHA256"
+    certificate_cn: mqvpn-client
     routes:
       - 10.77.0.2/32
 ```
 
-This fingerprint is **authorization**, not a trusted-CA substitute: both the CA trust check and peer fingerprint mapping must succeed. The `routes` entry tells the Server's P2MP hub which authenticated session owns `10.77.0.2`. It is **not** a command to install a Linux route.
+The Server first verifies mTLS against the configured Client CA and optional CRL, then maps the verified Client certificate CN to this instance's explicitly authorized Peer. Neither a trusted CA nor an arbitrary CN alone grants routes. The `routes` entry tells the Server's P2MP hub which authenticated session owns `10.77.0.2`. It is **not** a command to install a Linux route.
 
 Create `/etc/mqvpn/server.yaml` (substitute your **absolute** certificate paths):
 

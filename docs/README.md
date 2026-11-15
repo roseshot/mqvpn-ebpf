@@ -21,6 +21,7 @@ The guides follow the [Diátaxis](https://diataxis.fr/) idea of separating *lear
 | Set up an authenticated Client, transport and ordered WAN paths | [Client configuration](client-config.md) |
 | Expose many WAN addresses on one Server QUIC listener | [Server multi-WAN](server-multiwan.md) |
 | Keep the Client unchanged while Server VIP or TCP ingress fails over | [Server high availability](high-availability.md) |
+| Design quorum policy, CRL, leases and Server session-owner state | [HA state-sync contract](ha-cluster-state-sync.md) |
 | Choose a connection-wide low-latency MPQUIC scheduler | [Low-latency path scheduling](multipath-low-latency.md) |
 | Configure assured/realtime/best-effort service | [QoS and bounded queues](qos-queues.md) |
 | Pin SIP/RTP traffic to one WAN with failover | [Sticky voice](voip-sticky.md) |
