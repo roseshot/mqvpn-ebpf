@@ -8,7 +8,7 @@ implemented by this PR.
 
 ## No mandatory etcd dependency
 
-The Go \`internal/cluster.Store\` interface defines the minimum **committed
+The Go `internal/cluster.Store` interface defines the minimum **committed
 control-plane snapshot** contract. Different backends may implement it:
 
 - **Embedded Raft (intended default):** VPN deployments can bootstrap a
@@ -28,25 +28,25 @@ fallback is assumed.
 
 ## Required operations
 
-\`\`\`go
+```go
 type Store interface {
     Read(ctx context.Context, clusterID string) (ControlSnapshot, error)
     CompareAndSwap(ctx context.Context, clusterID string,
         expectedRevision uint64,
         desired ControlSnapshot) (ControlSnapshot, error)
 }
-\`\`\`
+```
 
-A backend MUST give each successful \`Read\` a quorum-backed linearizable
-snapshot, and MUST execute \`CompareAndSwap\` as one durable transaction on a
+A backend MUST give each successful `Read` a quorum-backed linearizable
+snapshot, and MUST execute `CompareAndSwap` as one durable transaction on a
 majority. If it cannot establish the required quorum it returns
-\`ErrUnavailable\`, not a cached stale value. Competing writers using an old
-global revision receive \`ErrConflict\`. The bootstrap transaction expects
+`ErrUnavailable`, not a cached stale value. Competing writers using an old
+global revision receive `ErrConflict`. The bootstrap transaction expects
 global revision 0 and commits revision 1. All updates increment the global
 revision exactly once. The global revision is not the Raft term.
 
-\`ControlSnapshot\` carries:
-- \`cluster_id\` and a global transaction \`revision\`;
+`ControlSnapshot` carries:
+- `cluster_id` and a global transaction `revision`;
 - versioned **Server** membership (N >= 2 and unique stable node IDs);
 - a separately versioned policy/PKI **digest**;
 - a separately pinned signed-CRL-manifest digest.
@@ -59,9 +59,9 @@ secret. Before considering a node applied/ready, the reconciler must verify
 the referenced bundle and actual CRL bytes, validate CA trust and policy,
 then atomically activate them; this is future integration work.
 
-A membership change without a higher \`MembershipRevision\`, or a
-policy/CRL change without a higher \`Policy.Revision\`, is rejected. Neither
-member nor policy revision can go backwards. Exposing a read-only \`Revision\`
+A membership change without a higher `MembershipRevision`, or a
+policy/CRL change without a higher `Policy.Revision`, is rejected. Neither
+member nor policy revision can go backwards. Exposing a read-only `Revision`
 is **not** proof that the local Server has applied that revision or is safe to
 receive a new connection.
 
@@ -70,16 +70,24 @@ receive a new connection.
 The interface covers **low-frequency Phase B policy and membership
 manifests**, not a global CAS of every live Client session. Phase C needs a
 separate **keyed, linearizable lease allocator** with atomic uniqueness over
-\`(tenant, tunnel_IP)\`, per-peer epoch fencing and grace periods. Serializing
+`(tenant, tunnel_IP)`, per-peer epoch fencing and grace periods. Serializing
 all Client session renewals through this single control snapshot would
-introduce unnecessary contention. The existing local \`Fence\` only checks
+introduce unnecessary contention. The existing local `Fence` only checks
 quorum-issued records and cannot replace that distributed lease allocator.
 
-The test fake's \`SetAvailable(false)\` exercises a fail-closed API contract;
+The test fake's `SetAvailable(false)` exercises a fail-closed API contract;
 it does **not** simulate actual Raft voting, network partitions, disk
 persistence, split-brain prevention or reconfiguration.
 
-No \`ha.backend\` Server config flag is introduced by this PR: advertising a
+A generic `CheckApplied` helper performs a **fresh** store read to compare
+a current member's locally applied membership, policy and CRL revisions
+against the committed snapshot. It fails closed on missing/quorum-lost state,
+stale policy/CRL or removed members. The `AppliedState` input is trusted
+only if a future reconciler independently verified and activated those
+bytes; passing arbitrary YAML as "applied" would be unsafe. This helper is
+**not yet connected to the Server's local `/readyz` or Client admission**.
+
+No `ha.backend` Server config flag is introduced by this PR: advertising a
 nonfunctional backend mode would be dangerous. Production HA readiness and
 Client admission must remain unavailable until a real backend is integrated
 and its current committed policy is applied locally.
