@@ -56,7 +56,7 @@ jobs:
       # This tests reusable protocol/packet processing only. The complete
       # Client executable remains Linux-only until native TUN, routes,
       # underlay socket protection and app lifecycle adapters are present.
-      - name: Cross-compile shared Client Core and packet-pump tests
+      - name: Cross-compile shared Client Core, MPQUIC and packet-pump tests
         run: |
           set -eu
           packages="./internal/p2mp ./internal/l3 ./internal/capsule ./internal/qos ./internal/mtu ./internal/routepush ./internal/dnspush ./internal/logging"
@@ -64,6 +64,8 @@ jobs:
             set -- $target
             echo "Compiling portable Client Core for GOOS=$1 GOARCH=$2"
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -mod=readonly $packages
+            # Verify the actual QUIC and HTTP/3 dependency, not just our L3 pump.
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -mod=readonly github.com/qoke/mp-quic-go github.com/qoke/mp-quic-go/http3
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go test -mod=readonly -c -o "$RUNNER_TEMP/mqvpn-client-pump-$1-$2.test" ./internal/p2mp
           done
 
