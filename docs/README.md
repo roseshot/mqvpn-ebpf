@@ -12,6 +12,7 @@ The guides follow the [Diátaxis](https://diataxis.fr/) idea of separating *lear
 | --- | --- |
 | [Get started](getting-started.md) | Build two binaries, create lab credentials, authorize a peer, connect two Linux hosts and send a first ping |
 | [Architecture overview](runtime-architecture.md) | Understand the client/server, TUN, QUIC and Linux resource boundaries |
+| [Cross-platform Client boundary](client-platforms.md) | Review Windows, macOS, Android migration scope and what is actually implemented |
 
 ## Do: configure and operate
 
