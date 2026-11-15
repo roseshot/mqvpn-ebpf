@@ -45,21 +45,8 @@ func (r realtimeSendStream) SendDatagram(data []byte) error {
 	return r.sender.SendRealtimeDatagram(data)
 }
 
-// ClientPump retains the legacy frame format for callers that did not
-// negotiate the optional zstd-v1 capability.
-func ClientPump(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, logger *slog.Logger) error {
-	return ClientPumpWithFeatures(ctx, device, stream, maxFrame, false, false, logger)
-}
-
-// ClientPumpWithCompression forwards all valid IP traffic without imposing
-// port- or DSCP-based ACLs. RTP marked DSCP EF and SIP signalling use a
-// bounded priority queue, and are never compressed.
-func ClientPumpWithCompression(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, compression bool, logger *slog.Logger) error {
-	return ClientPumpWithFeatures(ctx, device, stream, maxFrame, compression, false, logger)
-}
-
-// ClientPumpWithFeatures uses negotiated Zstd and fragmentation without
-// changing legacy call sites or the SIP/RTP priority policy.
+// ClientPumpWithFeatures uses negotiated Zstd and fragmentation while
+// preserving the SIP/RTP priority policy.
 func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stream Stream, maxFrame int, compression, fragmentation bool, logger *slog.Logger) error {
 	if maxFrame < 64 || maxFrame > 65535 {
 		return fmt.Errorf("invalid maxFrame %d", maxFrame)
