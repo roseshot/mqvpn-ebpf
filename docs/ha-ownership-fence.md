@@ -28,6 +28,10 @@ share across independent Servers.
 - A local authorization check requires **exactly** the current owner, epoch,
   intended tunnel IP, live TTL and valid membership. Missing/unknown state
   denies access.
+- `WithAuthorized` holds an in-process read barrier around a caller's final
+  packet write/enqueue. A concurrent local tombstone or membership update must
+  wait until that authorized action completes, and later actions are rejected.
+  Callbacks must never re-enter membership/owner mutation while holding it.
 
 The in-memory mutex prevents races inside **one process**. It does **not**
 create a distributed linearizable register, prove quorum, fence a disconnected
@@ -43,7 +47,7 @@ must **not** call the local guard with caller-invented epochs or untrusted
 network messages.
 
 The Server manager must then gate **new Client admission** and local
-\`/readyz\` on committed current policy/CRL and lease authority. The P2MP
+`/readyz` on committed current policy/CRL and lease authority. The P2MP
 path must check the ownership epoch **at final TUN ingress and egress**, and
 the old owner must be fenced before a new owner is admitted. Rejected/stale
 updates must not accidentally mark a Server ready. Only after those hooks and
