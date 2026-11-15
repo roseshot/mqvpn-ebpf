@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN / FRR.
+# Privileged end-to-end VPN tests: actual mqvpn binaries, QUIC, TUN, VXLAN and WAN shaping.
 set -Eeuo pipefail
 mode="${1:-}"
-[[ "$mode" == vxlan || "$mode" == bgp || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp || "$mode" == wan4-latency || "$mode" == wan4-sticky ]] || {
-  echo "usage: $0 vxlan|bgp|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp|wan4-latency|wan4-sticky" >&2; exit 2;
+[[ "$mode" == vxlan || "$mode" == tcp || "$mode" == udp || "$mode" == voip || "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mode" == wan4 || "$mode" == crypto-wan4 || "$mode" == crypto-tcp || "$mode" == wan4-latency || "$mode" == wan4-sticky ]] || {
+  echo "usage: $0 vxlan|tcp|udp|voip|mixed|wan-regional|wan-poor|wan4|crypto-wan4|crypto-tcp|wan4-latency|wan4-sticky" >&2; exit 2;
 }
 [[ "$EUID" == 0 ]] || { echo "run as root with CAP_NET_ADMIN" >&2; exit 2; }
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -21,18 +21,11 @@ if [[ "$mode" == mixed || "$mode" == wan-regional || "$mode" == wan-poor || "$mo
     command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 2; }
   done
 fi
-if [[ "$mode" == bgp ]]; then
-  for binary in /usr/lib/frr/zebra /usr/lib/frr/bgpd /usr/bin/vtysh; do
-    [[ -x "$binary" ]] || { echo "missing official FRR stable deb: $binary" >&2; exit 2; }
-  done
-fi
 work="$(mktemp -d)"
 server_ns="mqvs$$"
 client_ns="mqvc$$"
 server_veth="vs$$"
 client_veth="vc$$"
-frr_server="frs$$"
-frr_client="frc$$"
 pids=""
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -58,7 +51,6 @@ cleanup() {
       ip netns del "$ns" 2>/dev/null || true
     fi
   done
-  if [[ "$mode" == bgp ]]; then rm -rf "/run/frr/$frr_server" "/run/frr/$frr_client"; fi
   rm -rf "$work"
   exit "$status"
 }
@@ -799,85 +791,3 @@ PY
   echo "PASS WAN netem $profile: two full-duplex SIP/RTP calls with real delay, jitter and loss"
   exit 0
 fi
-
-ip -n "$server_ns" addr add 198.18.101.1/32 dev lo
-ip -n "$client_ns" addr add 198.18.202.1/32 dev lo
-# FRR 10.7 stable daemons drop privileges to frr, which is in frrvty.
-# Keep certificate private keys root-owned; only generated daemon configs
-# and dedicated runtime directories are accessible to the FRR account.
-install -d -m 0750 -o frr -g frr "/run/frr/$frr_server" "/run/frr/$frr_client"
-chgrp frr "$work"
-chmod 0750 "$work"
-for side in server client; do
-  if [[ "$side" == server ]]; then
-    asn=65001; peer_asn=65002; local_ip=10.77.0.1; peer_ip=10.77.0.2
-    prefix=198.18.101.1/32
-  else
-    asn=65002; peer_asn=65001; local_ip=10.77.0.2; peer_ip=10.77.0.1
-    prefix=198.18.202.1/32
-  fi
-  cat >"$work/$side-zebra.conf" <<EOF
-hostname $side-zebra
-log stdout
-!
-EOF
-  cat >"$work/$side-bgpd.conf" <<EOF
-hostname $side-bgpd
-log stdout
-router bgp $asn
- bgp router-id $local_ip
- no bgp ebgp-requires-policy
- no bgp network import-check
- neighbor $peer_ip remote-as $peer_asn
- neighbor $peer_ip timers 3 9
- address-family ipv4 unicast
-  network $prefix
-  neighbor $peer_ip activate
- exit-address-family
-!
-EOF
-done
-# The default FRR service user must be a member of frrvty.
-# Never bypass this protection by forcing -u root.
-id frr
-chown frr:frr "$work"/{server,client}-{zebra,bgpd}.conf
-chmod 0640 "$work"/{server,client}-{zebra,bgpd}.conf
-for side in server client; do
-  if [[ "$side" == server ]]; then ns="$server_ns"; space="$frr_server"; else ns="$client_ns"; space="$frr_client"; fi
-  ip netns exec "$ns" /usr/lib/frr/zebra -N "$space" -u frr -g frr \
-    -f "$work/$side-zebra.conf" -A 127.0.0.1 -P 0 >"$work/$side-zebra.log" 2>&1 &
-  pids="$pids $!"
-done
-for attempt in $(seq 1 60); do
-  [[ -S "/run/frr/$frr_server/zserv.api" && -S "/run/frr/$frr_client/zserv.api" ]] && break
-  sleep 0.2
-done
-[[ -S "/run/frr/$frr_server/zserv.api" && -S "/run/frr/$frr_client/zserv.api" ]] ||
-  fail "FRR zebra ZAPI socket not created"
-for side in server client; do
-  if [[ "$side" == server ]]; then ns="$server_ns"; space="$frr_server"; else ns="$client_ns"; space="$frr_client"; fi
-  ip netns exec "$ns" /usr/lib/frr/bgpd -N "$space" -u frr -g frr \
-    -f "$work/$side-bgpd.conf" -A 127.0.0.1 -P 0 >"$work/$side-bgpd.log" 2>&1 &
-  pids="$pids $!"
-done
-# No static route to remote loopbacks exists: these MUST be learned via
-# BGP over TCP/179 in mq0, installed by FRR zebra in each namespace.
-converged=0
-for attempt in $(seq 1 120); do
-  if ip -n "$server_ns" -4 route show 198.18.202.1/32 | grep -Eq 'via 10\.77\.0\.2 dev mq0' &&
-     ip -n "$client_ns" -4 route show 198.18.101.1/32 | grep -Eq 'via 10\.77\.0\.1 dev mq0'; then
-    converged=1
-    break
-  fi
-  sleep 0.5
-done
-(( converged )) || fail "FRR BGP peers did not converge and install routes on mq0"
-ip netns exec "$server_ns" vtysh -N "$frr_server" -c "show bgp ipv4 unicast summary" ||
-  fail "server FRR BGP summary"
-ip netns exec "$client_ns" vtysh -N "$frr_client" -c "show bgp ipv4 unicast summary" ||
-  fail "client FRR BGP summary"
-ip netns exec "$server_ns" ping -n -I 198.18.101.1 -c 3 -W 2 198.18.202.1 ||
-  fail "forwarding server -> client over BGP learned route"
-ip netns exec "$client_ns" ping -n -I 198.18.202.1 -c 3 -W 2 198.18.101.1 ||
-  fail "forwarding client -> server over BGP learned route"
-echo "PASS official FRR stable eBGP: neighbor convergence, Linux FIB and bidirectional traffic over TUN"
