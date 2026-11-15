@@ -52,3 +52,9 @@ func (unavailableClientPlatform) ProtectServer(net.IP, net.IP, string, string, [
 func (unavailableClientPlatform) OpenNetworkSession(context.Context, clientRouteGuard, clientTCPOptions, string, mtu.Result, []netip.Prefix, []netip.Addr, *slog.Logger) (io.ReadWriteCloser, error) {
 	return nil, errNativeClientUnavailable
 }
+
+// classifyClientCleanup is unreachable while unsupported platforms fail in
+// RunClient preflight. A future native adapter must classify unsafe partial
+// route, DNS and packet-device cleanup as errUnsafeReconnect before enabling
+// real connections, matching the Linux implementation.
+func classifyClientCleanup(err error) error { return err }
