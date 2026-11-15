@@ -14,7 +14,7 @@ func TestWANListDoesNotUseTwoPathCeiling(t *testing.T) {
 	for i := range list {
 		list[i] = clientWAN{Interface: "wan" + stringFromInt(i)}
 	}
-	planned, err := planClientWANs(list, nil, "", "", "", "", false)
+	planned, err := planClientWANs(list, nil)
 	if err != nil || len(planned) != 80 || planned[79].Interface != "wan79" {
 		t.Fatalf("WAN list unexpectedly capped: len=%d err=%v", len(planned), err)
 	}
@@ -26,7 +26,7 @@ func stringFromInt(n int) string {
 	return strconv.Itoa(n)
 }
 
-func TestWANListCLIAndLegacyNormalization(t *testing.T) {
+func TestWANListCLIAndDefaultSelection(t *testing.T) {
 	var cli clientWANFlags
 	for _, spec := range []string{
 		"192.0.2.2@wan0",
@@ -38,17 +38,12 @@ func TestWANListCLIAndLegacyNormalization(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err := planClientWANs(nil, cli, "", "", "", "", false)
+	out, err := planClientWANs(nil, cli)
 	if err != nil || len(out) != 4 || out[3].Interface != "wan3" {
 		t.Fatalf("repeatable CLI lost WAN4: %+v, %v", out, err)
 	}
-	old, err := planClientWANs(nil, nil, "192.0.2.2", "wan0",
-		"198.51.100.2", "wan1", false)
-	if err != nil || len(old) != 2 || old[1].Interface != "wan1" {
-		t.Fatalf("legacy config lost: %+v %v", old, err)
-	}
-	single, err := planClientWANs(nil, nil, "", "", "", "", false)
-	if err != nil || len(single) != 1 {
+	single, err := planClientWANs(nil, nil)
+	if err != nil || len(single) != 1 || single[0] != (clientWAN{}) {
 		t.Fatalf("default single WAN lost: %+v %v", single, err)
 	}
 }
@@ -66,20 +61,12 @@ func TestWANListRejectsAmbiguityAndDuplicates(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := planClientWANs(tc.wans, nil, "", "", "", "", false); err == nil {
+			if _, err := planClientWANs(tc.wans, nil); err == nil {
 				t.Fatal("invalid WAN binding accepted")
 			}
 		})
 	}
-	if _, err := planClientWANs([]clientWAN{{Interface: "wan0"}},
-		nil, "", "", "", "", true); err == nil {
-		t.Fatal("YAML and legacy CLI WAN conflict accepted")
-	}
-	if _, err := planClientWANs(nil,
-		[]clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0"}},
-		"", "", "", "", true); err == nil {
-		t.Fatal("repeated CLI --wan mixed with legacy flags")
-	}
+
 }
 
 func TestWANListYAMLConfigFourPathsAndCLIOverride(t *testing.T) {
