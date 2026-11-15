@@ -23,13 +23,13 @@ import (
 )
 
 const (
-	ringCapacity = 0x400000 // 4 MiB, a power of two and within Wintun's limits
-	maxPacket    = 0xffff
+	ringCapacity	= 0x400000 // 4 MiB, a power of two and within Wintun's limits
+	maxPacket	= 0xffff
 
-	errorNoMoreItems = syscall.Errno(259)
-	errorHandleEOF  = syscall.Errno(38)
-	waitObject0      = 0
-	waitTimeout      = 0x102
+	errorNoMoreItems	= syscall.Errno(259)
+	errorHandleEOF	= syscall.Errno(38)
+	waitObject0	= 0
+	waitTimeout	= 0x102
 )
 
 var ErrClosed = errors.New("Wintun packet device is closed")
@@ -39,28 +39,28 @@ var ErrClosed = errors.New("Wintun packet device is closed")
 // One packet is consumed on each Read; a too-small buffer drops that packet
 // and returns io.ErrShortBuffer instead of forwarding a partial IP packet.
 type Device struct {
-	api        *api
-	adapter    uintptr
-	session    uintptr
-	readEvent  syscall.Handle
-	closed     atomic.Bool
-	mu         sync.RWMutex
-	closeOnce  sync.Once
-	closeError error
+	api		*api
+	adapter		uintptr
+	session		uintptr
+	readEvent	syscall.Handle
+	closed		atomic.Bool
+	mu		sync.RWMutex
+	closeOnce	sync.Once
+	closeError	error
 }
 
 type api struct {
-	dll         *syscall.DLL
-	create      *syscall.Proc
-	close       *syscall.Proc
-	start       *syscall.Proc
-	end         *syscall.Proc
-	readEvent   *syscall.Proc
-	receive     *syscall.Proc
-	release     *syscall.Proc
-	allocate    *syscall.Proc
-	send        *syscall.Proc
-	adapterLUID *syscall.Proc
+	dll		*syscall.DLL
+	create		*syscall.Proc
+	close		*syscall.Proc
+	start		*syscall.Proc
+	end		*syscall.Proc
+	readEvent	*syscall.Proc
+	receive		*syscall.Proc
+	release		*syscall.Proc
+	allocate	*syscall.Proc
+	send		*syscall.Proc
+	adapterLUID	*syscall.Proc
 }
 
 // Open creates a Wintun adapter using wintun.dll next to this executable.
@@ -100,8 +100,8 @@ func openLibrary(name, dllPath string) (*Device, error) {
 	}
 	a := &api{dll: lib}
 	for _, item := range []struct {
-		name string
-		dst  **syscall.Proc
+		name	string
+		dst	**syscall.Proc
 	}{
 		{"WintunCreateAdapter", &a.create},
 		{"WintunCloseAdapter", &a.close},
