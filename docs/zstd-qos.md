@@ -3,7 +3,7 @@
 The VPN keeps CONNECT-ETHERNET over authenticated QUIC/HTTP/3 (and the
 HTTP/1.1/TLS Capsule fallback). eBPF programs are unchanged.
 
-## Capability negotiation and compatibility
+## Capability negotiation
 
 On a CPU that passes the local performance policy, the Client sends
 `Mqvpn-Compression: zstd-v1` in the authenticated CONNECT request. The
