@@ -11,7 +11,7 @@ import (
 
 func sampleRecord(node string, epoch, revision uint64, expires time.Time) Record {
 	return Record{
-		Peer: Peer{Tenant: "tenant-1", ID: "client-1"},
+		Peer:      Peer{Tenant: "tenant-1", ID: "client-1"},
 		OwnerNode: node, Epoch: epoch, MembershipRevision: revision,
 		TunnelIP: netip.MustParseAddr("10.77.0.2"), ValidUntil: expires,
 	}
@@ -243,7 +243,7 @@ func TestRejectStaleMembershipAndMalformedRecords(t *testing.T) {
 		}
 	}
 	if err := f.Apply(Record{
-		Peer: Peer{Tenant: "tenant-1", ID: "client-1"},
+		Peer:  Peer{Tenant: "tenant-1", ID: "client-1"},
 		Epoch: 1, MembershipRevision: 2, TunnelIP: netip.MustParseAddr("10.77.0.2"),
 	}, now); err == nil {
 		t.Fatal("tombstone containing an IP accepted")
