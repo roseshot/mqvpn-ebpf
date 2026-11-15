@@ -15,7 +15,6 @@ import (
 	quic "github.com/qoke/mp-quic-go"
 	"github.com/qoke/mp-quic-go/http3"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
-	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
 var errStickyUnavailable = errors.New("sticky realtime WAN unavailable; priority packet not sent on bulk MPQUIC paths")
@@ -219,7 +218,7 @@ func (m *stickyClientStream) runStickyCompanions(o clientSessionOptions, destina
 }
 
 func (m *stickyClientStream) runOneStickySession(index int, link clientWAN, remote *net.UDPAddr, tlsTemplate *tls.Config, o clientSessionOptions, compression, fragmentation bool) error {
-	packetConn, source, err := wan.Listen(m.ctx, link.SourceIP, link.Interface, remote)
+	packetConn, source, err := platformForClient(o.platform).ListenUDP(m.ctx, link.SourceIP, link.Interface, remote)
 	if err != nil {
 		return fmt.Errorf("open pinned realtime WAN: %w", err)
 	}
