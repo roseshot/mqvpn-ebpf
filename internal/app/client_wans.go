@@ -68,27 +68,40 @@ func planClientWANs(list, cli []clientWAN) ([]clientWAN, error) {
 		}
 		if item.SourceIP != "" {
 			ip, err := netip.ParseAddr(item.SourceIP)
-			if err != nil || ip.IsUnspecified() || ip.Zone() != "" {
+			if err != nil || ip.Zone() != "" {
 				return nil, fmt.Errorf("WAN %d invalid source IP %q", i+1, item.SourceIP)
 			}
-			if seenIPs[ip.Unmap()] {
+			// Treat IPv4-mapped IPv6 literals as IPv4 for validation and
+			// duplicate detection, matching the socket layer's net.ParseIP.
+			ip = ip.Unmap()
+			if ip.IsUnspecified() || ip.IsMulticast() {
+				return nil, fmt.Errorf("WAN %d invalid source IP %q", i+1, item.SourceIP)
+			}
+			if seenIPs[ip] {
 				return nil, fmt.Errorf("WAN %d reuses source IP %s", i+1, item.SourceIP)
 			}
-			seenIPs[ip.Unmap()] = true
+			seenIPs[ip] = true
 		}
 		if item.ServerIP != "" {
 			server, err := netip.ParseAddr(item.ServerIP)
-			if err != nil || server.IsUnspecified() || server.IsMulticast() || server.Zone() != "" {
+			if err != nil || server.Zone() != "" {
+				return nil, fmt.Errorf("WAN %d invalid server_ip %q", i+1, item.ServerIP)
+			}
+			server = server.Unmap()
+			if server.IsUnspecified() || server.IsMulticast() {
 				return nil, fmt.Errorf("WAN %d invalid server_ip %q", i+1, item.ServerIP)
 			}
 			if item.SourceIP != "" {
 				source, _ := netip.ParseAddr(item.SourceIP)
-				if source.Is4() != server.Is4() {
+				if source.Unmap().Is4() != server.Is4() {
 					return nil, fmt.Errorf("WAN %d source and server IP families differ", i+1)
 				}
 			}
 		}
 		if item.Interface != "" {
+			if len(item.Interface) >= 16 || strings.TrimSpace(item.Interface) != item.Interface || strings.ContainsRune(item.Interface, '\x00') {
+				return nil, fmt.Errorf("WAN %d invalid interface %q", i+1, item.Interface)
+			}
 			if seenInterfaces[item.Interface] {
 				return nil, fmt.Errorf("WAN %d reuses interface %s", i+1, item.Interface)
 			}
