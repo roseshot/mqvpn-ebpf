@@ -166,7 +166,7 @@ func (lease *AddressLease) Close() error {
 	lease.once.Do(func() {
 		check := lease.row
 		if err := lease.api.Get(&check); err != nil {
-			if errors.Is(err, syscall.ERROR_NOT_FOUND) {
+			if errors.Is(err, windows.ERROR_NOT_FOUND) {
 				return // Adapter was removed; the owned address is already gone.
 			}
 			lease.err = fmt.Errorf("inspect Wintun address before cleanup: %w", err)
@@ -179,7 +179,7 @@ func (lease *AddressLease) Close() error {
 			return
 		}
 		if err := lease.api.Delete(&lease.row); err != nil &&
-			!errors.Is(err, syscall.ERROR_NOT_FOUND) {
+			!errors.Is(err, windows.ERROR_NOT_FOUND) {
 			lease.err = fmt.Errorf("remove session-owned Wintun address: %w", err)
 		}
 	})
