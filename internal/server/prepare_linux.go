@@ -18,9 +18,9 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
-	"github.com/roseshot/mqvpn-ebpf/internal/tun"
 	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 	"github.com/roseshot/mqvpn-ebpf/internal/xdp"
+	"gopkg.in/yaml.v3"
 )
 
 type preparedInstance struct {
