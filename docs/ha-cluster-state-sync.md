@@ -22,38 +22,79 @@ for backend affinity and to [strongSwan HA](https://docs.strongswan.org/docs/lat
 for why encrypted-session synchronization includes cryptographic state,
 sequence numbers and replay windows.
 
-## Recommended Server-only architecture
+## Cluster size and failure-domain model (N Server nodes)
+
+**N is the number of mqvpn Server/data-plane nodes, not the number of Raft
+voters.** The target architecture supports a dynamically configured set of
+**N >= 2 Servers** (for example 2, 3, 5, 8 or more), without a hard-coded
+two-Server topology, paired-primary/standby IDs, or all-to-all session state.
+A single Server remains a valid non-HA deployment. The practical maximum N
+will be governed by measured throughput, control-plane load and deployment
+limits, not an arbitrary "2" in the cluster protocol.
+
+**Q is the number of consensus voters**, which may run on separate machines
+from the mqvpn Servers. Prefer 3 or 5 independent voters in distinct failure
+domains. A majority of `floor(Q / 2) + 1` voters is required to commit
+ownership/policy changes (3 voters -> 2 votes; 5 -> 3). Never use a
+two-voter split-brain fallback. N and Q are independent: a two-Server VPN
+deployment can use an external three-voter store, while five or more VPN
+Servers may share a suitably sized three- or five-voter control plane.
+Adding VPN Servers must not implicitly add consensus voters or change quorum.
+
+Example with **five** data-plane Servers and **three** separate voters:
 
 ```text
-              Client (unchanged DNS/VIP + mTLS)
-                            |
-                   QUIC-aware ingress / VIP
-                        /        \
-              Server A             Server B
-              P2MP + TUN           P2MP + TUN
-                 |                     |
-                 +--- mTLS cluster ---+
-                             |
-           Raft consensus state, 3 or 5 voters
-           * desired policy + PKI manifest generation
-           * lease CAS + ownership epochs
-           * session metadata / current owner
-                   [not QUIC crypto keys]
+      Unchanged Clients: single DNS identity + mTLS
+                          |
+             CID-aware ingress / VIP
+                          |
+           +--------------+--------------+
+           |       |      |       |      |
+         VPN A   VPN B  VPN C   VPN D  VPN E    (... VPN N)
+          TUN     TUN    TUN     TUN    TUN
+           |       |      |       |      |
+           +-------+------+-------+------+
+                          |
+         Authenticated cluster control + forwarding
+                          |
+               etcd / Raft voters Q=3
+             voter 1 -- voter 2 -- voter 3
+               (2 of 3 required for writes)
 ```
 
-A two-node deployment should not use a naive 2-voter quorum with split-brain
-fallback. Use an external 3-voter state service (or a witness with carefully
-defined failure and fencing semantics). If quorum is unavailable, nodes must
-**fail closed for new leases and peer owner elections**, not locally re-elect
-a second active owner. A previously active Server may continue sessions only
-under an explicitly documented, time-bounded lease and network policy; the
-standby must not take its sessions without fencing.
+The diagram is an **implementation target**, not a claim that replicated
+leases, cross-node forwarding, or CID-aware QUIC ingress already exist.
 
-The configuration should be *declarative*: the control plane stores a validated
-bundle and revision, each Server reconciles that revision into its existing
-instance/peer reload code, and its local \`/readyz\` must eventually depend on
-**committed revision, current CRL and ownership readiness**. A file copied
-from one node to another is not a safe quorum protocol.
+Each Server has a **stable, unique node identity** and an authenticated
+membership record. Admission, leases, peer-session owner epochs and policy
+revisions are keyed by `cluster_id`, tenant and peer/address identity,
+not by "primary" or "secondary" slots. Nodes independently watch the same
+committed state and stage validated snapshots before accepting new sessions.
+On scale-out, a new node cannot serve traffic until its policy/CRL revision
+is current and ownership/fencing checks pass; on scale-in, a draining node
+stops admitting sessions, relinquishes fenced ownership, and is removed only
+after old epochs are retired. Rejoining with a reused node ID must never
+resurrect an old session or owner epoch.
+
+Forwarding must resolve the current owner **across all N nodes**, not only
+the opposite member of a pair. An authenticated direct overlay or a
+controlled inter-Server routing fabric may be used, provided it has loop
+protection, tenant isolation, bounded hop count, and epoch checks at TUN
+ingress/egress. Membership and route updates must not require every Server
+to hold every Client's live QUIC secrets or imply an O(N²) transport mesh.
+
+If quorum is unavailable, nodes must **fail closed for new leases and peer
+owner elections**; minority partitions must not allocate duplicate tunnel
+IPs. A previously active Server may continue existing sessions only within
+an explicitly defined, time-bounded ownership lease and ingress-fencing
+policy. Merely copying a peer map or receiving traffic on a VIP never
+authorizes a node to take over an encrypted QUIC session.
+
+The configuration should be declarative: a controller publishes a validated
+bundle and revision, each Server reconciles the revision into its existing
+instance/peer reload code, and local `/readyz` must eventually depend on
+committed revision, current CRL and ownership readiness. A file copied
+between Servers is not a quorum protocol.
 
 ## Identity and Client overrides
 
@@ -86,17 +127,17 @@ must not become active simply because its local UDP socket still listens.
 1. Controller validates a *complete* revision of tenant YAML, Peer identity
    map, signed CRLs, CA material and tunnel-IP policy. It publishes
    \`{cluster_id,revision,digest,not_before}\` by a quorum CAS transaction.
-2. Each node stages and validates that exact revision, then reports its
-   applied digest. Incompatible or partial revisions **cannot** be served.
+2. Each of the N Server nodes stages and validates that exact revision,
+   then reports its applied digest. Incompatible or partial revisions **cannot** be served.
 3. Each authenticated Client admission allocates a session owner epoch using
    a conditional transaction. Active owners periodically renew their lease.
 4. On disconnect or peer revocation, the Server retires the epoch and
    releases ownership only after TUN/route egress fences and lease grace.
-5. On crash, VIP ingress and route control fence the old owner; only then
-   can a standby claim a larger epoch. With no live QUIC crypto state, the
+5. On crash, ingress and route control fence the old owner; only then
+   can an eligible member of the N-node cluster claim a larger epoch. With no live QUIC crypto state, the
    returning Client creates a new QUIC/TLS connection to the same VIP.
-6. For multi-Server active/active, every inner packet addressed to a Peer
-   on a different Server needs an encrypted **inter-Server P2MP forwarding**
+6. For N-node active/active, every inner packet addressed to a Peer
+   on another Server needs an encrypted **inter-Server P2MP forwarding**
    path and session-owner lookup, with loop and anti-replay prevention.
    Generic HAProxy TCP round-robin alone cannot supply this routing layer.
 
@@ -109,15 +150,15 @@ traffic key logs or unfenced lease writes to a replica.
 
 | Test | Required assertion |
 | --- | --- |
-| Config revision published while both nodes healthy | Both report identical revision and apply matching Peer policy before ingress considers them ready |
-| Policy/CA/CRL rotation | Revoked Client disconnects and cannot authenticate to **either** Server, including QUIC/TCP fallback |
+| Config revision published with N healthy Servers (N=2,3,5) | Every admitted node reports the same committed revision and applies matching Peer policy before ingress considers it ready |
+| Policy/CA/CRL rotation | Revoked Client disconnects and cannot authenticate to **any** Server node, including QUIC/TCP fallback |
 | Issuer cert issued with reused CN or unknown Peer CN | No access unless the instance's CA/identity policy explicitly authorizes it |
-| CRL stale/unavailable with \`mode: crl\` | New Client authentication fails on each node |
-| Concurrent dynamic lease requests on two nodes | Exactly one unique address owner; no duplicate lease after crash/recovery |
-| Partition/no cluster quorum | No divergent session owner epoch, duplicate route injection or active-active lease allocation |
-| Active Server crash with VIP | Existing Client configuration remains identical; Client reconnects to Server with higher fenced owner epoch |
-| Active/active cross-Server Client-to-Client | Bidirectional 20/20 Linux FIB/OSPF/BGP forwarding over an encrypted inter-Server route |
-| 1–8 WAN randomized five-site test | Same Client identity and policy across failover, no split connection across QUIC backend nodes |
+| CRL stale/unavailable with \`mode: crl\` | New Client authentication fails on every stale node; a fresh node cannot inherit a stale node's readiness |
+| Concurrent dynamic lease requests on N nodes | Exactly one unique address owner across the entire cluster; no duplicate lease after crash/recovery |
+| Majority/minority partition (Q=3 and Q=5), with N=2,3,5 Servers | No divergent session owner epoch, duplicate route injection or active-active lease allocation, even when all reachable VPN Servers are in the minority partition |
+| Active Server crash, drain and member rejoin among N nodes | Existing Client configuration remains identical; Client reconnects to a live, fenced session owner with a higher epoch; a stale node cannot reclaim ownership |
+| N-node active/active cross-Server Client-to-Client (N=3,5) | Bidirectional 20/20 Linux FIB/OSPF/BGP forwarding via authenticated owner resolution, tenant isolation and loop-free inter-Server transport |
+| 1–8 WAN randomized five-site test across N=2,3,5 Servers | Same Client identity and policy across failover, no split connection across QUIC backend nodes |
 | QUIC crypto-state transfer | **Not supported until** the transport library exposes safe, tested, reproducible session snapshots |
 
 ## Delivery phases

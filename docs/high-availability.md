@@ -7,6 +7,16 @@ durable tunnel leases, and cross-node P2MP data forwarding, follow the
 [HA cluster state synchronization contract](ha-cluster-state-sync.md).
 **Those replication phases are planned, not live features of this release.**
 
+**Cluster size is not fixed at two Servers.** The production design targets
+a configurable **N-node Server pool** (N >= 2) with a separately sized,
+quorum-backed control plane (typically 3 or 5 consensus voters). A two-node
+diagram or HAProxy/Keepalived sample below is an *illustration*, not an
+architectural limit. Adding more VPN Servers must preserve identical tenant
+policy/CRL generations, one fenced owner per peer/IP, and secure cross-node
+forwarding; none of those replication features is implemented yet. The
+number of VPN Servers and the number of Raft voters must not be conflated.
+
+
 This guide distinguishes **availability of a Server service** from **lossless continuity of an existing QUIC session**. Changing the backend of an encrypted session generally requires the existing Client to establish a fresh TLS/QUIC connection after its normal reconnect cycle. The latter is already implemented in the Client; no HA-specific Client code or YAML is added here.
 
 ## Choose the topology
@@ -15,7 +25,7 @@ This guide distinguishes **availability of a Server service** from **lossless co
 | --- | --- | --- | --- |
 | QUIC/UDP **active/standby** | One VIP to one active Server | Keepalived/VRRP, driven by the Server's local `/readyz` | Practical first deployment. Existing QUIC sessions don't migrate to a separate process. |
 | TLS/TCP **active/standby** | One HAProxy TCP frontend | Health checks + HAProxy `backup` | New TCP sessions use standby after a primary outage. |
-| TLS/TCP **active/active** | One HAProxy TCP frontend | Health checks + `roundrobin` per new connection | Concurrent, independent Clients can use both Servers; cross-node P2MP forwarding requires separate routing state/control. |
+| TLS/TCP **active/active** | One HAProxy TCP frontend | Health checks + `roundrobin` per new connection | Independent Client sessions can be distributed across N backend Servers, not just two; cross-node P2MP forwarding still requires shared owner/routing state and is not supplied by HAProxy. |
 | QUIC/UDP **active/active** | One QUIC-aware UDP L4 ingress / anycast | Stable **QUIC Connection ID** based backend ownership | **Architecture only, not yet verified for MPQUIC or implemented inside mqvpn.** A simple five-tuple/UDP proxy is not enough for changing WAN endpoints. |
 
 ## Non-negotiable cluster invariants
@@ -65,7 +75,7 @@ curl --fail --silent http://127.0.0.1:9090/readyz
 
 ## 2. Autonomous active/standby with Keepalived/VRRP
 
-Both Servers run mqvpn in standby-capable configuration, with one **movable** public UDP VIP. Keepalived, running on the **Server hosts**, monitors `/readyz` and moves the VIP. The mqvpn Client continues to target `vpn.example.com:8443` resolving to that VIP.
+Every eligible Server can run mqvpn in standby-capable configuration, with one **movable** public UDP VIP. Keepalived, running on the **Server hosts**, monitors `/readyz` and moves the VIP. The mqvpn Client continues to target `vpn.example.com:8443` resolving to that VIP.
 
 ```text
                            vpn.example.com
@@ -78,12 +88,14 @@ Both Servers run mqvpn in standby-capable configuration, with one **movable** pu
        VIP current owner              warm standby
 ```
 
+The following two-Server configuration is a minimal example; deployments may add more eligible VRRP nodes with distinct priorities and the same VIP, subject to split-brain prevention and fencing:
+
 Use the included examples:
 - [Primary Keepalived config](../configs/keepalived-mqvpn-primary.conf) — priority 150, same VRRP ID and VIP.
 - [Standby Keepalived config](../configs/keepalived-mqvpn-standby.conf) — priority 100.
 - [Local readiness probe](../scripts/mqvpn-ready.sh) — checks loopback `/readyz` using curl.
 
-Install the probe at `/usr/local/libexec/mqvpn-ready`, executable by the Keepalived script user. Adapt physical interface, local and peer addresses, VIP, firewall, and routing for the actual two Server nodes. Install Keepalived from your Linux distribution and validate with `keepalived -t -f /etc/keepalived/keepalived.conf` on each host.
+Install the probe at `/usr/local/libexec/mqvpn-ready`, executable by the Keepalived script user. Adapt physical interface, local and peer addresses, VIP, firewall, and routing for every participating Server node. Install Keepalived from your Linux distribution and validate with `keepalived -t -f /etc/keepalived/keepalived.conf` on each host.
 
 VRRP `track_script` uses a **weight of zero**, putting a Server into FAULT after the configured number of failed health checks instead of merely reducing priority. The examples use `nopreempt` to avoid automatically stealing back the VIP after a recovered Server reappears; operators can arrange an explicit planned failback. Monitor split-brain and route convergence independently.
 
@@ -116,12 +128,12 @@ For current mqvpn releases, consider **active/standby QUIC with a VIP** the cons
 
 ## Operational validation plan
 
-1. Start two Servers with the same authenticated Server TLS identity, consistent peer policies and separate physical host/IP resources.
+1. Start N >= 2 Servers (begin with two for a basic VIP smoke test, then validate three and five) with the same authenticated Server TLS identity, consistent peer policies and separate physical host/IP resources.
 2. Keep the existing Client configuration **unchanged**; DNS resolves to one VIP or ingress endpoint.
-3. Check local `/readyz` on each Server, confirm only one VRRP VIP owner or that the selected LB backend is healthy.
+3. Check local `/readyz` on all N Servers, confirm only one VRRP VIP owner or that the selected LB backend is healthy. After Phase B/C, also require committed policy/CRL revision and fenced peer ownership.
 4. Verify authenticated CONNECT, Linux tunnel interface and site-to-site traffic.
-5. Kill the current active Server, observe VIP/ingress transition, and measure tunnel reconnection without changing the Client's destination or trust settings.
-6. Validate route owner convergence, Client certificate revocation, no duplicate dynamic IP leases, and clean failback under repeated failures.
+5. Kill the active Server, observe VIP/ingress transition across more than one standby, and measure tunnel reconnection without changing the Client's destination or trust settings.
+6. Validate N-node route-owner convergence, Client certificate revocation on *every* node, no duplicate dynamic IP leases, membership drain/rejoin, and clean failback under repeated failures and minority/majority partitions (once the replication phases exist).
 
 ### Reference implementations
 
