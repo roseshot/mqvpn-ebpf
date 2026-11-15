@@ -3,11 +3,11 @@
 package server
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"io"
 	"log/slog"
 	"net"

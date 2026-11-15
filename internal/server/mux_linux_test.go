@@ -3,8 +3,8 @@
 package server
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"crypto/tls"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"net"
 	"net/http"
 	"net/http/httptest"

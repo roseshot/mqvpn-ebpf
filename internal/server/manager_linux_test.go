@@ -3,13 +3,13 @@
 package server
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"math/big"
 	"net"
 	"os"

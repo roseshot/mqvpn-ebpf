@@ -6,4 +6,3 @@ type RevocationConfig struct {
 	Mode    string `yaml:"mode,omitempty"`
 	CRLFile string `yaml:"crl_file,omitempty"`
 }
-

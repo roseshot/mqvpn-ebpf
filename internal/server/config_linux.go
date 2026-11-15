@@ -3,9 +3,9 @@
 package server
 
 import (
-	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"errors"
 	"fmt"
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"net"
 	"net/netip"
 	"strconv"
@@ -34,22 +34,22 @@ type wanPath struct {
 // Instance owns an isolated L3 P2MP forwarding domain and mTLS identity.
 // All instances share Config.Listen and one HTTP/3 QUIC listener.
 type Instance struct {
-	Name             string                  `yaml:"name"`
-	ServerName       string                  `yaml:"server_name"`
-	TUN              string                  `yaml:"tun"`
-	Address          string                  `yaml:"address"`
-	TunnelPool       string                  `yaml:"tunnel_pool,omitempty"`
-	PushRoutes       []string                `yaml:"push_routes,omitempty"`
-	PushDNS          []string                `yaml:"push_dns,omitempty"`
-	MTU              int                     `yaml:"mtu,omitempty"`
-	Peers            string                  `yaml:"peers"`
-	Path             string                  `yaml:"path,omitempty"`
-	Cert             string                  `yaml:"cert"`
-	Key              string                  `yaml:"key"`
-	ClientCA         string                  `yaml:"client_ca"`
+	Name             string            `yaml:"name"`
+	ServerName       string            `yaml:"server_name"`
+	TUN              string            `yaml:"tun"`
+	Address          string            `yaml:"address"`
+	TunnelPool       string            `yaml:"tunnel_pool,omitempty"`
+	PushRoutes       []string          `yaml:"push_routes,omitempty"`
+	PushDNS          []string          `yaml:"push_dns,omitempty"`
+	MTU              int               `yaml:"mtu,omitempty"`
+	Peers            string            `yaml:"peers"`
+	Path             string            `yaml:"path,omitempty"`
+	Cert             string            `yaml:"cert"`
+	Key              string            `yaml:"key"`
+	ClientCA         string            `yaml:"client_ca"`
 	ClientRevocation *RevocationConfig `yaml:"client_revocation,omitempty"`
-	MaxFrame         int                     `yaml:"max_frame,omitempty"`
-	TC               *tcebpf.Config          `yaml:"tc,omitempty"`
+	MaxFrame         int               `yaml:"max_frame,omitempty"`
+	TC               *tcebpf.Config    `yaml:"tc,omitempty"`
 }
 
 // TCPFallback enables a separate TCP/443 TLS listener. It shares the
@@ -69,10 +69,10 @@ type HAConfig struct {
 type Config struct {
 	HA            HAConfig    `yaml:"ha,omitempty"`
 	TCPFallback   TCPFallback `yaml:"tcp_fallback,omitempty"`
-	Listen        string            `yaml:"listen,omitempty"`
-	PathScheduler string            `yaml:"path_scheduler,omitempty"`
-	WANs          []wanPath       `yaml:"wans,omitempty"`
-	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
+	Listen        string      `yaml:"listen,omitempty"`
+	PathScheduler string      `yaml:"path_scheduler,omitempty"`
+	WANs          []wanPath   `yaml:"wans,omitempty"`
+	XDP           *xdp.Config `yaml:"xdp,omitempty"`
 	Instances     []Instance  `yaml:"instances"`
 }
 

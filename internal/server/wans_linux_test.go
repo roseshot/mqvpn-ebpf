@@ -66,4 +66,3 @@ func TestServerHTTP3MultiWANAddressAdvertisement(t *testing.T) {
 		t.Fatal("Server must negotiate ADD_ADDRESS before a later WAN upgrade")
 	}
 }
-
