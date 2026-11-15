@@ -1,8 +1,9 @@
 //go:build linux
 
-package app
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -34,11 +35,11 @@ import (
 )
 
 type preparedInstance struct {
-	spec       ServerInstance
+	spec       Instance
 	peers      *p2mp.Config
 	pool       *p2mp.TunnelPool
 	tlsConfig  *tls.Config
-	revocation *clientCRLPolicy
+	revocation *crlPolicy
 	peerHash   [32]byte
 	staticHash [32]byte
 }
@@ -46,7 +47,7 @@ type preparedInstance struct {
 type preparedServer struct {
 	listen          string
 	pathScheduler   string
-	wans            []serverWAN
+	wans            []wanPath
 	tcpEnabled      bool
 	tcpListen       string
 	readinessListen string
@@ -64,14 +65,14 @@ func hashRecord(h hash.Hash, data []byte) {
 // touching live hubs. Interface creation/IP/MTU/UP is performed by tun.Open
 // on startup and changed instances only. No route, iprule, VRF, multicast,
 // forwarding or firewall management is performed by the daemon.
-func prepareServer(config ServerConfig) (preparedServer, error) {
+func prepareServer(config Config) (preparedServer, error) {
 	if err := config.Validate(); err != nil {
 		return preparedServer{}, err
 	}
 	next := preparedServer{
 		listen:          config.Listen,
 		pathScheduler:   config.PathScheduler,
-		wans:            append([]serverWAN(nil), config.WANs...),
+		wans:            append([]wanPath(nil), config.WANs...),
 		tcpEnabled:      config.TCPFallback.Enabled,
 		tcpListen:       config.TCPFallback.Listen,
 		readinessListen: config.HA.ReadinessListen,
@@ -147,15 +148,15 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 				}
 			}
 		}
-		cert, err := keyPair(spec.Cert, spec.Key)
+		cert, err := vpnwire.KeyPair(spec.Cert, spec.Key)
 		if err != nil {
 			return preparedServer{}, fmt.Errorf("instance %s: %w", spec.Name, err)
 		}
-		ca, err := certPool(spec.ClientCA)
+		ca, err := vpnwire.CertPool(spec.ClientCA)
 		if err != nil {
 			return preparedServer{}, fmt.Errorf("instance %s: %w", spec.Name, err)
 		}
-		policy, err := loadClientCRL(spec.ClientRevocation)
+		policy, err := loadCRL(spec.ClientRevocation)
 		if err != nil {
 			return preparedServer{}, fmt.Errorf("instance %s: %w", spec.Name, err)
 		}
@@ -257,12 +258,12 @@ type liveInstance struct {
 	err        error
 }
 
-type serverManager struct {
+type manager struct {
 	ctx             context.Context
 	logger          *slog.Logger
 	listen          string
 	pathScheduler   string
-	wans            []serverWAN
+	wans            []wanPath
 	tcpEnabled      bool
 	tcpListen       string
 	readinessListen string
@@ -276,7 +277,7 @@ type serverManager struct {
 	tcpDone         chan struct{}
 	tcpErr          error
 	xdp             *xdp.Controller
-	mux             *serverMux
+	mux             *mux
 	instances       map[string]*liveInstance
 	exits           chan *liveInstance
 	server          *http3.Server
@@ -285,16 +286,16 @@ type serverManager struct {
 	listenerErr     error
 }
 
-func newServerManager(ctx context.Context, logger *slog.Logger) *serverManager {
-	return &serverManager{
+func newManager(ctx context.Context, logger *slog.Logger) *manager {
+	return &manager{
 		ctx: ctx, logger: logging.Ensure(logger), xdp: xdp.NewController(),
-		mux:       newServerMux(),
+		mux:       newMux(),
 		instances: make(map[string]*liveInstance),
 		exits:     make(chan *liveInstance, 256),
 	}
 }
 
-func (m *serverManager) start(p preparedInstance) error {
+func (m *manager) start(p preparedInstance) error {
 	openTUN := tun.Open
 	if p.pool != nil {
 		openTUN = tun.OpenRouted
@@ -317,7 +318,7 @@ func (m *serverManager) start(p preparedInstance) error {
 	if p.spec.TC != nil {
 		policy = *p.spec.TC
 	}
-	tc, err := attachConfiguredTC(m.ctx, p.spec.TUN, policy, p.spec.MTU, logger)
+	tc, err := tcebpf.AttachConfigured(m.ctx, p.spec.TUN, policy, p.spec.MTU, logger)
 	if err != nil {
 		_ = device.Close()
 		return fmt.Errorf("instance %s TUN TC eBPF: %w", p.spec.Name, err)
@@ -341,7 +342,7 @@ func (m *serverManager) start(p preparedInstance) error {
 	return nil
 }
 
-func (m *serverManager) stop(name string) {
+func (m *manager) stop(name string) {
 	live := m.instances[name]
 	if live == nil {
 		return
@@ -363,7 +364,7 @@ func (m *serverManager) stop(name string) {
 	live.logger.InfoContext(m.ctx, "VPN instance detached")
 }
 
-func (m *serverManager) close() {
+func (m *manager) close() {
 	m.ready.Store(false)
 	if m.healthServer != nil {
 		_ = m.healthServer.Close()
@@ -410,7 +411,7 @@ func (m *serverManager) close() {
 
 // The single shared UDP socket is bound exactly once for the daemon lifetime.
 // Adding/removing instances does NOT create or rebind any QUIC listener.
-func (m *serverManager) startListener() error {
+func (m *manager) startListener() error {
 	conn, err := net.ListenPacket("udp", m.listen)
 	if err != nil {
 		return fmt.Errorf("bind shared HTTP/3 UDP %s: %w", m.listen, err)
@@ -423,7 +424,7 @@ func (m *serverManager) startListener() error {
 	return nil
 }
 
-func (m *serverManager) apply(next preparedServer) error {
+func (m *manager) apply(next preparedServer) error {
 	if m.listen != "" && m.listen != next.listen {
 		return fmt.Errorf("shared listen address change %q -> %q requires daemon restart", m.listen, next.listen)
 	}
@@ -516,7 +517,7 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 	if err != nil {
 		return err
 	}
-	manager := newServerManager(ctx, logger)
+	manager := newManager(ctx, logger)
 	defer manager.close()
 	if err := manager.apply(initial); err != nil {
 		return err
@@ -620,7 +621,7 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 // source remains zero/omitted, so reloads can see changed WAN link MTUs.
 // A changed effective MTU restarts only that VPN instance, never the
 // shared UDP/TCP listener. No Linux route is written by discovery.
-func resolveServerInstanceMTU(spec *ServerInstance, links []mtu.Underlay) error {
+func resolveServerInstanceMTU(spec *Instance, links []mtu.Underlay) error {
 	result, err := mtu.Plan(spec.TUN, spec.Address, spec.MTU, spec.MaxFrame, links)
 	if err != nil {
 		return err

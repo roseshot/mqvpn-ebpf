@@ -1,8 +1,9 @@
 //go:build linux
 
-package app
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"errors"
 	"fmt"
 	"net"
@@ -22,17 +23,17 @@ import (
 // Optional TCP fallback uses TCP/443 independently.
 const defaultServerListen = "0.0.0.0:443"
 
-// serverWAN identifies a reachable Server QUIC/UDP address on an underlay
+// wanPath identifies a reachable Server QUIC/UDP address on an underlay
 // interface. The shared wildcard socket accepts UDP on every listed IP;
 // MPQUIC ADD_ADDRESS advertises them to authenticated Clients.
-type serverWAN struct {
+type wanPath struct {
 	Interface string `yaml:"interface"`
 	IP        string `yaml:"ip"`
 }
 
-// ServerInstance owns an isolated L3 P2MP forwarding domain and mTLS identity.
-// All instances share ServerConfig.Listen and one HTTP/3 QUIC listener.
-type ServerInstance struct {
+// Instance owns an isolated L3 P2MP forwarding domain and mTLS identity.
+// All instances share Config.Listen and one HTTP/3 QUIC listener.
+type Instance struct {
 	Name             string                  `yaml:"name"`
 	ServerName       string                  `yaml:"server_name"`
 	TUN              string                  `yaml:"tun"`
@@ -46,51 +47,51 @@ type ServerInstance struct {
 	Cert             string                  `yaml:"cert"`
 	Key              string                  `yaml:"key"`
 	ClientCA         string                  `yaml:"client_ca"`
-	ClientRevocation *ClientRevocationConfig `yaml:"client_revocation,omitempty"`
+	ClientRevocation *RevocationConfig `yaml:"client_revocation,omitempty"`
 	MaxFrame         int                     `yaml:"max_frame,omitempty"`
 	TC               *tcebpf.Config          `yaml:"tc,omitempty"`
 }
 
-// TCPFallbackConfig enables a separate TCP/443 TLS listener. It shares the
+// TCPFallback enables a separate TCP/443 TLS listener. It shares the
 // authenticated SNI instance registry, but not the UDP socket or MPQUIC.
-type TCPFallbackConfig struct {
+type TCPFallback struct {
 	Enabled bool   `yaml:"enabled"`
 	Listen  string `yaml:"listen,omitempty"`
 }
 
-// ServerHAConfig exposes local-only readiness for VRRP, BGP and TCP/UDP
+// HAConfig exposes local-only readiness for VRRP, BGP and TCP/UDP
 // ingress health controllers. Ownership/election belongs to the Server
 // deployment, never to the Client.
-type ServerHAConfig struct {
+type HAConfig struct {
 	ReadinessListen string `yaml:"readiness_listen,omitempty"`
 }
 
-type ServerConfig struct {
-	HA            ServerHAConfig    `yaml:"ha,omitempty"`
-	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
+type Config struct {
+	HA            HAConfig    `yaml:"ha,omitempty"`
+	TCPFallback   TCPFallback `yaml:"tcp_fallback,omitempty"`
 	Listen        string            `yaml:"listen,omitempty"`
 	PathScheduler string            `yaml:"path_scheduler,omitempty"`
-	WANs          []serverWAN       `yaml:"wans,omitempty"`
+	WANs          []wanPath       `yaml:"wans,omitempty"`
 	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
-	Instances     []ServerInstance  `yaml:"instances"`
+	Instances     []Instance  `yaml:"instances"`
 }
 
-func loadServerConfig(path string) (ServerConfig, error) {
-	var cfg ServerConfig
+func loadServerConfig(path string) (Config, error) {
+	var cfg Config
 	if err := configfile.Read(path, &cfg); err != nil {
-		return ServerConfig{}, err
+		return Config{}, err
 	}
 	if err := cfg.Validate(); err != nil {
-		return ServerConfig{}, err
+		return Config{}, err
 	}
 	return cfg, nil
 }
 
-func (c *ServerConfig) Validate() error {
+func (c *Config) Validate() error {
 	if c.Listen == "" {
 		c.Listen = defaultServerListen
 	}
-	policy, err := normalizePathScheduler(c.PathScheduler)
+	policy, err := vpnwire.NormalizePathScheduler(c.PathScheduler)
 	if err != nil {
 		return err
 	}
@@ -177,7 +178,7 @@ func (c *ServerConfig) Validate() error {
 	for i := range c.Instances {
 		inst := &c.Instances[i]
 		if inst.Path == "" {
-			inst.Path = defaultPath
+			inst.Path = vpnwire.DefaultPath
 		}
 		if inst.Name == "" || inst.ServerName == "" || inst.TUN == "" ||
 			inst.Peers == "" || inst.Cert == "" || inst.Key == "" || inst.ClientCA == "" {
@@ -238,7 +239,7 @@ func (c *ServerConfig) Validate() error {
 		if err := validateInstanceIdentity(inst.ServerName, len(c.Instances) == 1); err != nil {
 			return fmt.Errorf("instance %s: %w", inst.Name, err)
 		}
-		if err := validateMasquePath(inst.Path); err != nil {
+		if err := vpnwire.ValidateMASQUEPath(inst.Path); err != nil {
 			return fmt.Errorf("instance %s MASQUE path: %w", inst.Name, err)
 		}
 		if inst.MaxFrame != 0 && (inst.MaxFrame < 64 || inst.MaxFrame > 65535) {
@@ -265,5 +266,5 @@ func validateInstanceIdentity(identity string, single bool) error {
 		}
 		return nil
 	}
-	return validateSNI(identity)
+	return vpnwire.ValidateSNI(identity)
 }

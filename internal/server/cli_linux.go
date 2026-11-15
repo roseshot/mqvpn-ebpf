@@ -1,6 +1,6 @@
 //go:build linux
 
-package app
+package server
 
 import (
 	"errors"
@@ -93,7 +93,7 @@ func runInstanceCLI(args []string, logger *slog.Logger) error {
 	} else {
 		updates := map[string]bool{}
 		fs.Visit(func(f *flag.Flag) { updates[f.Name] = true })
-		var inst ServerInstance
+		var inst Instance
 		found := false
 		index := -1
 		for i, p := range cfg.Instances {
@@ -193,7 +193,7 @@ func runInstanceCLI(args []string, logger *slog.Logger) error {
 	return nil
 }
 
-func writeServerConfigAtomic(path string, cfg ServerConfig) error {
+func writeServerConfigAtomic(path string, cfg Config) error {
 	data, err := configfile.Marshal(path, cfg)
 	if err != nil {
 		return err

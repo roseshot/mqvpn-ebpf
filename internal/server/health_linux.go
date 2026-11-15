@@ -1,6 +1,6 @@
 //go:build linux
 
-package app
+package server
 
 import (
 	"fmt"
@@ -44,7 +44,7 @@ func newServerHAHealthHandler(ready *atomic.Bool) http.Handler {
 // startHealthListener is called only after all required instance hubs and
 // their QUIC/TCP listeners successfully bind. Only the run loop controls the
 // readiness atomic flag; concurrent health HTTP handlers read it safely.
-func (m *serverManager) startHealthListener() error {
+func (m *manager) startHealthListener() error {
 	listener, err := net.Listen("tcp", m.readinessListen)
 	if err != nil {
 		return fmt.Errorf("bind local HA readiness %s: %w", m.readinessListen, err)
@@ -102,7 +102,7 @@ func probeLocalTUN(name, address string, mtu int) error {
 // localReadinessError inspects only this Server's runtime resources. It is
 // called by the manager run loop, not the HTTP handler. There is no cluster
 // membership or quorum dependency in standalone local health.
-func (m *serverManager) localReadinessError() error {
+func (m *manager) localReadinessError() error {
 	if err := m.ctx.Err(); err != nil {
 		return err
 	}
@@ -136,14 +136,14 @@ func (m *serverManager) localReadinessError() error {
 // serves one cached atomic bit without syscalls or network requests; a
 // single WAN link failure does not mark a multi-WAN node down. Cluster
 // policy admission and peer fencing remain separate security decisions.
-func (m *serverManager) refreshLocalReadiness() {
+func (m *manager) refreshLocalReadiness() {
 	if m.readinessListen == "" {
 		return
 	}
 	m.updateLocalReady(m.localReadinessError())
 }
 
-func (m *serverManager) updateLocalReady(err error) {
+func (m *manager) updateLocalReady(err error) {
 	ready := err == nil
 	previous := m.ready.Swap(ready)
 	if previous == ready {

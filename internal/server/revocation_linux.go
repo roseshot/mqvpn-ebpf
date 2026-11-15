@@ -1,4 +1,4 @@
-package app
+package server
 
 import (
 	"bytes"
@@ -12,15 +12,15 @@ import (
 	"time"
 )
 
-// clientCRLPolicy validates a direct, complete CRL issued by the verified
+// crlPolicy validates a direct, complete CRL issued by the verified
 // Client leaf's signing CA. No network fetches, indirect/delta CRLs, or
 // fail-open behavior are used. Nil policy means revocation checking disabled,
 // never that ordinary Client certificate verification is disabled.
-type clientCRLPolicy struct {
+type crlPolicy struct {
 	list *x509.RevocationList
 }
 
-func loadClientCRL(config *ClientRevocationConfig) (*clientCRLPolicy, error) {
+func loadCRL(config *RevocationConfig) (*crlPolicy, error) {
 	if config == nil || config.Mode == "off" || config.Mode == "" {
 		return nil, nil
 	}
@@ -63,13 +63,13 @@ func loadClientCRL(config *ClientRevocationConfig) (*clientCRLPolicy, error) {
 			return nil, fmt.Errorf("unsupported critical Client CRL extension %s", ext.Id)
 		}
 	}
-	return &clientCRLPolicy{list: crl}, nil
+	return &crlPolicy{list: crl}, nil
 }
 
 // verify fails closed when CRL mode is enabled and the direct issuer-signed,
 // current complete CRL does not cover the certificate. No HTTP fetch occurs
 // during VPN handshake, so an unavailable/stale CRL cannot silently pass.
-func (p *clientCRLPolicy) verify(chains [][]*x509.Certificate, now time.Time) error {
+func (p *crlPolicy) verify(chains [][]*x509.Certificate, now time.Time) error {
 	if p == nil {
 		return nil
 	}
@@ -103,10 +103,10 @@ func (p *clientCRLPolicy) verify(chains [][]*x509.Certificate, now time.Time) er
 	return nil
 }
 
-// verifyClientCertificate is shared by HTTP/3 and TLS/TCP CONNECT handlers.
+// verifyCertificate is shared by HTTP/3 and TLS/TCP CONNECT handlers.
 // Re-verification uses the CURRENT per-tenant CA after a hot reload, preventing
 // a long-lived TLS/QUIC connection from retaining privileges after CA changes.
-func verifyClientCertificate(state *tls.ConnectionState, ca *x509.CertPool, policy *clientCRLPolicy) error {
+func verifyCertificate(state *tls.ConnectionState, ca *x509.CertPool, policy *crlPolicy) error {
 	if state == nil || len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
 		return errors.New("verified Client TLS certificate required")
 	}

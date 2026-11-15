@@ -1,8 +1,9 @@
 //go:build linux
 
-package app
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -25,9 +26,9 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 )
 
-// RunServer requires one YAML config with a shared UDP listener.
+// Run requires one YAML config with a shared UDP listener.
 // The command accepts only the current multi-instance YAML contract.
-func RunServer(ctx context.Context, args []string, logger *slog.Logger) error {
+func Run(ctx context.Context, args []string, logger *slog.Logger) error {
 	logger = logging.Ensure(logger)
 	if len(args) > 0 {
 		switch args[0] {
@@ -86,19 +87,19 @@ func reloadServerCLI(args []string, logger *slog.Logger) error {
 	return nil
 }
 
-// serverMux owns one HTTP/3 listener for multiple isolated P2MP hubs.
+// mux owns one HTTP/3 listener for multiple isolated P2MP hubs.
 // SNI selects both the mTLS identity during handshake and the traffic
 // forwarding domain for CONNECT-ETHERNET. It never examines inner VPN policy.
-type serverMux struct {
+type mux struct {
 	mu    sync.RWMutex
 	bySNI map[string]*liveInstance
 }
 
-func newServerMux() *serverMux {
-	return &serverMux{bySNI: make(map[string]*liveInstance)}
+func newMux() *mux {
+	return &mux{bySNI: make(map[string]*liveInstance)}
 }
 
-func (m *serverMux) Publish(instances map[string]*liveInstance) {
+func (m *mux) Publish(instances map[string]*liveInstance) {
 	next := make(map[string]*liveInstance, len(instances))
 	for _, instance := range instances {
 		next[instance.prepared.spec.ServerName] = instance
@@ -108,7 +109,7 @@ func (m *serverMux) Publish(instances map[string]*liveInstance) {
 	m.mu.Unlock()
 }
 
-func (m *serverMux) Lookup(name string) *liveInstance {
+func (m *mux) Lookup(name string) *liveInstance {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.bySNI[strings.ToLower(name)]
@@ -116,7 +117,7 @@ func (m *serverMux) Lookup(name string) *liveInstance {
 
 // selectTenant only permits an absent SNI for a sole IP-identity tenant.
 // DNS tenants and multi-tenant listeners still require an exact SNI match.
-func (m *serverMux) selectTenant(name string) *liveInstance {
+func (m *mux) selectTenant(name string) *liveInstance {
 	if name != "" {
 		return m.Lookup(name)
 	}
@@ -133,7 +134,7 @@ func (m *serverMux) selectTenant(name string) *liveInstance {
 	return nil
 }
 
-func (m *serverMux) TLSConfigFor(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+func (m *mux) TLSConfigFor(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 	instance := m.selectTenant(hello.ServerName)
 	if instance == nil {
 		return nil, fmt.Errorf("unknown VPN SNI %q", hello.ServerName)
@@ -153,7 +154,7 @@ func requestAuthorityMatchesSNI(host, serverName string) bool {
 	return strings.EqualFold(strings.TrimSuffix(host, "."), serverName)
 }
 
-func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.TLS == nil {
 		http.Error(w, "TLS connection required", http.StatusMisdirectedRequest)
 		return
@@ -172,7 +173,7 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Capsule-Protocol: ?1 required", http.StatusBadRequest)
 		return
 	}
-	if err := verifyClientCertificate(r.TLS, instance.prepared.tlsConfig.ClientCAs, instance.prepared.revocation); err != nil {
+	if err := verifyCertificate(r.TLS, instance.prepared.tlsConfig.ClientCAs, instance.prepared.revocation); err != nil {
 		instance.logger.WarnContext(r.Context(), "client TLS verification rejected", "error", err)
 		http.Error(w, "client certificate not authorized", http.StatusForbidden)
 		return
@@ -209,8 +210,8 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Realtime companion sessions require the same mTLS-authenticated peer
 	// and an already attached sticky-enabled primary session. This role
 	// never allocates a second tunnel lease or replaces the P2MP route.
-	stickyValue := r.Header.Get(stickySessionHeader)
-	roleValue := r.Header.Get(trafficRoleHeader)
+	stickyValue := r.Header.Get(vpnwire.StickySessionHeader)
+	roleValue := r.Header.Get(vpnwire.TrafficRoleHeader)
 	if stickyValue != "" && stickyValue != "sticky-v1" {
 		http.Error(w, "unsupported sticky transport capability", http.StatusBadRequest)
 		return
@@ -225,13 +226,13 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Attach before sending HTTP 200 so duplicate sessions can get HTTP 409.
-	requestDynamic, err := wantsTunnelIP(r.Header.Get(tunnelAddressHeader))
+	requestDynamic, err := vpnwire.WantsTunnelIP(r.Header.Get(vpnwire.TunnelAddressHeader))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	compression := acceptCompression(r.Header.Get(compressionHeader))
-	fragmentation := acceptFraming(r.Header.Get(framingHeader))
+	compression := vpnwire.AcceptCompression(r.Header.Get(vpnwire.CompressionHeader))
+	fragmentation := vpnwire.AcceptFraming(r.Header.Get(vpnwire.FramingHeader))
 	// HTTPStreamer.HTTPStream flushes the response immediately. Attaching
 	// with it before configuring the CONNECT response sent a bare 200,
 	// hiding Capsule-Protocol and authenticated tunnel negotiation headers.
@@ -245,7 +246,7 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer instance.hub.Detach(session)
 	if assigned := session.TunnelAddress(); assigned != "" {
-		w.Header().Set(tunnelAddressHeader, assigned)
+		w.Header().Set(vpnwire.TunnelAddressHeader, assigned)
 	}
 	if routes := p2mp.EffectivePush(instance.prepared.spec.PushRoutes, rule.PushRoutes); len(routes) > 0 {
 		w.Header().Set(routepush.Header, strings.Join(routes, ","))
@@ -254,13 +255,13 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(dnspush.Header, strings.Join(dns, ","))
 	}
 	if compression {
-		w.Header().Set(compressionHeader, compressionZstd)
+		w.Header().Set(vpnwire.CompressionHeader, vpnwire.CompressionZstd)
 	}
 	if fragmentation {
-		w.Header().Set(framingHeader, framingValue)
+		w.Header().Set(vpnwire.FramingHeader, vpnwire.FramingValue)
 	}
 	if stickyValue == "sticky-v1" {
-		w.Header().Set(stickySessionHeader, "sticky-v1")
+		w.Header().Set(vpnwire.StickySessionHeader, "sticky-v1")
 	}
 	w.Header().Set("Capsule-Protocol", "?1")
 	w.WriteHeader(http.StatusOK)
@@ -272,11 +273,11 @@ func (m *serverMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	peerLogger.InfoContext(r.Context(), "peer disconnected")
 }
 
-func newSharedHTTP3Server(mux *serverMux, wans ...serverWAN) *http3.Server {
-	return newSharedHTTP3ServerWithScheduler(mux, pathSchedulerRoundRobin, wans...)
+func newSharedHTTP3Server(mux *mux, wans ...wanPath) *http3.Server {
+	return newSharedHTTP3ServerWithScheduler(mux, vpnwire.SchedulerRoundRobin, wans...)
 }
 
-func newSharedHTTP3ServerWithScheduler(mux *serverMux, policy string, wans ...serverWAN) *http3.Server {
+func newSharedHTTP3ServerWithScheduler(mux *mux, policy string, wans ...wanPath) *http3.Server {
 	advertised := make([]net.IP, 0, len(wans))
 	for _, link := range wans {
 		advertised = append(advertised, net.ParseIP(link.IP))
@@ -295,7 +296,7 @@ func newSharedHTTP3ServerWithScheduler(mux *serverMux, policy string, wans ...se
 			MultipathAutoAdvertise:     len(advertised) != 0,
 			MultipathAutoAddrs:         advertised,
 			MultipathControllerFactory: func() quic.MultipathController {
-				return quic.NewDefaultMultipathController(newPathScheduler(policy))
+				return quic.NewDefaultMultipathController(vpnwire.NewPathScheduler(policy))
 			},
 			KeepAlivePeriod: 10 * time.Second,
 			MaxIdleTimeout:  30 * time.Second,

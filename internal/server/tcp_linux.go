@@ -1,8 +1,9 @@
 //go:build linux
 
-package app
+package server
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -21,7 +22,7 @@ import (
 
 // authorizeTCPRequest uses the SAME tenant SNI, current client CA, and peer
 // certificate identity and CRL policy as the HTTP/3 CONNECT handler.
-func (m *serverMux) authorizeTCPRequest(r *http.Request) (*liveInstance, *p2mp.Rule, int, error) {
+func (m *mux) authorizeTCPRequest(r *http.Request) (*liveInstance, *p2mp.Rule, int, error) {
 	if r.TLS == nil {
 		return nil, nil, http.StatusMisdirectedRequest, errors.New("TLS connection required")
 	}
@@ -29,7 +30,7 @@ func (m *serverMux) authorizeTCPRequest(r *http.Request) (*liveInstance, *p2mp.R
 	if inst == nil || !requestAuthorityMatchesSNI(r.Host, inst.prepared.spec.ServerName) {
 		return nil, nil, http.StatusMisdirectedRequest, errors.New("unknown VPN tenant")
 	}
-	if err := verifyClientCertificate(r.TLS, inst.prepared.tlsConfig.ClientCAs, inst.prepared.revocation); err != nil {
+	if err := verifyCertificate(r.TLS, inst.prepared.tlsConfig.ClientCAs, inst.prepared.revocation); err != nil {
 		return nil, nil, http.StatusForbidden, fmt.Errorf("tenant client identity or CRL: %w", err)
 	}
 	rule, err := inst.hub.Authorize(r.TLS.PeerCertificates[0].Raw)
@@ -59,11 +60,11 @@ func (s *delayedCapsule) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return s.stream.ReceiveDatagram(ctx)
 }
 
-func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
+func (m *mux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	// CONNECT-ETHERNET over HTTP/1.1 uses GET + Upgrade per draft -18,
 	// whereas QUIC uses HTTP/3 Extended CONNECT.
 	if r.ProtoMajor != 1 || r.ProtoMinor != 1 || r.Method != http.MethodGet ||
-		!hasHeaderToken(r.Header.Get("Connection"), "Upgrade") ||
+		!vpnwire.HasHeaderToken(r.Header.Get("Connection"), "Upgrade") ||
 		!strings.EqualFold(r.Header.Get("Upgrade"), "connect-ethernet") ||
 		r.Header.Get("Capsule-Protocol") != "?1" {
 		http.Error(w, "CONNECT-ETHERNET HTTP/1.1 Upgrade required", http.StatusBadRequest)
@@ -79,7 +80,7 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown CONNECT-ETHERNET path", http.StatusNotFound)
 		return
 	}
-	requestDynamic, err := wantsTunnelIP(r.Header.Get(tunnelAddressHeader))
+	requestDynamic, err := vpnwire.WantsTunnelIP(r.Header.Get(vpnwire.TunnelAddressHeader))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -101,8 +102,8 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	}
 	ready := make(chan struct{})
 	delayed := &delayedCapsule{stream: stream, ready: ready, ctx: r.Context()}
-	compression := acceptCompression(r.Header.Get(compressionHeader))
-	fragmentation := acceptFraming(r.Header.Get(framingHeader))
+	compression := vpnwire.AcceptCompression(r.Header.Get(vpnwire.CompressionHeader))
+	fragmentation := vpnwire.AcceptFraming(r.Header.Get(vpnwire.FramingHeader))
 	session, err := inst.hub.AttachWithTrafficRole(r.Context(), rule, delayed, requestDynamic, compression, fragmentation, false, false)
 	if err != nil {
 		_, _ = rw.Writer.WriteString("HTTP/1.1 409 Conflict\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
@@ -112,13 +113,13 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	defer inst.hub.Detach(session)
 	responseHeaders := "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: connect-ethernet\r\nCapsule-Protocol: ?1\r\n"
 	if compression {
-		responseHeaders += compressionHeader + ": " + compressionZstd + "\r\n"
+		responseHeaders += vpnwire.CompressionHeader + ": " + vpnwire.CompressionZstd + "\r\n"
 	}
 	if fragmentation {
-		responseHeaders += framingHeader + ": " + framingValue + "\r\n"
+		responseHeaders += vpnwire.FramingHeader + ": " + vpnwire.FramingValue + "\r\n"
 	}
 	if assigned := session.TunnelAddress(); assigned != "" {
-		responseHeaders += tunnelAddressHeader + ": " + assigned + "\r\n"
+		responseHeaders += vpnwire.TunnelAddressHeader + ": " + assigned + "\r\n"
 	}
 	if routes := p2mp.EffectivePush(inst.prepared.spec.PushRoutes, rule.PushRoutes); len(routes) > 0 {
 		responseHeaders += routepush.Header + ": " + strings.Join(routes, ",") + "\r\n"
@@ -140,7 +141,7 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (m *serverManager) startTCPListener() error {
+func (m *manager) startTCPListener() error {
 	ln, err := net.Listen("tcp", m.tcpListen)
 	if err != nil {
 		return fmt.Errorf("bind TCP fallback %s: %w", m.tcpListen, err)
