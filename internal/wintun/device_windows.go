@@ -27,9 +27,9 @@ const (
 	maxPacket	= 0xffff
 
 	errorNoMoreItems	= syscall.Errno(259)
-	errorHandleEOF	= syscall.Errno(38)
-	waitObject0	= 0
-	waitTimeout	= 0x102
+	errorHandleEOF		= syscall.Errno(38)
+	waitObject0		= 0
+	waitTimeout		= 0x102
 )
 
 var ErrClosed = errors.New("Wintun packet device is closed")
