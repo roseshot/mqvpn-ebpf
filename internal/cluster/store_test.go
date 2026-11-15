@@ -103,7 +103,10 @@ func TestControlStoreRejectsRollbackAndUnversionedChanges(t *testing.T) {
 		{"policy without bump", func(s *ControlSnapshot) { s.Policy.Digest = digestB }},
 		{"CRL without bump", func(s *ControlSnapshot) { s.Policy.CRLDigest = digestC }},
 		{"invalid policy digest", func(s *ControlSnapshot) { s.Policy.Revision++; s.Policy.Digest = "not-a-digest" }},
-		{"uppercase digest", func(s *ControlSnapshot) { s.Policy.Revision++; s.Policy.Digest = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }},
+		{"uppercase digest", func(s *ControlSnapshot) {
+			s.Policy.Revision++
+			s.Policy.Digest = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		}},
 		{"invalid CRL digest", func(s *ControlSnapshot) { s.Policy.Revision++; s.Policy.CRLDigest = "bad" }},
 		{"rollback membership", func(s *ControlSnapshot) { s.MembershipRevision = 0 }},
 		{"rollback policy", func(s *ControlSnapshot) { s.Policy.Revision = 0 }},
