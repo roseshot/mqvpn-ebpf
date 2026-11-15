@@ -65,7 +65,7 @@ func TestWANListRejectsAmbiguityAndDuplicates(t *testing.T) {
 		{"mapped-multicast-server", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0", ServerIP: "::ffff:239.1.2.3"}}},
 		{"mapped-ip-family-mismatch", []clientWAN{{SourceIP: "::ffff:192.0.2.2", Interface: "wan0", ServerIP: "2001:db8::1"}}},
 		{"interface-leading-space", []clientWAN{{SourceIP: "192.0.2.2", Interface: " wan0"}}},
-		{"interface-embedded-nul", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0\\x00wrong"}}},
+		{"interface-embedded-nul", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0\x00wrong"}}},
 		{"interface-too-long", []clientWAN{{SourceIP: "192.0.2.2", Interface: "ethernetlongname0"}}},
 	}
 	for _, tc := range tests {
