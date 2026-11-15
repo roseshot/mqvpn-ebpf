@@ -47,6 +47,19 @@ licensed DLL through the [official Wintun distribution](https://www.wintun.net/)
 driver installation and adapter creation may require administrator
 privileges. Only the adapter created by this component is closed.
 
+**Native address provisioning (foundation, not yet wired into Client):**
+`(*wintun.Device).AssignAddress(netip.Prefix)` now uses the Windows
+`InitializeUnicastIpAddressEntry` and `CreateUnicastIpAddressEntry`
+IP Helper APIs to add an IPv4 or IPv6 host address to the exact Wintun
+interface LUID. The returned `AddressLease` must be closed **before**
+the Wintun Device: it checks the current address's interface, IP and
+prefix before deleting the address it created. A changed address or
+nontrivial cleanup failure is surfaced as an error rather than silently
+overwriting another manager's state. No address is adopted on create
+conflicts. The address lease is deliberately not connected to the live
+Client because route/DNS, endpoint protection, MTU and safe session cleanup
+are still missing.
+
 **The DLL and packet device are not sufficient for a safe VPN session.**
 A production Windows `clientPlatform` still has to configure address/MTU,
 add authenticated VPN routes and DNS, preserve a physical route to every
@@ -66,7 +79,7 @@ intentionally not cross-compiled for Windows.
 
 | Target | First milestone | Native work required (not present) |
 | --- | --- | --- |
-| Windows x64 | Wintun packet I/O and Windows Client binary compile (implemented, fail-closed) | Windows route guard, address/MTU, DNS policy, service permissions, packet-path integration, disconnect restoration |
+| Windows x64 | Wintun packet I/O, native address lease and Windows Client binary compile (implemented, fail-closed) | Windows endpoint route protection, routes, MTU, DNS policy, service permissions, packet-path integration, disconnect restoration |
 | macOS arm64 | Single-host Network Extension packet tunnel | App/Packet Tunnel Provider host, entitlements, `NEPacketTunnelNetworkSettings`, route and DNS ownership |
 | Android arm64 | One-network `VpnService` | Kotlin service and Go bridge, protected sockets, `VpnService.Builder` routes/DNS/MTU, VPN permission and background lifecycle |
 
