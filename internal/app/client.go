@@ -192,7 +192,7 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		logger.WarnContext(ctx, "UNSAFE TEST TLS secrets logging enabled; never use outside isolated test environment")
 	}
 	options := clientSessionOptions{
-		tcp: tcpOptions, platform: tcpOptions.platform, transport: *transportMode, udpDialTimeout: *udpTimeout,
+		tcp: tcpOptions, transport: *transportMode, udpDialTimeout: *udpTimeout,
 		wans: wans, useServerWANs: *useServerWANs, pathScheduler: normalizedScheduler, stickyVoIP: *stickyVoIP,
 	}
 	return runClientSupervisor(ctx, *reconnect, logger, func(sessionCtx context.Context) error {
@@ -201,7 +201,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 }
 
 type clientSessionOptions struct {
-	platform       clientPlatform
 	tcp            clientTCPOptions
 	transport      string
 	udpDialTimeout time.Duration
@@ -215,8 +214,7 @@ type clientSessionOptions struct {
 // return its defers close the transport, TUN/TCX attachment and session
 // routes before the reconnect supervisor starts another attempt.
 func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.Logger) (result error) {
-	o.platform = platformForClient(o.platform)
-	o.tcp.platform = o.platform
+	o.tcp.platform = platformForClient(o.tcp.platform)
 	if o.transport == "tcp" {
 		return runTCPFallback(ctx, o.tcp, logger)
 	}
@@ -233,7 +231,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if err != nil {
 		return fmt.Errorf("resolve QUIC peer: %w", err)
 	}
-	base, selectedIP, err := o.platform.ListenUDP(ctx, o.tcp.wanIP, o.tcp.wanInterface, serverAddr)
+	base, selectedIP, err := o.tcp.platform.ListenUDP(ctx, o.tcp.wanIP, o.tcp.wanInterface, serverAddr)
 	if err != nil {
 		return err
 	}
@@ -255,7 +253,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 		extraIPs := make([]net.IP, 0, len(o.wans)-1)
 		selectedSources = append(selectedSources, selectedIP)
 		for i, link := range o.wans[1:] {
-			ip, err := o.platform.ResolveSource(link.SourceIP, link.Interface, serverAddr)
+			ip, err := o.tcp.platform.ResolveSource(link.SourceIP, link.Interface, serverAddr)
 			if err != nil {
 				_ = base.Close()
 				return fmt.Errorf("resolve WAN %d source: %w", i+2, err)
@@ -444,7 +442,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 				return fmt.Errorf("add WAN %d path to %s: %w", index+2, destinations[index+1], err)
 			}
 		} else {
-			otherUDP, ip, bindErr := o.platform.ListenUDP(ctx, link.SourceIP, link.Interface, serverAddr)
+			otherUDP, ip, bindErr := o.tcp.platform.ListenUDP(ctx, link.SourceIP, link.Interface, serverAddr)
 			if bindErr != nil {
 				return fmt.Errorf("open WAN %d: %w", index+2, bindErr)
 			}
@@ -490,7 +488,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	var underlays []mtu.Underlay
 	if o.tcp.tunMTU == 0 {
 		for index, source := range underlaySources {
-			underlay, err := o.platform.SourceUnderlay(source.ip, source.iface)
+			underlay, err := o.tcp.platform.SourceUnderlay(source.ip, source.iface)
 			if err != nil {
 				return fmt.Errorf("WAN %d MTU: %w", index+1, err)
 			}
@@ -501,7 +499,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	if err != nil {
 		return err
 	}
-	guard, err := o.platform.ProtectServer(serverAddr.IP, selectedIP, o.tcp.wanInterface, o.tcp.tunName, pushedRoutes, len(o.wans) > 1)
+	guard, err := o.tcp.platform.ProtectServer(serverAddr.IP, selectedIP, o.tcp.wanInterface, o.tcp.tunName, pushedRoutes, len(o.wans) > 1)
 	if err != nil {
 		return fmt.Errorf("protect VPN server underlay route: %w", err)
 	}
@@ -513,7 +511,7 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	}()
 	logger.InfoContext(ctx, "effective VPN TUN MTU", "mtu", budget.TUNMTU, "max_frame", budget.MaxFrame,
 		"auto", budget.Auto, "wan_links", underlays)
-	pumpDevice, err := o.platform.OpenNetworkSession(ctx, guard, o.tcp, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
+	pumpDevice, err := o.tcp.platform.OpenNetworkSession(ctx, guard, o.tcp, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
 	if err != nil {
 		return err
 	}
