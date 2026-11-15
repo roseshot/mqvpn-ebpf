@@ -1,9 +1,7 @@
 package p2mp
 
 import (
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -21,9 +19,7 @@ type PeerConfig struct {
 	// By default a peer's id is matched against the verified Client certificate CN.
 	// certificate_cn permits a different human-friendly peer ID.
 	CertificateCN string `yaml:"certificate_cn,omitempty"`
-	// Deprecated: kept solely for a rolling upgrade of existing clusters.
-	CertificateSHA256 string   `yaml:"certificate_sha256,omitempty"`
-	Routes            []string `yaml:"routes"`
+	Routes []string `yaml:"routes"`
 	// Nil means inherit the instance setting; [] explicitly suppresses it.
 	PushRoutes      []string `yaml:"push_routes,omitempty"`
 	PushDNS         []string `yaml:"push_dns,omitempty"`
@@ -36,7 +32,6 @@ type FileConfig struct {
 
 type Rule struct {
 	ID              string
-	Fingerprint     [32]byte // only populated for deprecated SHA256 peer rules
 	CertificateCN   string
 	PushRoutes      []string // nil => inherit instance-wide defaults
 	PushDNS         []string
@@ -68,41 +63,24 @@ func Parse(f FileConfig) (*Config, error) {
 	}
 	cfg := &Config{}
 	ids := map[string]bool{}
-	digests := map[[32]byte]bool{}
 	names := map[string]bool{}
 	for _, p := range f.Peers {
 		if p.ID == "" || ids[p.ID] {
 			return nil, fmt.Errorf("duplicate or empty peer ID %q", p.ID)
 		}
 		ids[p.ID] = true
-		var digest [32]byte
 		cn := p.CertificateCN
-		if p.CertificateSHA256 != "" {
-			if cn != "" {
-				return nil, fmt.Errorf("peer %s cannot mix legacy certificate_sha256 and certificate_cn", p.ID)
-			}
-			raw, err := hex.DecodeString(strings.ReplaceAll(strings.TrimSpace(p.CertificateSHA256), ":", ""))
-			if err != nil || len(raw) != sha256.Size {
-				return nil, fmt.Errorf("peer %s invalid legacy certificate fingerprint", p.ID)
-			}
-			copy(digest[:], raw)
-			if digests[digest] {
-				return nil, fmt.Errorf("duplicate client certificate fingerprint for %s", p.ID)
-			}
-			digests[digest] = true
-		} else {
-			if cn == "" {
-				cn = p.ID
-			}
-			if cn != strings.TrimSpace(cn) || strings.ContainsAny(cn, "\r\n\x00") || names[cn] {
-				return nil, fmt.Errorf("peer %s has invalid or duplicate certificate CN %q", p.ID, cn)
-			}
-			names[cn] = true
+		if cn == "" {
+			cn = p.ID
 		}
+		if cn != strings.TrimSpace(cn) || strings.ContainsAny(cn, "\r\n\x00") || names[cn] {
+			return nil, fmt.Errorf("peer %s has invalid or duplicate certificate CN %q", p.ID, cn)
+		}
+		names[cn] = true
 		if len(p.Routes) == 0 && !p.DynamicTunnelIP {
 			return nil, fmt.Errorf("peer %s has no destination prefixes", p.ID)
 		}
-		r := &Rule{ID: p.ID, Fingerprint: digest, CertificateCN: cn, DynamicTunnelIP: p.DynamicTunnelIP}
+		r := &Rule{ID: p.ID, CertificateCN: cn, DynamicTunnelIP: p.DynamicTunnelIP}
 		if p.PushRoutes != nil {
 			routes, err := routepush.Parse(p.PushRoutes)
 			if err != nil {
@@ -145,47 +123,27 @@ func Parse(f FileConfig) (*Config, error) {
 	return cfg, nil
 }
 
-// PeerByCertificate is connection authentication only. It does not inspect
-// or authorize any tunneled traffic's inner IP source or destination.
-// PeerByCertificate maps a leaf certificate to exactly one explicit peer.
-// A mixed legacy-fingerprint/CN migration must fail closed if one certificate
-// happens to match multiple authorization entries. YAML order is never a
-// valid way to choose elevated network destinations.
+// PeerByCertificate looks up an explicitly configured CN after the caller
+// has verified Client mTLS against the tenant's trusted CA and optional CRL.
+// A trusted CA alone never grants destination prefix ownership.
 func (c *Config) PeerByCertificate(certDER []byte) *Rule {
-	sum := sha256.Sum256(certDER)
-	var cert *x509.Certificate
-	parsed := false
-	var match *Rule
-	for _, p := range c.Peers {
-		matched := false
-		if p.CertificateCN == "" {
-			matched = p.Fingerprint == sum
-		} else {
-			if !parsed {
-				parsed = true
-				var err error
-				cert, err = x509.ParseCertificate(certDER)
-				if err != nil || cert.IsCA || cert.Subject.CommonName == "" {
-					cert = nil
-				}
-			}
-			matched = cert != nil && cert.Subject.CommonName == p.CertificateCN
-		}
-		if matched {
-			if match != nil {
-				return nil
-			}
-			match = p
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil || cert.IsCA || cert.Subject.CommonName == "" {
+		return nil
+	}
+	for _, rule := range c.Peers {
+		if rule.CertificateCN == cert.Subject.CommonName {
+			return rule
 		}
 	}
-	return match
+	return nil
 }
 
-// SameIdentity decides whether a previously authorized connection still
-// belongs to the same peer across a hot-reloaded policy generation.
+// SameIdentity decides whether a hot-reloaded rule still authorizes a
+// previously authenticated session under the same unique tenant CN.
 func (r *Rule) SameIdentity(other *Rule) bool {
-	return r != nil && other != nil && r.ID == other.ID &&
-		r.CertificateCN == other.CertificateCN && r.Fingerprint == other.Fingerprint
+	return r != nil && other != nil &&
+		r.ID == other.ID && r.CertificateCN == other.CertificateCN
 }
 
 // EffectivePush inherits instance defaults when the client-specific
