@@ -237,8 +237,8 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	logger.InfoContext(ctx, "primary WAN bound", "source_ip", selectedIP, "interface", o.tcp.wanInterface, "local", base.LocalAddr())
 	// Multiple *remote* Server addresses require a single packet reader
 	// spanning all Client source sockets, so QUIC CIDs stay in one
-	// connection registry. Legacy same-destination WAN sockets continue
-	// to use SO_BINDTODEVICE via independent WAN transports.
+	// connection registry. Same-destination WAN sockets continue to
+	// use SO_BINDTODEVICE via independent WAN transports.
 	remoteSpecific := o.useServerWANs
 	for _, link := range o.wans {
 		if link.ServerIP != "" {
