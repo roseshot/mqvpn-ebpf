@@ -331,7 +331,15 @@ func TestPreparedSingleIPCertAndTLSWithoutSNI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := keyPair(cfg.Instances[0].Cert, cfg.Instances[0].Key)
+	// This test intentionally trusts its self-signed IP SAN Server cert
+	// as a root. For mTLS the Client must send its separate CA-issued CN
+	// leaf, never the Server's own certificate as a Client identity.
+	if !root.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) {
+		t.Fatal("could not trust the isolated IP SAN Server test identity")
+	}
+	cert, err := keyPair(
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.pem"),
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.key"))
 	if err != nil {
 		t.Fatal(err)
 	}
