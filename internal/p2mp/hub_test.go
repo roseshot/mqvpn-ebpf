@@ -2,9 +2,7 @@ package p2mp
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"io"
 	"net/netip"
 	"sync"
@@ -50,11 +48,9 @@ func ip4(src, dst [4]byte) []byte {
 }
 func prepare(t *testing.T) (*Hub, *fakeDevice, *Session, *Session, *fakeStream, *fakeStream, context.CancelFunc) {
 	t.Helper()
-	a := sha256.Sum256([]byte("A"))
-	b := sha256.Sum256([]byte("B"))
 	cfg, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "A", CertificateSHA256: hex.EncodeToString(a[:]), Routes: []string{"10.77.0.2/32"}},
-		{ID: "B", CertificateSHA256: hex.EncodeToString(b[:]), Routes: []string{"10.77.0.3/32"}},
+		{ID: "A", Routes: []string{"10.77.0.2/32"}},
+		{ID: "B", Routes: []string{"10.77.0.3/32"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
