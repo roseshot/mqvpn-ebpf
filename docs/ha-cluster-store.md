@@ -79,13 +79,54 @@ The test fake's `SetAvailable(false)` exercises a fail-closed API contract;
 it does **not** simulate actual Raft voting, network partitions, disk
 persistence, split-brain prevention or reconfiguration.
 
-A generic `CheckApplied` helper performs a **fresh** store read to compare
-a current member's locally applied membership, policy and CRL revisions
-against the committed snapshot. It fails closed on missing/quorum-lost state,
-stale policy/CRL or removed members. The `AppliedState` input is trusted
-only if a future reconciler independently verified and activated those
-bytes; passing arbitrary YAML as "applied" would be unsafe. This helper is
-**not yet connected to the Server's local `/readyz` or Client admission**.
+## Node-local observations versus globally committed state
+
+A VPN Server **reads its own live operational state**; it must not replicate
+transient telemetry as consensus data or issue remote quorum reads each time
+a local health endpoint is queried. The existing `GET /livez` and `GET
+/readyz` already read local process state. Their present readiness check
+proves only local listener/configuration startup, **not** that consensus,
+routing or peer ownership is healthy.
+
+| Node reads locally (not synchronized) | Cluster coordination (quorum required) |
+| --- | --- |
+| Listener socket binding, TUN device, network interfaces/WAN carrier, local Linux FIB, forwarding capability | Committed Server membership and desired policy revision |
+| Process load, packet/drop counters, observed RTT/loss, live QUIC path health | Tenant/peer authorization policy digests, CA/CRL manifest revisions |
+| Whether **this node** validated and activated policy/CRL bytes; local certificate expiry | Unique tunnel-IP leases, peer-owner epochs and fencing tokens |
+| Per-node health and capacity metrics | Authoritative owner lookup for inter-Server forwarding |
+
+The `CheckNodeLocal` primitive invokes caller-supplied node-local probes
+for configured resources. It does not depend on a `ClusterStore`, and
+different nodes may legitimately report different WAN, TUN or route health.
+Actual network/TUN probe implementations and Server manager hooks are
+separate work; the existing `/readyz` has **not** been modified here.
+
+`LocalControlView.Refresh` is designed for a background worker to perform
+a **fresh linearizable** `Store.Read` and retain the last committed policy,
+CRL and membership snapshot for a **bounded maximum age** (up to 30 seconds).
+`CheckAppliedLocal` compares a node's independently validated/applied state
+against this observation **without any network call**. An unavailable or
+contradictory refresh immediately invalidates this local view; a stalled
+worker allows the view to expire and fail closed. Removed members, changed
+policy and changed CRL are rejected once their new committed snapshot is
+observed. Local status and local observation may be evaluated on separate
+schedules.
+
+**Security boundary:** bounded-age observations are suitable only for local
+operational readiness/diagnostics; they cannot guarantee instantaneous
+revocation and **cannot authorize a new tunnel lease, peer ownership change
+or security-critical Client admission**. A policy update could commit between
+refreshes. For such decisions, `CheckApplied` still performs an authoritative
+quorum-backed read and a separate committed lease/fencing check remains
+necessary. The admission/reconciliation implementation must define the
+maximum tolerated revocation delay and prevent stale nodes from accepting
+new sessions when that policy cannot be met. No offline fallback should mint
+leases or bypass fencing. Verified `AppliedState` must come from a trusted
+reconciler, never arbitrary YAML or Client data.
+
+The local probes, control-view cache and strict `CheckApplied` are reusable
+components, but none is yet connected to live Server `/readyz`, Client
+admission, or a production Raft backend.
 
 No `ha.backend` Server config flag is introduced by this PR: advertising a
 nonfunctional backend mode would be dangerous. Production HA readiness and
