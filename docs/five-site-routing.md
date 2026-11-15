@@ -69,7 +69,7 @@ TUN exactly once. It runs the existing independent encryption, four-WAN,
 network load, VXLAN and voice scenarios followed by **five-site BGP and
 OSPF**. The older two-site BGP CI step and duplicated standalone
 five-site setup/build job were removed because the five-site tests
-supersede them. The older two-site script remains usable manually.
+supersede them. The retired two-site script is no longer available; use `five-site-frr.sh bgp` or `five-site-frr.sh ospf`.
 
 GitHub Actions supplies `WAN_SEED` from `github.run_id`; the same run
 can be repeated locally by using the printed seed. BGP and OSPF use
