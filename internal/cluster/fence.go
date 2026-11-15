@@ -25,6 +25,7 @@ type Peer struct {
 // that the prior epoch was fenced, not that another Server may take ownership.
 // MembershipRevision binds observations to a committed membership generation.
 type Record struct {
+	ClusterID          string
 	Peer               Peer
 	OwnerNode          string
 	Epoch              uint64
@@ -78,7 +79,10 @@ func validID(s string) bool {
 // Replays of an identical generation are idempotent; conflicts and rollback
 // are rejected. A removed owner is immediately fenced locally, including
 // after that node ID later rejoins with the same spelling.
-func (f *Fence) SetMembers(revision uint64, nodeIDs []string) error {
+func (f *Fence) SetMembers(clusterID string, revision uint64, nodeIDs []string) error {
+	if clusterID != f.clusterID {
+		return errors.New("membership belongs to another cluster")
+	}
 	if revision == 0 || len(nodeIDs) < 2 {
 		return errors.New("HA membership requires a positive revision and at least two Servers")
 	}
@@ -125,6 +129,9 @@ func (f *Fence) SetMembers(revision uint64, nodeIDs []string) error {
 // outside this package. Neither an expired lease nor membership change alone
 // grants new ownership.
 func (f *Fence) Apply(next Record, now time.Time) error {
+	if next.ClusterID != f.clusterID {
+		return errors.New("owner record belongs to another cluster")
+	}
 	if !validID(next.Peer.Tenant) || !validID(next.Peer.ID) || next.Epoch == 0 {
 		return errors.New("invalid tenant, peer or owner epoch")
 	}
