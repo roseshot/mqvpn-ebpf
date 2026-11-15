@@ -1,6 +1,7 @@
-package app
+package client
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"net/url"
 	"strings"
 	"testing"
@@ -9,7 +10,7 @@ import (
 func TestClientEndpointCanonicalServer(t *testing.T) {
 	for _, tc := range []struct{ server, path, expectedDial, expectedURL string }{
 		{"customer-a.vpn.example.com:4433", "/.well-known/masque/ethernet/", "customer-a.vpn.example.com:4433", "https://customer-a.vpn.example.com:4433/.well-known/masque/ethernet/"},
-		{"tenant.example.com", "", "tenant.example.com:443", "https://tenant.example.com:443" + defaultPath},
+		{"tenant.example.com", "", "tenant.example.com:443", "https://tenant.example.com:443" + vpnwire.DefaultPath},
 		{"TENANT.EXAMPLE.COM:8443", "/custom/masque", "tenant.example.com:8443", "https://tenant.example.com:8443/custom/masque"},
 	} {
 		got, err := planClientEndpoint(tc.server, tc.path, "")
@@ -60,11 +61,11 @@ func TestClientRejectsRemovedURLAndSNICompatibility(t *testing.T) {
 
 func TestClientSingleInstanceIPCertEndpoint(t *testing.T) {
 	for _, tc := range []struct{ raw, host, dial, url string }{
-		{"198.51.100.10", "198.51.100.10", "198.51.100.10:443", "https://198.51.100.10:443" + defaultPath},
-		{"198.51.100.10:54433", "198.51.100.10", "198.51.100.10:54433", "https://198.51.100.10:54433" + defaultPath},
-		{"[2001:db8::10]", "2001:db8::10", "[2001:db8::10]:443", "https://[2001:db8::10]:443" + defaultPath},
-		{"[2001:db8::10]:54433", "2001:db8::10", "[2001:db8::10]:54433", "https://[2001:db8::10]:54433" + defaultPath},
-		{"2001:db8::10", "2001:db8::10", "[2001:db8::10]:443", "https://[2001:db8::10]:443" + defaultPath},
+		{"198.51.100.10", "198.51.100.10", "198.51.100.10:443", "https://198.51.100.10:443" + vpnwire.DefaultPath},
+		{"198.51.100.10:54433", "198.51.100.10", "198.51.100.10:54433", "https://198.51.100.10:54433" + vpnwire.DefaultPath},
+		{"[2001:db8::10]", "2001:db8::10", "[2001:db8::10]:443", "https://[2001:db8::10]:443" + vpnwire.DefaultPath},
+		{"[2001:db8::10]:54433", "2001:db8::10", "[2001:db8::10]:54433", "https://[2001:db8::10]:54433" + vpnwire.DefaultPath},
+		{"2001:db8::10", "2001:db8::10", "[2001:db8::10]:443", "https://[2001:db8::10]:443" + vpnwire.DefaultPath},
 	} {
 		e, err := planClientEndpoint(tc.raw, "", "")
 		if err != nil || e.serverName != tc.host || e.dialAddress != tc.dial || e.requestURL != tc.url {

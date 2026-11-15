@@ -1,6 +1,6 @@
 //go:build linux
 
-package app
+package client
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 )
 
 type recordingClientPlatform struct {
-	linuxClientPlatform
+	linuxPlatform
 	called bool
 }
 
@@ -28,7 +28,7 @@ func TestClientPlatformSelectionDoesNotBypassInjectedAdapter(t *testing.T) {
 	if err != nil || !ip.Equal(net.IPv4(192, 0, 2, 12)) || !custom.called {
 		t.Fatalf("Client did not call injected underlay adapter: %v %v", ip, err)
 	}
-	if _, ok := platformForClient(nil).(linuxClientPlatform); !ok {
+	if _, ok := platformForClient(nil).(linuxPlatform); !ok {
 		t.Fatal("standalone Client must retain its existing Linux adapter by default")
 	}
 }

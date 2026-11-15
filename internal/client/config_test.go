@@ -1,6 +1,7 @@
-package app
+package client
 
 import (
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 	"context"
 	"io"
 	"log/slog"
@@ -29,7 +30,7 @@ func TestClientCompactConfigAndDefaultEndpoint(t *testing.T) {
 		t.Fatalf("unexpected client defaults %+v", cfg)
 	}
 	endpoint, err := planClientEndpoint(cfg.Server, cfg.Path, cfg.ConnectIP)
-	if err != nil || endpoint.dialAddress != "tenant.vpn.example.com:443" || endpoint.serverName != "tenant.vpn.example.com" || !strings.HasSuffix(endpoint.requestURL, defaultPath) {
+	if err != nil || endpoint.dialAddress != "tenant.vpn.example.com:443" || endpoint.serverName != "tenant.vpn.example.com" || !strings.HasSuffix(endpoint.requestURL, vpnwire.DefaultPath) {
 		t.Fatalf("invalid compact endpoint %+v: %v", endpoint, err)
 	}
 }
@@ -54,11 +55,11 @@ func TestClientYAMLStrictValidation(t *testing.T) {
 func TestClientYAMLAndCLIOverrideBeforeNetworking(t *testing.T) {
 	path := writeClientTestYAML(t, "server: 198.51.100.10\naddress: 10.77.0.2/24\nca: /missing/ca.crt\ncert: /missing/client.crt\nkey: /missing/client.key\n")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	err := RunClient(context.Background(), []string{"--config", path}, logger)
+	err := Run(context.Background(), []string{"--config", path}, logger)
 	if err == nil || !strings.Contains(err.Error(), "read CA") {
 		t.Fatalf("IP SAN server target must pass endpoint validation before CA check: %v", err)
 	}
-	err = RunClient(context.Background(), []string{"--config", path, "--server", "tenant.vpn.example.com"}, logger)
+	err = Run(context.Background(), []string{"--config", path, "--server", "tenant.vpn.example.com"}, logger)
 	if err == nil || !strings.Contains(err.Error(), "read CA") {
 		t.Fatalf("CLI DNS server override ignored: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestClientYAMLTCPAndTCPolicy(t *testing.T) {
 }
 func TestClientConfigCanRequestDynamicAddress(t *testing.T) {
 	cfg, err := loadClientFile(writeClientTestYAML(t, "server: tenant.vpn.example.com\nca: /etc/ca.crt\ncert: /etc/client.crt\nkey: /etc/client.key\n"))
-	if err != nil || !dynamicAddressRequested(cfg.Address) {
+	if err != nil || !vpnwire.DynamicAddressRequested(cfg.Address) {
 		t.Fatalf("dynamic Tunnel IP defaults: %+v %v", cfg, err)
 	}
 }
@@ -97,7 +98,7 @@ func TestClientYAMLMasquePathAndCLIOverride(t *testing.T) {
 		t.Fatalf("CLI path: %+v %v", got, err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	err = RunClient(context.Background(), []string{"--server", "vpn.example.com", "--path", "/invalid/../path"}, logger)
+	err = Run(context.Background(), []string{"--server", "vpn.example.com", "--path", "/invalid/../path"}, logger)
 	if err == nil || !strings.Contains(err.Error(), "MASQUE") {
 		t.Fatalf("invalid --path not rejected: %v", err)
 	}
