@@ -13,6 +13,7 @@
 | 加密与身份验证 | TLS 1.3 + 双向 TLS（mTLS）；客户端证书还必须在 Server 的 SHA-256 指纹白名单中 |
 | 多租户 | 一个 UDP/QUIC 监听端口；通过校验过的 TLS SNI 选择相互隔离的 VPN 实例 |
 | 多 WAN | 每个 Client 可配置多条有序 QUIC 路径；支持 `round_robin` 和连接级 `low_latency` 策略 |
+| Server 高可用 | Server 本地健康检测、Keepalived/VRRP UDP VIP 主备、HAProxy TCP 主备或双活；Client 无需 HA 配置 |
 | QoS | 实时、保障、尽力而为三级独立队列，按 4:2:1 加权调度 |
 | VoIP | 可选的 SIP/DSCP EF 独立 Sticky WAN，支持故障切换 |
 | 路由 | Server 按认证 Peer 的目的网段转发；支持推送路由、DNS，动态路由由外部 FRRouting 管理 |
