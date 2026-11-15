@@ -1,3 +1,5 @@
+//go:build linux
+
 package app
 
 import (
@@ -20,7 +22,7 @@ import (
 // Setup failures close partially initialized resources in the same order.
 func openClientNetworkSession(
 	ctx context.Context,
-	guard *routepush.Guard,
+	guard clientRouteGuard,
 	config clientTCPOptions,
 	address string,
 	budget mtu.Result,
