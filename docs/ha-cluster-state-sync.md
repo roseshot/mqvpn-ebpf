@@ -6,6 +6,8 @@ instance CRL checks are in the dependent PKI PR. **This page does not claim
 cross-node replication is already running.** A working VRRP address alone
 is not a distributed session database.
 
+For the backend-neutral Phase B quorum/CAS interface (embedded Raft intended, etcd optional), see [ClusterStore contract](ha-cluster-store.md). The current MemoryStore and applied-policy checker are test primitives, not production distributed HA.
+
 ## What must be synchronized?
 
 | State | Consistency | Proposed authoritative owner | What standby does |
