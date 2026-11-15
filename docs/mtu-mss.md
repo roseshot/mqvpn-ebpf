@@ -156,7 +156,7 @@ Client:
 mqvpn-client --server a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 \
   --tun-mtu 1360 --max-frame 1374 \
-  --source-interface enp1s0 \
+  --wan 192.0.2.2@enp1s0 \
   --ca /etc/mqvpn/ca.crt --cert /etc/mqvpn/client.crt \
   --key /etc/mqvpn/client.key
 ~~~
