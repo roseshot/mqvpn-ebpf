@@ -29,7 +29,7 @@ it cannot see inner DSCP at path-selection time. Therefore it is *not*
 possible to promise a different MPQUIC WAN for assured versus best-effort
 datagrams on the same connection. The additional assured queue improves
 service order and latency under local congestion, not per-packet WAN affinity.
-The default path scheduler remains `round_robin` for backward compatibility.
+The default connection-wide path scheduler is `round_robin`.
 
 OSPF/BGP traffic can use DSCP CS6 to select the assured queue without taking
 the strict realtime transport; kernel or router QoS marking remains the
