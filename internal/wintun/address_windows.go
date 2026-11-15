@@ -17,10 +17,10 @@ import (
 // caller-created Wintun interface. It does not configure DNS, route selection,
 // endpoint protection or a full VPN session.
 type AddressLease struct {
-	api   addressAPI
-	row   windows.MibUnicastIpAddressRow
-	once  sync.Once
-	err   error
+	api  addressAPI
+	row  windows.MibUnicastIpAddressRow
+	once sync.Once
+	err  error
 }
 
 var ErrAddressChanged = errors.New("Wintun address was changed by another manager; refusing to delete it")
