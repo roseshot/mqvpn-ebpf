@@ -164,15 +164,14 @@ func (f *Fence) Apply(next Record, now time.Time) error {
 				return errors.New("same owner epoch may only extend a live identical lease")
 			}
 		} else if previous.OwnerNode != "" && next.OwnerNode != "" &&
-			previous.OwnerNode != next.OwnerNode {
-			return errors.New("cross-node owner transfer requires an intervening fence tombstone")
+			(previous.OwnerNode != next.OwnerNode || previous.TunnelIP != next.TunnelIP) {
+			return errors.New("owner transfer or tunnel IP change requires an intervening fence tombstone")
 		}
 	}
 	if next.OwnerNode != "" {
 		for peer, current := range f.records {
 			if peer != next.Peer && peer.Tenant == next.Peer.Tenant &&
-				current.OwnerNode != "" && now.Before(current.ValidUntil) &&
-				current.TunnelIP == next.TunnelIP {
+				current.OwnerNode != "" && current.TunnelIP == next.TunnelIP {
 				return fmt.Errorf("tunnel IP %s is already leased to peer %s", next.TunnelIP, peer.ID)
 			}
 		}
