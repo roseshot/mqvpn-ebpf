@@ -74,6 +74,13 @@ func validID(s string) bool {
 	return true
 }
 
+// Peer identity may be a certificate CN or a URI SAN (such as SPIFFE).
+// It is not a Server node identifier and must not be limited to DNS-label
+// characters. Reject control characters and whitespace at the edges.
+func validPeerIdentity(s string) bool {
+	return s != "" && len(s) <= 1024 && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "\r\n\x00")
+}
+
 // SetMembers consumes a quorum-committed membership list. The number of
 // Servers is independent from the number of voters in the consensus backend.
 // Replays of an identical generation are idempotent; conflicts and rollback
@@ -132,7 +139,7 @@ func (f *Fence) Apply(next Record, now time.Time) error {
 	if next.ClusterID != f.clusterID {
 		return errors.New("owner record belongs to another cluster")
 	}
-	if !validID(next.Peer.Tenant) || !validID(next.Peer.ID) || next.Epoch == 0 {
+	if !validPeerIdentity(next.Peer.Tenant) || !validPeerIdentity(next.Peer.ID) || next.Epoch == 0 {
 		return errors.New("invalid tenant, peer or owner epoch")
 	}
 	f.mu.Lock()
