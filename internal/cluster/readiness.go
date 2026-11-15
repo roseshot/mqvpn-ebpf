@@ -20,49 +20,29 @@ type AppliedState struct {
 	Policy             PolicyReference
 }
 
-// CheckApplied is the strict, authoritative control-plane check for a
-// security-critical admission or revocation decision. It performs a fresh
-// linearizable quorum read. Do NOT call it on every /readyz request or use it
-// to collect local TUN/WAN/OS health telemetry.
+// CheckApplied is a security-critical admission prerequisite, not a /readyz
+// check. It must read the current committed generation through a real quorum
+// backend; local process health is deliberately outside this function.
 func CheckApplied(ctx context.Context, store Store, applied AppliedState) error {
-	if store == nil {
-		return fmt.Errorf("%w: missing quorum control store", ErrNotReady)
-	}
-	if err := validateAppliedState(applied); err != nil {
-		return err
+	if store == nil || !validID(applied.ClusterID) || !validID(applied.NodeID) ||
+		applied.MembershipRevision == 0 || applied.Policy.Revision == 0 ||
+		!validDigest(applied.Policy.Digest) ||
+		(applied.Policy.CRLDigest != "" && !validDigest(applied.Policy.CRLDigest)) {
+		return fmt.Errorf("%w: missing store or verified local policy/node identity", ErrNotReady)
 	}
 	committed, err := store.Read(ctx, applied.ClusterID)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrNotReady, err)
 	}
-	return checkAppliedSnapshot(committed, applied)
-}
-
-func validateAppliedState(applied AppliedState) error {
-	if !validID(applied.ClusterID) || !validID(applied.NodeID) ||
-		applied.MembershipRevision == 0 || applied.Policy.Revision == 0 ||
-		!validDigest(applied.Policy.Digest) ||
-		(applied.Policy.CRLDigest != "" && !validDigest(applied.Policy.CRLDigest)) {
-		return fmt.Errorf("%w: missing verified local policy or node identity", ErrNotReady)
-	}
-	return nil
-}
-
-// checkAppliedSnapshot is the common comparison used by both an explicit
-// fresh quorum read and an asynchronously refreshed local observation.
-func checkAppliedSnapshot(committed ControlSnapshot, applied AppliedState) error {
-	if err := validateAppliedState(applied); err != nil {
-		return err
-	}
 	if committed.ClusterID != applied.ClusterID ||
 		committed.MembershipRevision != applied.MembershipRevision ||
 		committed.Policy != applied.Policy {
-		return fmt.Errorf("%w: committed membership or policy/CRL revision differs", ErrNotReady)
+		return fmt.Errorf("%w: committed membership or policy/CRL differs", ErrNotReady)
 	}
-	for _, node := range committed.Members {
-		if node == applied.NodeID {
+	for _, member := range committed.Members {
+		if member == applied.NodeID {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: Server is not a current member", ErrNotReady)
+	return fmt.Errorf("%w: Server is no longer a member", ErrNotReady)
 }
