@@ -82,7 +82,7 @@ func prepareServer(config ServerConfig) (preparedServer, error) {
 	for _, spec := range config.Instances {
 		if spec.MTU == 0 {
 			var err error
-			names := append([]string(nil), config.WANInterfaces...)
+			names := make([]string, 0, len(config.WANs))
 			for _, link := range config.WANs {
 				names = append(names, link.Interface)
 			}
