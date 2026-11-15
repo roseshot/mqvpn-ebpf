@@ -8,6 +8,26 @@ is not a distributed session database.
 
 For the backend-neutral Phase B quorum/CAS interface (embedded Raft intended, etcd optional), see [ClusterStore contract](ha-cluster-store.md). The current MemoryStore and applied-policy checker are test primitives, not production distributed HA.
 
+## What is local (never replicated by Raft)?
+
+**Per-node observed runtime status** is owned and read by each mqvpn Server:
+WAN/interface carrier and path loss/RTT, listener binding, TUN readiness,
+Linux route/FIB/FRR convergence, packet and flow counters, current CPU and
+memory pressure, and local policy/CRL validation results. These are not
+globally authoritative facts; nodes can legitimately disagree about their
+own health. Use local probes and health controllers, not quorum CAS for
+every observed metric or a synchronous cluster request on every `/readyz`.
+
+Quorum coordination is reserved for **desired or globally unique state**:
+membership, immutable policy/PKI/CRL manifest revisions, peer owner epoch,
+and tunnel IP lease allocation. A Server separately confirms it has locally
+applied the required committed manifest. A node may be locally healthy but
+**not authorized** to admit new Clients or change global ownership if its
+committed policy is stale or it lacks quorum. A locally cached view has a
+finite freshness horizon and cannot substitute for security-critical,
+linearizable admission/fencing. See [Node-local status and ClusterStore
+contract](ha-cluster-store.md).
+
 ## What must be synchronized?
 
 | State | Consistency | Proposed authoritative owner | What standby does |
