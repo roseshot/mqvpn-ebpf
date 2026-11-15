@@ -64,6 +64,8 @@ func TestWindowsAddressRowPreservesIPv4IPv6HostBits(t *testing.T) {
 				t.Fatal(err)
 			}
 			if row.InterfaceLuid != 1101 || row.OnLinkPrefixLength != uint8(prefix.Bits()) ||
+				row.PrefixOrigin != windows.IpPrefixOriginManual ||
+				row.SuffixOrigin != windows.IpSuffixOriginManual ||
 				row.Address.Family != test.family {
 				t.Fatalf("incorrect IP Helper row: %+v", row)
 			}
