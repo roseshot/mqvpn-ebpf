@@ -57,6 +57,12 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// A compileable CLI is not permission to establish a VPN. Until each
+	// native platform implements protected underlay, TUN, routes and DNS,
+	// fail before opening sockets or entering the reconnect supervisor.
+	if err := clientPlatformPreflight(); err != nil {
+		return err
+	}
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	var configuredWANs []clientWAN
