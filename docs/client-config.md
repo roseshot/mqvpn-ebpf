@@ -35,7 +35,7 @@ configuration and will fail validation.
 
 When `address` is omitted or set to `auto`, Client requests an
 authenticated server-assigned Tunnel IP at CONNECT. Server must
-configure `tunnel_pool` and authorize the certificate fingerprint
+configure `tunnel_pool` and authorize the verified Client CN
 with `dynamic_tunnel_ip: true`. An explicit `address: 10.77.0.2/24`
 is a static Tunnel IP and disables address negotiation.
 
@@ -90,10 +90,9 @@ mqvpn-client --server vpn.example.com:8443 --connect-ip 192.0.2.1 \
 ~~~
 
 Repeat `--wan` for each interface. The CLI list replaces any YAML
-`wans` list. Mixing a WAN list with legacy `source_ip` /
-`source_interface` / `wan2_ip` / `wan2_interface` fields is rejected
-rather than silently merging them. Single- and dual-WAN legacy flags
-are still accepted and mapped to the common ordered representation.
+`wans` list. Every WAN path is configured under `wans` in YAML or
+via repeated `--wan` CLI arguments. Omit both for kernel-selected
+source and route on a single path.
 
 **No fixed WAN maximum is imposed by mqvpn's configuration or loop.**
 The current `github.com/qoke/mp-quic-go v0.3.1` dependency has an
@@ -166,9 +165,7 @@ configuration list.
 | `reconnect` | Automatically reconnect on disconnect or dial failure (default true; false = one attempt) |
 | `tun`, `mtu`, `max_frame` | TUN name and MTU/frame limits |
 | `connect_ip` | Pin physical Server IP without changing TLS SNI |
-| `source_ip`, `source_interface` | Primary WAN binding |
 | `wans` | Ordered list of MPQUIC WANs: `source_ip` and `interface` |
-| `wan2_ip`, `wan2_interface` | Legacy secondary WAN parameters (still supported) |
 | `use_server_wans` | Discover Server WAN IPs from authenticated MPQUIC ADD_ADDRESS announcements |
 | `transport`, `udp_dial_timeout`, `tcp_port` | Transport and fallback policy |
 | `tc.mode`, `tc.object`, `tc.mss_clamp`, `tc.stats` | TCX tuning/ELF override |
@@ -199,7 +196,7 @@ of redirecting an underlay path through the tunnel.
 
 The program does not install firewall rules, VRFs, policy routing
 rules, custom DNS or inner traffic filters. For unusual multi-WAN
-routing, specify `source_interface` and optionally `source_ip`.
+routing, specify `wans[].interface` and optionally `wans[].source_ip`.
 
 ## Server-pushed DNS
 
