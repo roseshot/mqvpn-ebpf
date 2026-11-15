@@ -1,32 +1,40 @@
-# HA Phase B: pluggable, quorum-backed ClusterStore contract
+# HA architecture: local operation, shared policy, fenced ownership
 
-**Development status:** The interface and a test-only in-memory reference
-implementation have landed in a development PR. This does **not** enable
-distributed HA, run embedded Raft or deploy etcd. Cross-Server policy/CRL
-replication, P2MP forwarding, and distributed tunnel-IP leasing are not
-implemented by this PR.
+**Implemented:** standalone Server-local readiness, a backend-neutral
+`cluster.Store` contract, and a **local-only** `cluster.Fence` verifier.
 
-## No mandatory etcd dependency
+**Not implemented:** a production Raft/etcd backend, cross-Server policy/CRL
+reconciliation, distributed IP leases, inter-Server forwarding, or live
+encrypted-session takeover. Do not interpret the contract as a deployed
+N-node HA feature.
 
-The Go `internal/cluster.Store` interface defines the minimum **committed
-control-plane snapshot** contract. Different backends may implement it:
+## Three responsibilities, no extra state framework
 
-- **Embedded Raft (intended default):** VPN deployments can bootstrap a
-  separately sized quorum of 3 or 5 Raft voters, possibly co-located with
-  Servers. Durable log, snapshots, node identity, transport mTLS, joint
-  membership changes, recovery, and linearizable reads are prerequisites.
-  **This backend is not implemented.**
-- **External etcd/Consul (optional):** implement the same guarantees through
-  their documented quorum/CAS and watch semantics. **No adapter is wired.**
-- **MemoryStore (tests only):** process-local mutex CAS, no persistence,
-  authentication, or real quorum; not usable for multi-Server deployments.
+| Responsibility | Who owns it | Implementation boundary |
+| --- | --- | --- |
+| **Node-local operation**: TUN state, listeners, WAN health, local routing/FIB, resource metrics | Each Server reads its own kernel and process | `internal/app/server_health.go`; no cluster package or quorum dependency |
+| **Shared desired configuration**: Server membership and policy/PKI/CRL manifest generations | One quorum-backed control plane | `internal/cluster.Store`; real backend and reconciler pending |
+| **Exclusive peer/IP ownership**: tunnel-IP allocation and monotonically fenced peer epoch | Quorum-backed keyed lease authority | `internal/cluster.Fence` is a local verifier only; allocator and datapath integration pending |
 
-**N VPN Server nodes and Q consensus voters are independent.** A two-Server
-VPN cluster can use a three-voter state service; a five-Server pool may also
-use three voters. No fixed A/B pair, mandatory etcd, or two-node quorum
-fallback is assumed.
+Standalone deployments run entirely without Raft, etcd, Consul, quorum
+voters, or ClusterStore reads. Existing `/livez` and `/readyz` operate on
+local state. The Server manager samples every required local TUN's UP bit,
+host IP and MTU and initialized listeners every two seconds, independent of
+YAML reload polling. HTTP reads only the last atomic result. Failure of a
+single WAN is not automatically failure of the entire MPQUIC Server.
+Route/FIB convergence, packet-loss synthesis, actual listener traffic
+probe and resource-pressure alarms are **not** covered by this readiness
+endpoint.
 
-## Required operations
+In a future HA deployment, **N VPN Server nodes and Q voters are independent**;
+N can be 2, 3, 5 or more while Q is chosen separately (typically 3 or 5
+voters across failure domains). No mandatory etcd or two-Server limit.
+To minimize operational and implementation burden, implement and validate
+**one** production consensus backend first. Do not expose a selectable
+backend in YAML before a working implementation exists. Optional adapters
+for external etcd or Consul are deferred until justified by deployments.
+
+## ClusterStore remains deliberately narrow
 
 ```go
 type Store interface {
@@ -37,115 +45,53 @@ type Store interface {
 }
 ```
 
-A backend MUST give each successful `Read` a quorum-backed linearizable
-snapshot, and MUST execute `CompareAndSwap` as one durable transaction on a
-majority. If it cannot establish the required quorum it returns
-`ErrUnavailable`, not a cached stale value. Competing writers using an old
-global revision receive `ErrConflict`. The bootstrap transaction expects
-global revision 0 and commits revision 1. All updates increment the global
-revision exactly once. The global revision is not the Raft term.
+A production implementation must guarantee linearizable reads and durable,
+quorum-committed compare-and-swap. The global `Revision` increments by
+exactly one, with independently monotonic `MembershipRevision` and
+`Policy.Revision`; an unchanged policy or member revision cannot hide a
+change to that field. `ControlSnapshot` pins immutable SHA-256 policy and
+signed-CRL-manifest digests instead of private signing keys or QUIC secrets.
+On a stale writer, return `ErrConflict`; without quorum, return
+`ErrUnavailable`, never a stale successful read or local-only write.
 
-`ControlSnapshot` carries:
-- `cluster_id` and a global transaction `revision`;
-- versioned **Server** membership (N >= 2 and unique stable node IDs);
-- a separately versioned policy/PKI **digest**;
-- a separately pinned signed-CRL-manifest digest.
+`MemoryStore` has been moved into `memory_store_test.go`: it is a
+deterministic single-process test fake, is **not compiled into production**,
+and does not provide Raft elections, durable recovery or partition safety.
 
-Digest references are SHA-256 lowercase hex. The policy digest must cover the
-entire signed CRL manifest and tenant policy in an immutable staged bundle;
-the independent CRL digest makes CRL drift observable. The store commits
-**references**, not a CA signing key, Client private key or QUIC traffic
-secret. Before considering a node applied/ready, the reconciler must verify
-the referenced bundle and actual CRL bytes, validate CA trust and policy,
-then atomically activate them; this is future integration work.
+`CheckApplied` is a small, as-yet-unwired strict verification helper for a
+future security-critical admission path. It compares a Server's trusted,
+locally validated and activated policy/CRL/membership generations against
+a **fresh authoritative** `Store.Read`. The actual reconciler, authentication,
+and Server admission wiring are not implemented. `/readyz` never invokes
+`CheckApplied` or `Store.Read`.
 
-A membership change without a higher `MembershipRevision`, or a
-policy/CRL change without a higher `Policy.Revision`, is rejected. Neither
-member nor policy revision can go backwards. Exposing a read-only `Revision`
-is **not** proof that the local Server has applied that revision or is safe to
-receive a new connection.
+There is no `LocalControlView` cache or generic `CheckNodeLocal` registry:
+neither was used by the running Server. Avoid reintroducing caches or probe
+abstractions until a concrete consumer requires them.
 
-## Safety and performance boundaries
+## IP leases must not share a giant manifest transaction
 
-The interface covers **low-frequency Phase B policy and membership
-manifests**, not a global CAS of every live Client session. Phase C needs a
-separate **keyed, linearizable lease allocator** with atomic uniqueness over
-`(tenant, tunnel_IP)`, per-peer epoch fencing and grace periods. Serializing
-all Client session renewals through this single control snapshot would
-introduce unnecessary contention. The existing local `Fence` only checks
-quorum-issued records and cannot replace that distributed lease allocator.
+The `Store` snapshot is for **low-frequency** policy and membership
+changes. Session creation and renewal needs a separate **keyed**, linearizable
+lease operation with atomic uniqueness for `(tenant, tunnel_IP)`,
+monotonic owner epochs, explicit revocation/tombstone and fencing at both
+TUN ingress and egress. The local `Fence` cannot issue ownership or prove
+quorum, and there is no safely supported active/active session allocator.
 
-The test fake's `SetAvailable(false)` exercises a fail-closed API contract;
-it does **not** simulate actual Raft voting, network partitions, disk
-persistence, split-brain prevention or reconfiguration.
+Local TUN health **must not** imply permission to assign an IP or accept a
+Client when shared policy/CRL requirements cannot be verified. During
+quorum loss, no new conflicting owner/IP leases or security-sensitive
+admission may be authorized through stale local state. A revoked peer
+cannot be made safe merely by caching a recent policy digest.
 
-## Node-local observations versus globally committed state
+## End-to-end exit criterion
 
-A VPN Server **reads its own live operational state**; it must not replicate
-transient telemetry as consensus data or issue remote quorum reads each time
-a local health endpoint is queried. The existing `GET /livez` and `GET
-/readyz` already read local process state. The local /readyz status now also reflects required TUN interface UP,
-host IP and MTU conditions sampled every two seconds, **not** that
-consensus, WAN route convergence or peer ownership is healthy.
+Before claiming distributed HA: prove N=2/3/5 Server configurations
+independent of Q=3/5 voters, signed policy/CRL convergence, failure-domain
+partitions, no epoch rollback after restart, no duplicate IP allocation,
+fenced owner cutover, and inter-Server forwarding across real QUIC/TUN
+paths. Do not equate load-balancer failover with live QUIC session transfer.
 
-| Node reads locally (not synchronized) | Cluster coordination (quorum required) |
-| --- | --- |
-| Listener socket binding, TUN device, network interfaces/WAN carrier, local Linux FIB, forwarding capability | Committed Server membership and desired policy revision |
-| Process load, packet/drop counters, observed RTT/loss, live QUIC path health | Tenant/peer authorization policy digests, CA/CRL manifest revisions |
-| Whether **this node** validated and activated policy/CRL bytes; local certificate expiry | Unique tunnel-IP leases, peer-owner epochs and fencing tokens |
-| Per-node health and capacity metrics | Authoritative owner lookup for inter-Server forwarding |
-
-The `CheckNodeLocal` primitive invokes caller-supplied node-local probes
-for configured resources. It does not depend on a `ClusterStore`, and
-different nodes may legitimately report different WAN, TUN or route health.
-The Server manager uses `CheckNodeLocal` to sample each required local
-TUN's kernel UP flag, host IP and MTU and required listener initialization
-every two seconds, independently from YAML polling. HTTP `/readyz`
-reads only the latest atomic local result. Per-WAN RTT/loss, FIB convergence,
-resource-pressure and advanced end-to-end probes remain future work.
-
-`LocalControlView.Refresh` is designed for a background worker to perform
-a **fresh linearizable** `Store.Read` and retain the last committed policy,
-CRL and membership snapshot for a **bounded maximum age** (up to 30 seconds).
-`CheckAppliedLocal` compares a node's independently validated/applied state
-against this observation **without any network call**. An unavailable or
-contradictory refresh immediately invalidates this local view; a stalled
-worker allows the view to expire and fail closed. Removed members, changed
-policy and changed CRL are rejected once their new committed snapshot is
-observed. Local status and local observation may be evaluated on separate
-schedules.
-
-**Security boundary:** bounded-age observations are suitable only for local
-operational readiness/diagnostics; they cannot guarantee instantaneous
-revocation and **cannot authorize a new tunnel lease, peer ownership change
-or security-critical Client admission**. A policy update could commit between
-refreshes. For such decisions, `CheckApplied` still performs an authoritative
-quorum-backed read and a separate committed lease/fencing check remains
-necessary. The admission/reconciliation implementation must define the
-maximum tolerated revocation delay and prevent stale nodes from accepting
-new sessions when that policy cannot be met. No offline fallback should mint
-leases or bypass fencing. Verified `AppliedState` must come from a trusted
-reconciler, never arbitrary YAML or Client data.
-
-Only the local TUN/listener probes are connected to the Server manager and
-`/readyz`. The bounded-age control-view cache, strict `CheckApplied`,
-Client admission, inter-Server state sync and production Raft backend
-remain unconnected. Local readiness cannot establish quorum or authorize
-shared leases.
-
-No `ha.backend` Server config flag is introduced by this PR: advertising a
-nonfunctional backend mode would be dangerous. Production HA readiness and
-Client admission must remain unavailable until a real backend is integrated
-and its current committed policy is applied locally.
-
-## Acceptance tests for later implementation
-
-A production backend must demonstrate linearizable reads after leader
-failover, concurrent CAS, no rollback after restart/snapshot restore, stale
-watch rejection, 3/5-voter majority/minority partition isolation, and 2/3/5
-Server membership changes independent from voter count. CRL revocation must
-reject the same Client on every Server before the new policy is advertised
-as ready; a minority partition must not mint peer ownership or tunnel IPs.
-
-See [Issue #43](https://github.com/roseshot/mqvpn-ebpf/issues/43) and
-[HA synchronization contract](ha-cluster-state-sync.md).
+See [HA state sync](ha-cluster-state-sync.md),
+[local ownership fence](ha-ownership-fence.md), and
+[tracking issue #43](https://github.com/roseshot/mqvpn-ebpf/issues/43).

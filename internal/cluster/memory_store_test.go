@@ -6,10 +6,8 @@ import (
 	"sync"
 )
 
-// MemoryStore is an in-process transactional reference implementation for
-// deterministic tests. It is NOT a Raft backend, is not durable, authenticates
-// no nodes, and MUST NOT be used for multi-Server production coordination.
-// It uses the same Store contract intended for a real consensus adapter.
+// MemoryStore exists only in Go tests. It is not compiled into production
+// binaries and must never be used as a substitute for distributed consensus.
 type MemoryStore struct {
 	mu        sync.Mutex
 	available bool

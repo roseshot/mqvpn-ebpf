@@ -47,12 +47,12 @@ N Servers. They are not consensus records and do not belong in Raft/etcd.
 
 Only shared desired state and facts requiring a unique cluster-wide owner
 need quorum: membership, policy/PKI/CRL manifest revisions, tunnel IP leases
-and fenced peer ownership. A local health HTTP request must not block on an
-etcd/Raft read. Phase B provides optional background-refresh primitives
-documented in [ClusterStore](ha-cluster-store.md), but these are not
-connected to the Server's distributed policy/ownership admission path yet.
-The Server now samples required local TUN interfaces every two seconds,
-independently of configuration reload polling, with no Store/etcd/Raft request.
+and fenced peer ownership. A local health HTTP request must not block on an etcd/Raft read.
+The Server samples required local TUN interfaces every two seconds,
+independently of configuration reload polling, with no Store/etcd/Raft
+request. The minimal [ClusterStore contract](ha-cluster-store.md) remains
+unwired to distributed policy/ownership admission; there is no
+preemptive background control-state cache.
 
 The existing `/livez` and `/readyz` remain purely local. The
 `/readyz` status also reflects each active local TUN's UP flag, configured
@@ -61,9 +61,9 @@ does not disable a multi-WAN node that can fail over. The probe loop also
 runs when `--reload-interval=0`. Local readiness
 **does not** mean that a new shared lease can be allocated or a revoked Client
 can be admitted while isolated from quorum: those distributed decisions
-require authoritative fencing and up-to-date committed policy. A bounded
-local status cache is never a lease allocator or proof of immediate CRL
-revocation.
+require authoritative fencing and up-to-date committed policy. The
+atomic local readiness bit is never a lease allocator or proof of immediate
+CRL revocation.
 
 ## 1. Enable Server readiness checks
 
