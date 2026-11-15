@@ -189,7 +189,7 @@ wans:
 
 The Server advertises authenticated additional QUIC path addresses through the negotiated MPQUIC extension. The Client must have reachable source/destination WAN pairs and appropriate Linux source-policy routes. Configure these **outside** mqvpn. See [Server multi-WAN](server-multiwan.md) and [Client WAN selection](client-config.md#wan-path-configuration-ordered-list).
 
-The legacy `wan_interfaces` option is only for WAN-aware MTU discovery; do **not** combine it with `wans`.
+When `wans` is omitted, WAN MTU discovery follows the local bind interface or default route. There is no second WAN configuration format.
 
 ## Other Server choices
 

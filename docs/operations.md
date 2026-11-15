@@ -7,7 +7,7 @@ This guide is for a Linux operator who has deployed a Server and at least one Cl
 A working deployment has several independent layers:
 
 1. **Underlay:** physical WAN reachability to the Server's UDP listener. With MPQUIC, each source/destination WAN pair needs viable Linux routing.
-2. **Authentication:** a Server certificate whose DNS/IP SAN matches `server`, trusted Client CA material, and a Client fingerprint listed in the selected Server tenant's `peers` YAML.
+2. **Authentication:** a Server certificate whose DNS/IP SAN matches `server`, trusted Client CA material, and a verified Client certificate CN explicitly listed in the selected tenant's `peers` YAML.
 3. **Overlay:** authenticated QUIC/HTTP3 CONNECT, a usable `mq0` TUN on both sides, a reachable peer destination map, and matching MTU/frame budgets.
 4. **LAN routing:** Linux FIB routes and forwarding policy for any networks *behind* the VPN peers. FRRouting can provide OSPF/BGP; mqvpn does not auto-configure these protocols.
 
@@ -52,7 +52,7 @@ Logs go to **stderr**, and may contain sensitive network topology and peer infor
 | --- | --- | --- |
 | UDP dial or QUIC handshake times out | Underlay | Server's `listen` address, UDP firewall/port, actual `connect_ip` and source routing; see [TCP fallback](tcp-fallback.md) |
 | Certificate validation fails | Identity | TLS name versus Server certificate DNS/IP SAN, `ca` file, clock and mTLS peer certificate |
-| CONNECT rejected or peer unauthorized | P2MP authorization | Tenant SNI/Host, `client_ca`, exact Client DER certificate SHA-256 in `peers`, peer destination overlap |
+| CONNECT rejected or peer unauthorized | P2MP authorization | Tenant SNI/Host, `client_ca`, verified Client certificate CN or explicit `certificate_cn` mapping in `peers`, peer destination overlap |
 | `mq0` missing or cannot be configured | Linux TUN | `/dev/net/tun`, capabilities, TUN name collision, interface MTU; see [TUN lifecycle](tun-lifecycle.md) |
 | Client can ping Server TUN but not another site | Linux routing / peer mapping | Remote peer `routes` ownership, Server `ip_forward`, kernel routes and forwarding/firewall rules |
 | Additional WAN paths do not validate | MPQUIC underlay | Each `--wan` source IP/interface and Server destination, source-policy routes, interface UP state; see [Multi-WAN](server-multiwan.md) |

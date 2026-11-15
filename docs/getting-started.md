@@ -37,7 +37,7 @@ openssl x509 -in demo-certs/server.crt -noout -text | grep -A2 "Subject Alternat
 openssl x509 -in demo-certs/client.crt -noout -subject
 ```
 
-The Client certificate **CN** from the final command is `mqvpn-client`. This identity will be explicitly mapped to a Server-authorized Peer. You no longer need to compute or copy an SHA-256 fingerprint.
+The Client certificate **CN** from the final command is `mqvpn-client`. This identity must match a Server-authorized Peer entry.
 
 Copy **only** the appropriate test materials to the Client using a secure transfer: `ca.crt`, `client.crt` and `client.key`. Keep `ca.key` and `server.key` on the Server. Use paths readable by the daemon without relaxing private-key permissions.
 

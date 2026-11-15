@@ -31,10 +31,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	server := fs.String("server", "", "authenticated tenant DNS hostname[:port]")
 	pathFlag := fs.String("path", "", "optional MASQUE CONNECT path (default /.well-known/masque/ethernet/)")
 	connectIP := fs.String("connect-ip", "", "connect to server IP without DNS resolution")
-	wan1 := fs.String("source-ip", "", "primary WAN local source IPv4/IPv6 address")
-	wan2 := fs.String("wan2-ip", "", "secondary WAN local source IPv4/IPv6 address (optional)")
-	wan1Iface := fs.String("source-interface", "", "primary WAN network interface (SO_BINDTODEVICE)")
-	wan2Iface := fs.String("wan2-interface", "", "secondary WAN network interface (SO_BINDTODEVICE)")
 	var wanCLI clientWANFlags
 	fs.Var(&wanCLI, "wan", "WAN path SOURCE_IP@INTERFACE[=SERVER_IP] (repeat; first is handshake path)")
 	useServerWANs := fs.Bool("use-server-wans", false, "use authenticated Server ADD_ADDRESS announcements for secondary WAN destinations")
@@ -74,10 +70,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		if !explicit["use-server-wans"] && file.UseServerWANs != nil {
 			*useServerWANs = *file.UseServerWANs
 		}
-		if len(file.WANs) > 0 &&
-			(file.SourceIP != "" || file.SourceInterface != "" || file.WAN2IP != "" || file.WAN2Interface != "") {
-			return errors.New("client YAML wans cannot be combined with legacy source_ip / wan2_ip fields")
-		}
 		// Explicit CLI flags always override YAML. Unspecified settings
 		// retain their existing defaults, including TCP and TCX policies.
 		setString := func(name string, dst *string, value string) {
@@ -93,10 +85,6 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 		setString("server", server, file.Server)
 		setString("path", pathFlag, file.Path)
 		setString("connect-ip", connectIP, file.ConnectIP)
-		setString("source-ip", wan1, file.SourceIP)
-		setString("source-interface", wan1Iface, file.SourceInterface)
-		setString("wan2-ip", wan2, file.WAN2IP)
-		setString("wan2-interface", wan2Iface, file.WAN2Interface)
 		setString("tun", tunName, file.TUN)
 		setString("tun-address", tunAddress, file.Address)
 		setInt("tun-mtu", tunMTU, file.MTU)
@@ -167,12 +155,8 @@ func RunClient(ctx context.Context, args []string, logger *slog.Logger) error {
 	if *tcpPort < 1 || *tcpPort > 65535 {
 		return fmt.Errorf("invalid --tcp-port %d", *tcpPort)
 	}
-	// Default without a WAN selector follows the kernel route. A new
-	// ordered WAN list replaces legacy flags, not appends to them.
-	wans, err := planClientWANs(configuredWANs, wanCLI,
-		*wan1, *wan1Iface, *wan2, *wan2Iface,
-		explicit["source-ip"] || explicit["source-interface"] ||
-			explicit["wan2-ip"] || explicit["wan2-interface"])
+	// Without a WAN selector, use kernel source and route selection.
+	wans, err := planClientWANs(configuredWANs, wanCLI)
 	if err != nil {
 		return err
 	}
@@ -253,8 +237,8 @@ func runClientSession(ctx context.Context, o clientSessionOptions, logger *slog.
 	logger.InfoContext(ctx, "primary WAN bound", "source_ip", selectedIP, "interface", o.tcp.wanInterface, "local", base.LocalAddr())
 	// Multiple *remote* Server addresses require a single packet reader
 	// spanning all Client source sockets, so QUIC CIDs stay in one
-	// connection registry. Legacy same-destination WAN sockets continue
-	// to use SO_BINDTODEVICE via independent WAN transports.
+	// connection registry. Same-destination WAN sockets continue to
+	// use SO_BINDTODEVICE via independent WAN transports.
 	remoteSpecific := o.useServerWANs
 	for _, link := range o.wans {
 		if link.ServerIP != "" {

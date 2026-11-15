@@ -12,7 +12,7 @@ const (
 )
 
 // Fragmentation requires both peers to opt into the exact framing version.
-// Missing headers preserve byte-for-byte legacy CONNECT-ETHERNET behavior.
+// An absent negotiation header selects the uncompressed base framing.
 func acceptFraming(request string) bool {
 	return request == framingValue
 }

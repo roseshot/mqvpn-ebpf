@@ -2,9 +2,13 @@
 # DNS names below must resolve to the same host and match TLS certificate SAN.
 # listen: "0.0.0.0:443"  # Optional: default UDP/443
 
-# Optional: explicitly list WAN NICs (important for multi-uplink servers).
-# Defaults to the local public bind IP interface or main-table default route.
-# wan_interfaces: [enp1s0, enp2s0]
+# Optional: explicit WAN interfaces and IPs for QUIC ADD_ADDRESS.
+# Otherwise the listener uses local bind/default-route MTU discovery.
+# wans:
+#   - interface: enp1s0
+#     ip: 192.0.2.10
+#   - interface: enp2s0
+#     ip: 198.51.100.10
 # Automatic TUN MTU <= 1400; local WAN IPv4 MTU 1500 -> TUN 1400,
 # max_frame 1414. Omit mtu/max_frame for auto sizing.
 

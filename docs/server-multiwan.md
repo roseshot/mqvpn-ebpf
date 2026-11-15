@@ -40,9 +40,9 @@ single-listener architecture. Clients must be able to route to each
 advertised destination. NAT/load-balancers must preserve a
 connection-ID-compatible path back to the same Server process.
 
-`wans` is the recommended list; legacy `wan_interfaces` remains
-available only for automatic MTU discovery. Configuring both is rejected.
-Server WAN entries are validated, and changing WAN addresses or the
+`wans` is the only supported explicit Server underlay list. If it is
+omitted, automatic MTU discovery uses the default route or local bind
+interface. Server WAN entries are validated, and changing WAN addresses or the
 shared listener requires a daemon restart rather than reconfiguring
 an existing live connection unsafely.
 
@@ -74,7 +74,7 @@ assigning the available remote addresses to its WAN paths in
 announcement order. It is the operator's responsibility to configure
 source-specific routes so each chosen pair is reachable.
 
-**Important operational difference:** Client legacy same-destination
+**Important operational difference:** Client same-destination
 WAN paths use `SO_BINDTODEVICE` per UDP socket. The Client's
 multi-remote-address mode uses `mp-quic-go`'s `MultiSocketManager`
 to select the desired source IP for each QUIC path; the Linux routing

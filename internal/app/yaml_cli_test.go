@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,11 +12,10 @@ import (
 func TestPeerYAMLChangesHotReloadWithoutSharedListenerRestart(t *testing.T) {
 	cfg, _ := testServerFiles(t)
 	peerFile := filepath.Join(t.TempDir(), "peers.yaml")
-	sum := sha256.Sum256([]byte("client"))
 	write := func(routes []string) {
 		t.Helper()
 		b, err := configfile.Marshal(peerFile, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-			ID: "peer-1", CertificateSHA256: hex.EncodeToString(sum[:]), Routes: routes,
+			ID: "peer-1", Routes: routes,
 		}}})
 		if err != nil {
 			t.Fatal(err)

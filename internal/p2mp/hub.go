@@ -158,29 +158,10 @@ func (h *Hub) SetTunnelPool(pool *TunnelPool) error {
 	return nil
 }
 
-// AttachWithTunnelIP allocates only after certificate authorization. The
-// requested mode must match the authorized peer policy; a static client
-// cannot enter dynamic mode or receive a different static address.
-func (h *Hub) AttachWithTunnelIP(ctx context.Context, rule *Rule, stream Stream, requestDynamic bool) (*Session, error) {
-	return h.AttachWithCompression(ctx, rule, stream, requestDynamic, false)
-}
-
-// AttachWithCompression uses a per-session codec negotiated in the authenticated
-// HTTP CONNECT headers. Legacy peers keep the original CONNECT-ETHERNET format.
-func (h *Hub) AttachWithCompression(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression bool) (*Session, error) {
-	return h.AttachWithFeatures(ctx, rule, stream, requestDynamic, compression, false)
-}
-
-// AttachWithFeatures uses independent authenticated capability negotiation
-// for zstd-v1 and frag-v1. Reassembly state is never shared across peers.
-func (h *Hub) AttachWithFeatures(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression, fragmentation bool) (*Session, error) {
-	return h.AttachWithTrafficRole(ctx, rule, stream, requestDynamic, compression, fragmentation, false, false)
-}
-
 // AttachWithTrafficRole binds one authenticated primary peer and, only after
 // the primary negotiated sticky mode, one independently authenticated
 // single-WAN realtime companion. A companion can never replace or allocate
-// a primary tunnel lease. Legacy sessions retain their single-stream behavior.
+// a primary tunnel lease.
 func (h *Hub) AttachWithTrafficRole(ctx context.Context, rule *Rule, stream Stream, requestDynamic, compression, fragmentation, sticky, realtime bool) (*Session, error) {
 	if rule == nil || stream == nil {
 		return nil, errors.New("peer and stream required")
@@ -535,8 +516,7 @@ func (h *Hub) Counters() (tx, rx, drops uint64) {
 
 // ReplaceConfig atomically swaps the peer-to-session destination map.
 // Established connections with unchanged (peer ID, credential identity)
-// remain up, including when their destination prefixes change. In legacy
-// fingerprint mode, cert rotation retires the session; in CN mode, CRL/CA
+// remain up, including when their destination prefixes change. CRL/CA
 // changes restart the instance and enforce new credential policy.
 // No Linux routes, addresses,
 // multicast memberships, or TUN state are changed here.

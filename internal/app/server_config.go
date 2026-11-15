@@ -75,7 +75,6 @@ type ServerConfig struct {
 	TCPFallback   TCPFallbackConfig `yaml:"tcp_fallback,omitempty"`
 	Listen        string            `yaml:"listen,omitempty"`
 	PathScheduler string            `yaml:"path_scheduler,omitempty"`
-	WANInterfaces []string          `yaml:"wan_interfaces,omitempty"`
 	WANs          []serverWAN       `yaml:"wans,omitempty"`
 	XDP           *xdp.Config       `yaml:"xdp,omitempty"`
 	Instances     []ServerInstance  `yaml:"instances"`
@@ -155,9 +154,6 @@ func (c *ServerConfig) Validate() error {
 	// A single wildcard UDP socket is needed for all MPQUIC paths:
 	// independent listeners create unrelated QUIC connection registries.
 	if len(c.WANs) != 0 {
-		if len(c.WANInterfaces) != 0 {
-			return errors.New("server wans cannot be mixed with legacy wan_interfaces")
-		}
 		host, _, _ := net.SplitHostPort(c.Listen)
 		if host != "" && host != "0.0.0.0" && host != "::" {
 			return errors.New("server multi-WAN requires a wildcard listen address to receive packets on all WAN IPs")
@@ -181,13 +177,6 @@ func (c *ServerConfig) Validate() error {
 			}
 			seenIP[ip], seenIface[link.Interface] = true, true
 		}
-	}
-	seenWAN := map[string]bool{}
-	for _, name := range c.WANInterfaces {
-		if strings.TrimSpace(name) != name || name == "" || seenWAN[name] {
-			return fmt.Errorf("invalid or duplicate wan_interfaces entry %q", name)
-		}
-		seenWAN[name] = true
 	}
 	names, tuns, sni := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i := range c.Instances {

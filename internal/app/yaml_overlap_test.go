@@ -1,12 +1,9 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
@@ -26,11 +23,9 @@ func TestMultipleInstancesSamePortAndOverlappingSubnets(t *testing.T) {
 	second.TUN = "mq1"
 	second.Address = "10.77.0.1/24"
 	for _, spec := range []*ServerInstance{&first, &second} {
-		sum := sha256.Sum256([]byte(spec.Name))
 		peerCfg := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-			ID:                spec.Name + "-peer",
-			CertificateSHA256: hex.EncodeToString(sum[:]),
-			Routes:            []string{"10.77.0.2/32", "192.168.20.0/24"},
+			ID:     spec.Name + "-peer",
+			Routes: []string{"10.77.0.2/32", "192.168.20.0/24"},
 		}}}
 		path := filepath.Join(t.TempDir(), spec.Name+".yaml")
 		b, err := configfile.Marshal(path, peerCfg)
@@ -65,8 +60,8 @@ func TestMultipleInstancesSamePortAndOverlappingSubnets(t *testing.T) {
 
 func TestAmbiguousRoutesInsideOneInstanceRejected(t *testing.T) {
 	_, err := p2mp.Parse(p2mp.FileConfig{Peers: []p2mp.PeerConfig{
-		{ID: "a", CertificateSHA256: strings.Repeat("a", 64), Routes: []string{"192.168.20.0/24"}},
-		{ID: "b", CertificateSHA256: strings.Repeat("b", 64), Routes: []string{"192.168.20.1/32"}},
+		{ID: "a", Routes: []string{"192.168.20.0/24"}},
+		{ID: "b", Routes: []string{"192.168.20.1/32"}},
 	}})
 	if err == nil {
 		t.Fatal("same VPN instance cannot choose a next hop")

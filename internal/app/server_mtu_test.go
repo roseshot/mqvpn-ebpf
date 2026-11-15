@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 	"github.com/roseshot/mqvpn-ebpf/internal/mtu"
 )
 
@@ -40,14 +41,13 @@ func TestServerExplicitMTUDoesNotNeedWANDiscovery(t *testing.T) {
 	}
 }
 
-func TestServerConfigValidatesWANSelectors(t *testing.T) {
-	for _, names := range [][]string{{""}, {"wan0", "wan0"}, {" bad "}} {
-		cfg := ServerConfig{
-			WANInterfaces: names,
-			Instances:     []ServerInstance{sampleInstance("a", "a.example.test", "mq0")},
-		}
-		if err := cfg.Validate(); err == nil {
-			t.Fatalf("invalid WAN selectors %+v accepted", names)
-		}
+func TestRemovedServerWANInterfacesYAMLIsRejected(t *testing.T) {
+	var cfg ServerConfig
+	err := configfile.Decode("server.yaml", []byte(`listen: ":8443"
+wan_interfaces: [wan0, wan1]
+instances: []
+`), &cfg)
+	if err == nil {
+		t.Fatal("removed wan_interfaces YAML accepted")
 	}
 }

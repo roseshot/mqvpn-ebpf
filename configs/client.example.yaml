@@ -14,9 +14,11 @@ key: /etc/mqvpn/a-client.key
 # dns_routes: false               # default true; install DNS /32 IPv4 or /128 IPv6 routes
 # reconnect: false                # default true; auto-retry after disconnect
 # connect_ip: 198.51.100.10        # pin remote UDP/TCP destination
-# source_interface: enp1s0         # select primary WAN
-# source_ip: 192.0.2.10            # select specific primary WAN IP
-# wan2_interface: wwan0            # MPQUIC secondary WAN (explicit)
+# wans:                           # ordered physical WAN paths (optional)
+#   - source_ip: 192.0.2.10
+#     interface: enp1s0
+#   - source_ip: 198.51.100.10
+#     interface: wwan0
 # tun: mq0
 # mtu: 1360
 # max_frame: 1374

@@ -110,7 +110,7 @@ func (m *serverMux) ServeTCP(w http.ResponseWriter, r *http.Request) {
 	delayed := &delayedCapsule{stream: stream, ready: ready, ctx: r.Context()}
 	compression := acceptCompression(r.Header.Get(compressionHeader))
 	fragmentation := acceptFraming(r.Header.Get(framingHeader))
-	session, err := inst.hub.AttachWithFeatures(r.Context(), rule, delayed, requestDynamic, compression, fragmentation)
+	session, err := inst.hub.AttachWithTrafficRole(r.Context(), rule, delayed, requestDynamic, compression, fragmentation, false, false)
 	if err != nil {
 		_, _ = rw.Writer.WriteString("HTTP/1.1 409 Conflict\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
 		_ = rw.Writer.Flush()

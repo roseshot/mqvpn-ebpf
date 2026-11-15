@@ -82,10 +82,10 @@ func isDefaultRoute(r netlink.Route) bool {
 	return ones == 0
 }
 
-// ServerUnderlays selects WAN NICs based on explicit server wan_interfaces,
+// ServerUnderlays selects WAN NICs from the explicit Server wans list,
 // the locally bound public listen IP, or the kernel's default routes.
-// Wildcard listeners cannot reveal the *remote* peer path: on such servers,
-// configure wan_interfaces to include every NIC that may carry VPN traffic.
+// Wildcard listeners cannot reveal the remote peer path: configure
+// Server wans with every NIC/IP carrying VPN traffic for precise MTU sizing.
 // The smallest selected WAN packet budget wins.
 func ServerUnderlays(listen string, names []string) ([]mtu.Underlay, error) {
 	host, _, err := net.SplitHostPort(listen)
@@ -199,7 +199,7 @@ func defaultRouteUnderlays(ipv4Only bool) ([]mtu.Underlay, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no usable main-table default WAN route: set server wan_interfaces explicitly or configure an explicit TUN mtu")
+		return nil, fmt.Errorf("no usable main-table default WAN route: configure server wans or an explicit TUN mtu")
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Name != out[j].Name {

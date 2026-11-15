@@ -194,36 +194,6 @@ See [Client WAN configuration](client-config.md) for the ordered WAN configurati
 the current **64 active-path ceiling inside the upstream MPQUIC
 library**, which is separate from mqvpn's uncapped WAN-list parser.
 
-### Legacy two-site FRRouting eBGP example (manual)
-
-The two-site `bgp` case remains available for local debugging, but is no
-longer run as a separate CI step. CI now uses the more comprehensive
-[five-site randomized-WAN BGP/OSPF test](five-site-routing.md) for
-dynamic route convergence and cross-site forwarding.
-
-The BGP scenario uses **FRRouting's official signed stable Debian/Ubuntu
-APT repository**, `https://deb.frrouting.org/frr`, channel
-`frr-stable`, on an Ubuntu 24.04 GitHub runner.
-It installs the **`frr` and `frr-pythontools` .deb packages**.
-It does not install an Ubuntu archive FRR version, compile FRR from
-source, or use an FRR container image.
-
-Each namespace starts its own official `/usr/lib/frr/zebra` and
-`/usr/lib/frr/bgpd`, using separate FRR `-N` pathspaces to isolate
-sockets and PID files. ASN 65001 neighbors ASN 65002 over
-10.77.0.1/30 ↔ 10.77.0.2/30 on the TUN. Both announce a /32 loopback:
-
-- Server: 198.18.101.1/32
-- Client: 198.18.202.1/32
-
-The test waits for **both** remote prefixes to enter the Linux kernel
-FIB with a next hop via `mq0`. This requires BGP session establishment,
-route advertisement, zebra integration, and a working tunnel.
-It then uses ICMP sourced from each loopback to verify forwarding
-in **both** directions over the learned BGP routes. Only the local
-loopback addresses are configured statically; no shortcut remote routes
-are installed before BGP convergence.
-
 ## Run
 
 GitHub Actions: the `overlay-integration` job in
@@ -245,7 +215,6 @@ sudo bash tests/integration/overlay-netns.sh mixed
 sudo bash tests/integration/overlay-netns.sh wan-regional
 sudo bash tests/integration/overlay-netns.sh wan-poor
 sudo bash tests/integration/overlay-netns.sh wan4
-sudo bash tests/integration/overlay-netns.sh bgp  # legacy two-site local check
 sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh bgp
 sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh ospf
 ```

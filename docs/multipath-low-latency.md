@@ -41,8 +41,8 @@ wans:
 ```
 
 Or select `mqvpn-client --path-scheduler low_latency` with the existing
-QUIC/TUN/identity/WAN flags. Omitting the field continues to select the
-legacy `round_robin` policy. Unknown policy values are rejected.
+QUIC/TUN/identity/WAN flags. Omitting the field selects the
+`round_robin` policy. Unknown policy values are rejected.
 The Server policy is configured at listener creation: changes require a
 daemon restart to preserve already-established QUIC sessions.
 

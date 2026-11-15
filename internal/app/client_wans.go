@@ -47,16 +47,10 @@ func (w *clientWANFlags) Set(value string) error {
 	return nil
 }
 
-// planClientWANs converts both the new ordered list and the historical
-// two-WAN flags to one representation. Do not silently merge the two
-// configuration models: it makes the handshake path ambiguous.
-func planClientWANs(list, cli []clientWAN, primaryIP, primaryInterface, secondIP, secondInterface string, explicitLegacy bool) ([]clientWAN, error) {
-	if len(cli) != 0 && explicitLegacy {
-		return nil, errors.New("--wan cannot be combined with legacy --source-* or --wan2-* flags")
-	}
-	if len(list) != 0 && explicitLegacy && len(cli) == 0 {
-		return nil, errors.New("YAML wans cannot be combined with legacy WAN CLI flags; override with repeated --wan")
-	}
+// planClientWANs chooses a single ordered representation. Repeated --wan
+// arguments override the YAML list; if both are absent, the kernel selects
+// the source address and interface for the only initial path.
+func planClientWANs(list, cli []clientWAN) ([]clientWAN, error) {
 	var selected []clientWAN
 	switch {
 	case len(cli) != 0:
@@ -64,10 +58,7 @@ func planClientWANs(list, cli []clientWAN, primaryIP, primaryInterface, secondIP
 	case len(list) != 0:
 		selected = append(selected, list...)
 	default:
-		selected = append(selected, clientWAN{SourceIP: primaryIP, Interface: primaryInterface})
-		if secondIP != "" || secondInterface != "" {
-			selected = append(selected, clientWAN{SourceIP: secondIP, Interface: secondInterface})
-		}
+		selected = []clientWAN{{}}
 	}
 	seenIPs := make(map[netip.Addr]bool, len(selected))
 	seenInterfaces := make(map[string]bool, len(selected))
@@ -77,27 +68,40 @@ func planClientWANs(list, cli []clientWAN, primaryIP, primaryInterface, secondIP
 		}
 		if item.SourceIP != "" {
 			ip, err := netip.ParseAddr(item.SourceIP)
-			if err != nil || ip.IsUnspecified() || ip.Zone() != "" {
+			if err != nil || ip.Zone() != "" {
 				return nil, fmt.Errorf("WAN %d invalid source IP %q", i+1, item.SourceIP)
 			}
-			if seenIPs[ip.Unmap()] {
+			// Treat IPv4-mapped IPv6 literals as IPv4 for validation and
+			// duplicate detection, matching the socket layer's net.ParseIP.
+			ip = ip.Unmap()
+			if ip.IsUnspecified() || ip.IsMulticast() {
+				return nil, fmt.Errorf("WAN %d invalid source IP %q", i+1, item.SourceIP)
+			}
+			if seenIPs[ip] {
 				return nil, fmt.Errorf("WAN %d reuses source IP %s", i+1, item.SourceIP)
 			}
-			seenIPs[ip.Unmap()] = true
+			seenIPs[ip] = true
 		}
 		if item.ServerIP != "" {
 			server, err := netip.ParseAddr(item.ServerIP)
-			if err != nil || server.IsUnspecified() || server.IsMulticast() || server.Zone() != "" {
+			if err != nil || server.Zone() != "" {
+				return nil, fmt.Errorf("WAN %d invalid server_ip %q", i+1, item.ServerIP)
+			}
+			server = server.Unmap()
+			if server.IsUnspecified() || server.IsMulticast() {
 				return nil, fmt.Errorf("WAN %d invalid server_ip %q", i+1, item.ServerIP)
 			}
 			if item.SourceIP != "" {
 				source, _ := netip.ParseAddr(item.SourceIP)
-				if source.Is4() != server.Is4() {
+				if source.Unmap().Is4() != server.Is4() {
 					return nil, fmt.Errorf("WAN %d source and server IP families differ", i+1)
 				}
 			}
 		}
 		if item.Interface != "" {
+			if len(item.Interface) >= 16 || strings.TrimSpace(item.Interface) != item.Interface || strings.ContainsRune(item.Interface, '\x00') {
+				return nil, fmt.Errorf("WAN %d invalid interface %q", i+1, item.Interface)
+			}
 			if seenInterfaces[item.Interface] {
 				return nil, fmt.Errorf("WAN %d reuses interface %s", i+1, item.Interface)
 			}

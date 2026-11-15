@@ -23,7 +23,7 @@ instances:
 ~~~bash
 mqvpn-client --server customer-a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 --tun-mtu 1400 \
-  --source-interface enp1s0 \
+  --wan 192.0.2.2@enp1s0 \
   --ca /etc/mqvpn/ca.crt --cert /etc/mqvpn/client.crt \
   --key /etc/mqvpn/client.key
 ~~~
@@ -92,8 +92,8 @@ Both daemons derive TUN MTU from their selected WAN interface MTUs.
 For WAN IPv4 MTU 1500, the effective TUN MTU is 1400 and
 `max_frame` is 1414. For IPv6 outer transport on an MTU-1500 WAN,
 the initial TUN MTU is 1380. A second WAN with a smaller interface MTU
-reduces the shared TUN budget. Server `wan_interfaces` can explicitly
-enumerate physical WANs. See [WAN budget model](mtu-mss.md).
+reduces the shared TUN budget. Server `wans` can explicitly
+enumerate physical WAN interfaces and addresses. See [WAN budget model](mtu-mss.md).
 
 WAN link MTU is **not** an Internet path PMTU measurement. QUIC
 DATAGRAMs can still be too large for the peer/actual path, so

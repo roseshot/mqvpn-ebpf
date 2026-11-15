@@ -71,7 +71,7 @@ Peer YAML; a different tenant is not silently selected.
 # connect to the same host/port over TCP.
 mqvpn-client --transport auto --udp-dial-timeout 5s \
   --server customer-a.vpn.example.com \
-  --source-interface enp1s0 --tun mq0 --tun-address 10.77.0.2/24 \
+  --wan 192.0.2.2@enp1s0 --tun mq0 --tun-address 10.77.0.2/24 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 
@@ -79,7 +79,7 @@ mqvpn-client --transport auto --udp-dial-timeout 5s \
 mqvpn-client --transport tcp \
   --server customer-a.vpn.example.com \
   --connect-ip 198.51.100.10 \
-  --source-interface enp1s0 --tun mq0 --tun-address 10.77.0.2/24 \
+  --wan 192.0.2.2@enp1s0 --tun mq0 --tun-address 10.77.0.2/24 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~
@@ -130,7 +130,7 @@ Client `--server hostname[:port]` selects the QUIC **UDP** port
 mqvpn-client --transport auto --udp-dial-timeout 5s \
   --server customer-a.vpn.example.com:54433 \
   --tcp-port 8443 \
-  --source-interface enp1s0 --tun mq0 --tun-address 10.77.0.2/24 \
+  --wan 192.0.2.2@enp1s0 --tun mq0 --tun-address 10.77.0.2/24 \
   --ca /etc/mqvpn/a-ca.crt \
   --cert /etc/mqvpn/a-client.crt --key /etc/mqvpn/a-client.key
 ~~~

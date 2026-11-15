@@ -2,10 +2,7 @@ package p2mp
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/netip"
-	"strings"
 	"testing"
 
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
@@ -16,8 +13,7 @@ func dynamicPeerConfig(t *testing.T, n int) *Config {
 	var peers []PeerConfig
 	for i := 0; i < n; i++ {
 		id := string(rune('A' + i))
-		fp := sha256.Sum256([]byte(id))
-		peers = append(peers, PeerConfig{ID: id, CertificateSHA256: hex.EncodeToString(fp[:]), DynamicTunnelIP: true})
+		peers = append(peers, PeerConfig{ID: id, DynamicTunnelIP: true})
 	}
 	c, err := Parse(FileConfig{Peers: peers})
 	if err != nil {
@@ -43,14 +39,14 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T) {
 	defer cancel()
 	as := &fakeStream{out: make(chan []byte, 8)}
 	bs := &fakeStream{out: make(chan []byte, 8)}
-	if _, err := h.AttachWithTunnelIP(ctx, cfg.Peers[0], as, false); err == nil {
+	if _, err := h.AttachWithTrafficRole(ctx, cfg.Peers[0], as, false, false, false, false, false); err == nil {
 		t.Fatal("dynamic peer attached without negotiation")
 	}
-	a, err := h.AttachWithTunnelIP(ctx, cfg.Peers[0], as, true)
+	a, err := h.AttachWithTrafficRole(ctx, cfg.Peers[0], as, true, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := h.AttachWithTunnelIP(ctx, cfg.Peers[1], bs, true)
+	b, err := h.AttachWithTrafficRole(ctx, cfg.Peers[1], bs, true, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,14 +60,14 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T) {
 		t.Fatalf("wrong dynamic host forwarding: %v", err)
 	}
 	h.Detach(a)
-	a2, err := h.AttachWithTunnelIP(ctx, cfg.Peers[0], as, true)
+	a2, err := h.AttachWithTrafficRole(ctx, cfg.Peers[0], as, true, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a2.TunnelAddress() != "10.77.0.0/29" {
 		t.Fatal("lease was not released for reuse")
 	}
-	if _, err := h.AttachWithTunnelIP(ctx, cfg.Peers[0], as, true); err == nil {
+	if _, err := h.AttachWithTrafficRole(ctx, cfg.Peers[0], as, true, false, false, false, false); err == nil {
 		t.Fatal("duplicate session allowed")
 	}
 	h.Detach(a2)
@@ -91,10 +87,9 @@ func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T) {
 			t.Fatalf("invalid tunnel_pool %q allowed", tc.pool)
 		}
 	}
-	fp := sha256.Sum256([]byte("static"))
 	mixed, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "dynamic", CertificateSHA256: strings.Repeat("a", 64), DynamicTunnelIP: true},
-		{ID: "static", CertificateSHA256: hex.EncodeToString(fp[:]), Routes: []string{"10.77.0.2/32"}},
+		{ID: "dynamic", DynamicTunnelIP: true},
+		{ID: "static", Routes: []string{"10.77.0.2/32"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -110,8 +105,8 @@ func TestTunnelPoolRejectsOverlapCapacityAndUnconfiguredPeers(t *testing.T) {
 		t.Fatal("static forwarding broken")
 	}
 	broad, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "dynamic", CertificateSHA256: strings.Repeat("a", 64), DynamicTunnelIP: true},
-		{ID: "static", CertificateSHA256: hex.EncodeToString(fp[:]), Routes: []string{"10.77.0.0/25"}},
+		{ID: "dynamic", DynamicTunnelIP: true},
+		{ID: "static", Routes: []string{"10.77.0.0/25"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +128,7 @@ func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T) {
 	}
 	_ = h.SetTunnelPool(pool)
 	stream := &fakeStream{out: make(chan []byte, 4)}
-	a, err := h.AttachWithTunnelIP(context.Background(), cfg.Peers[0], stream, true)
+	a, err := h.AttachWithTrafficRole(context.Background(), cfg.Peers[0], stream, true, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +143,7 @@ func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = other.SetTunnelPool(pool)
-	b, err := other.AttachWithTunnelIP(context.Background(), cfg.Peers[0], &fakeStream{out: make(chan []byte, 4)}, true)
+	b, err := other.AttachWithTrafficRole(context.Background(), cfg.Peers[0], &fakeStream{out: make(chan []byte, 4)}, true, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +170,7 @@ func TestTunnelPoolReusesNetworkAndSubnetBroadcastAddresses(t *testing.T) {
 	leases := []string{"10.77.0.0/30", "10.77.0.2/30", "10.77.0.3/30"}
 	var sessions []*Session
 	for i, peer := range cfg.Peers {
-		s, err := h.AttachWithTunnelIP(context.Background(), peer, &fakeStream{out: make(chan []byte, 4)}, true)
+		s, err := h.AttachWithTrafficRole(context.Background(), peer, &fakeStream{out: make(chan []byte, 4)}, true, false, false, false, false)
 		if err != nil {
 			t.Fatal(err)
 		}

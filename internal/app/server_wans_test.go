@@ -36,7 +36,6 @@ func TestServerWANMultiAddressValidation(t *testing.T) {
 		{"duplicate-address", func(c *ServerConfig) { c.WANs[2].IP = "192.0.2.1" }},
 		{"invalid-address", func(c *ServerConfig) { c.WANs[1].IP = "0.0.0.0" }},
 		{"empty-interface", func(c *ServerConfig) { c.WANs[1].Interface = "" }},
-		{"mixed-legacy", func(c *ServerConfig) { c.WANInterfaces = []string{"wan5"} }},
 		{"family-mismatch", func(c *ServerConfig) { c.WANs[2].IP = "2001:db8::1" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,10 +94,11 @@ func TestClientPerWANRemoteServerSelection(t *testing.T) {
 	if _, err := selectServerTargets(server, wans, nil, true); err == nil {
 		t.Fatal("Server advertisement required but absent")
 	}
-	// Legacy secondary paths continue to use the handshake destination.
-	legacy, err := selectServerTargets(server, wans, nil, false)
-	if err != nil || legacy[3].String() != "192.0.2.1:8443" {
-		t.Fatalf("legacy path selection broke: %v %+v", err, legacy)
+	// When no per-WAN destination is specified, all paths use the same
+	// authenticated Server UDP endpoint.
+	shared, err := selectServerTargets(server, wans, nil, false)
+	if err != nil || shared[3].String() != "192.0.2.1:8443" {
+		t.Fatalf("shared Server WAN target selection broke: %v %+v", err, shared)
 	}
 	wans[2].ServerIP = "203.0.113.1"
 	pinned, err := selectServerTargets(server, wans, nil, false)
@@ -124,13 +124,13 @@ func TestClientWANPinnedServerAndFlagSyntax(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := planClientWANs(nil, flags, "", "", "", "", false)
+	got, err := planClientWANs(nil, flags)
 	if err != nil || len(got) != 4 || got[3].ServerIP != "192.0.2.5" {
 		t.Fatalf("new Server IP CLI config lost: %+v %v", got, err)
 	}
 	if _, err := planClientWANs([]clientWAN{
 		{SourceIP: "192.0.2.2", Interface: "wan0", ServerIP: "not-an-ip"},
-	}, nil, "", "", "", "", false); err == nil {
+	}, nil); err == nil {
 		t.Fatal("invalid Server IP accepted")
 	}
 }

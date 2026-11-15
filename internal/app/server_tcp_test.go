@@ -4,19 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"encoding/pem"
 	"github.com/roseshot/mqvpn-ebpf/internal/capsule"
 	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 	"github.com/roseshot/mqvpn-ebpf/internal/l3"
@@ -39,17 +37,8 @@ func (d *tcpMockTun) Close() error { return nil }
 
 func TestTCPFallbackStrictHTTP1UpgradeAndCapsules(t *testing.T) {
 	cfg, _ := testServerFiles(t)
-	certBytes, err := os.ReadFile(cfg.Instances[0].Cert)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, _ := pem.Decode(certBytes)
-	if block == nil {
-		t.Fatal("bad fixture certificate")
-	}
-	sum := sha256.Sum256(block.Bytes)
 	data, err := configfile.Marshal(cfg.Instances[0].Peers, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-		ID: "site-a", CertificateSHA256: hex.EncodeToString(sum[:]),
+		ID:     "site-a",
 		Routes: []string{"10.77.0.2/32"},
 	}}})
 	if err != nil {
@@ -82,7 +71,9 @@ func TestTCPFallbackStrictHTTP1UpgradeAndCapsules(t *testing.T) {
 		_ = mgr.tcpListener.Close()
 		<-mgr.tcpDone
 	}()
-	cert, err := tls.LoadX509KeyPair(cfg.Instances[0].Cert, cfg.Instances[0].Key)
+	cert, err := tls.LoadX509KeyPair(
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.pem"),
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.key"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,17 +177,8 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 	cfg.Instances[0].PushRoutes = []string{"0.0.0.0/0", "192.168.20.0/24"}
 	cfg.Instances[0].PushDNS = []string{"10.77.0.1", "fd77::53"}
 	cfg.Instances[0].Path = "/tenant/masque/connect/"
-	certBytes, err := os.ReadFile(cfg.Instances[0].Cert)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, _ := pem.Decode(certBytes)
-	if block == nil {
-		t.Fatal("invalid test cert")
-	}
-	fp := sha256.Sum256(block.Bytes)
 	data, err := configfile.Marshal(cfg.Instances[0].Peers, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-		ID: "site-a", CertificateSHA256: hex.EncodeToString(fp[:]), DynamicTunnelIP: true,
+		ID: "site-a", DynamicTunnelIP: true,
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +205,9 @@ func TestTCPFallbackServerAssignedTunnelAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { hub.CloseSessions(); _ = mgr.tcpServer.Close(); _ = mgr.tcpListener.Close(); <-mgr.tcpDone }()
-	cert, err := tls.LoadX509KeyPair(cfg.Instances[0].Cert, cfg.Instances[0].Key)
+	cert, err := tls.LoadX509KeyPair(
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.pem"),
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.key"))
 	if err != nil {
 		t.Fatal(err)
 	}

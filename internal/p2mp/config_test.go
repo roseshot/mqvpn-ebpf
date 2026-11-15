@@ -4,23 +4,20 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"math/big"
 	"net/netip"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/roseshot/mqvpn-ebpf/internal/configfile"
 )
 
 func TestConfigDestinationAndAuthentication(t *testing.T) {
-	a := sha256.Sum256([]byte("peer-a"))
-	b := sha256.Sum256([]byte("peer-b"))
 	c, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "A", CertificateSHA256: hex.EncodeToString(a[:]), Routes: []string{"10.77.0.2/32", "192.168.20.0/24"}},
-		{ID: "B", CertificateSHA256: hex.EncodeToString(b[:]), Routes: []string{"10.77.0.3/32", "192.168.30.0/24"}},
+		{ID: "A", Routes: []string{"10.77.0.2/32", "192.168.20.0/24"}},
+		{ID: "B", Routes: []string{"10.77.0.3/32", "192.168.30.0/24"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +28,7 @@ func TestConfigDestinationAndAuthentication(t *testing.T) {
 	if c.Destination(netip.MustParseAddr("192.168.20.44")).ID != "A" {
 		t.Fatal("wrong LAN prefix")
 	}
-	if c.PeerByCertificate([]byte("peer-a")) != c.Peers[0] {
+	if c.PeerByCertificate(testClientCertificateCN(t, "A")) != c.Peers[0] {
 		t.Fatal("peer A not authenticated")
 	}
 	if c.PeerByCertificate([]byte("unknown")) != nil {
@@ -42,11 +39,9 @@ func TestConfigDestinationAndAuthentication(t *testing.T) {
 	}
 }
 func TestAmbiguousPeerDestinationsRejected(t *testing.T) {
-	a := strings.Repeat("a", 64)
-	b := strings.Repeat("b", 64)
 	_, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "A", CertificateSHA256: a, Routes: []string{"10.77.0.0/24"}},
-		{ID: "B", CertificateSHA256: b, Routes: []string{"10.77.0.3/32"}},
+		{ID: "A", Routes: []string{"10.77.0.0/24"}},
+		{ID: "B", Routes: []string{"10.77.0.3/32"}},
 	}})
 	if err == nil {
 		t.Fatal("overlapping destinations ambiguous")
@@ -54,7 +49,7 @@ func TestAmbiguousPeerDestinationsRejected(t *testing.T) {
 }
 func TestDefaultRouteIsValidSessionDestination(t *testing.T) {
 	_, err := Parse(FileConfig{Peers: []PeerConfig{
-		{ID: "all", CertificateSHA256: strings.Repeat("a", 64), Routes: []string{"0.0.0.0/0"}},
+		{ID: "all", Routes: []string{"0.0.0.0/0"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +121,6 @@ func TestRejectAmbiguousOrInvalidCNAndPeerOverrides(t *testing.T) {
 			{ID: "b", CertificateCN: "duplicated", Routes: []string{"10.77.0.3/32"}},
 		}},
 		{"empty whitespace cn", []PeerConfig{{ID: "site", CertificateCN: " site ", Routes: []string{"10.77.0.2/32"}}}},
-		{"mixed pin and cn", []PeerConfig{{ID: "site", CertificateCN: "site", CertificateSHA256: strings.Repeat("a", 64), Routes: []string{"10.77.0.2/32"}}}},
 		{"invalid push routes", []PeerConfig{{ID: "site", Routes: []string{"10.77.0.2/32"}, PushRoutes: []string{"broken-cidr"}}}},
 		{"invalid push dns", []PeerConfig{{ID: "site", Routes: []string{"10.77.0.2/32"}, PushDNS: []string{"not-a-dns-IP"}}}},
 	} {
@@ -159,31 +153,14 @@ func TestCredentialIdentityPreservedAcrossCNReload(t *testing.T) {
 	}
 }
 
-func TestMixedLegacyFingerprintAndCNMatchingFailsClosed(t *testing.T) {
-	der := testClientCertificateCN(t, "shared-cn")
-	digest := sha256.Sum256(der)
-	cnRule := PeerConfig{
-		ID: "cn-site", CertificateCN: "shared-cn",
-		Routes: []string{"10.77.0.2/32"},
-	}
-	legacyRule := PeerConfig{
-		ID: "legacy-site", CertificateSHA256: hex.EncodeToString(digest[:]),
-		Routes: []string{"10.77.0.3/32"},
-	}
-	for _, peers := range [][]PeerConfig{
-		{cnRule, legacyRule},
-		{legacyRule, cnRule},
-	} {
-		config, err := Parse(FileConfig{Peers: peers})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if matched := config.PeerByCertificate(der); matched != nil {
-			t.Fatalf("ambiguous certificate authorized %q depending on Peer YAML ordering", matched.ID)
-		}
-	}
-	legacyOnly, err := Parse(FileConfig{Peers: []PeerConfig{legacyRule}})
-	if err != nil || legacyOnly.PeerByCertificate(der) == nil {
-		t.Fatalf("legacy single-rule migration unexpectedly rejected: %v", err)
+func TestRemovedPeerFingerprintFieldIsRejected(t *testing.T) {
+	var cfg FileConfig
+	err := configfile.Decode("peers.yaml", []byte(`peers:
+  - id: site-a
+    certificate_sha256: "deadbeef"
+    routes: [10.77.0.2/32]
+`), &cfg)
+	if err == nil {
+		t.Fatal("retired SHA-256 fingerprint field unexpectedly accepted")
 	}
 }

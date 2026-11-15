@@ -62,7 +62,7 @@ Counters are logged at shutdown / reload; no inner traffic ACLs are introduced.
 ~~~bash
 mqvpn-client --server a.vpn.example.com \
   --tun mq0 --tun-address 10.77.0.2/24 \
-  --source-interface enp1s0 \
+  --wan 192.0.2.2@enp1s0 \
   --tc-mode auto --mss-clamp auto --tc-stats \
   --ca /etc/mqvpn/ca.crt --cert /etc/mqvpn/client.crt \
   --key /etc/mqvpn/client.key

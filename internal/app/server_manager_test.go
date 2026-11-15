@@ -3,10 +3,9 @@ package app
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
 	"net"
@@ -23,53 +22,79 @@ import (
 func testServerFiles(t *testing.T) (ServerConfig, string) {
 	t.Helper()
 	dir := t.TempDir()
-	pub, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificate := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		DNSNames:              []string{"edge-a.example.test", "edge-b.example.test", "customer-a.example.test", "customer-b.example.test", "vpn-a.example.test", "vpn-b.example.test"},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, certificate, certificate, pub, private)
-	if err != nil {
-		t.Fatal(err)
-	}
-	derKey, err := x509.MarshalPKCS8PrivateKey(private)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certPath, keyPath, peerPath := filepath.Join(dir, "server.pem"), filepath.Join(dir, "server.key"), filepath.Join(dir, "peers.yaml")
-	write := func(path string, data []byte) {
+	write := func(name string, data []byte) string {
 		t.Helper()
+		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)
 		}
+		return path
 	}
-	write(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-	write(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: derKey}))
-	sum := sha256.Sum256([]byte("test-client"))
-	peers := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-		ID: "site-a", CertificateSHA256: hex.EncodeToString(sum[:]),
-		Routes: []string{"10.77.0.2/32"},
-	}}}
-	data, err := configfile.Marshal(peerPath, peers)
+	newKey := func() (ed25519.PublicKey, ed25519.PrivateKey) {
+		t.Helper()
+		pub, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pub, private
+	}
+	caPub, caKey := newKey()
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "mqvpn-test-ca"},
+		NotBefore:    time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true,
+		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		SubjectKeyId: []byte{1, 2, 3, 4},
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPub, caKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(peerPath, data)
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPath := write("ca.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
+	issue := func(name string, serial int64, cn string, usage x509.ExtKeyUsage, dns []string) (string, string) {
+		t.Helper()
+		pub, private := newKey()
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: cn},
+			NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+			KeyUsage:    x509.KeyUsageDigitalSignature,
+			ExtKeyUsage: []x509.ExtKeyUsage{usage},
+			DNSNames:    dns,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, ca, pub, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkcs8, err := x509.MarshalPKCS8PrivateKey(private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certPath := write(name+".pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+		keyPath := write(name+".key", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}))
+		return certPath, keyPath
+	}
+	certPath, keyPath := issue("server", 2, "vpn-server", x509.ExtKeyUsageServerAuth,
+		[]string{"edge-a.example.test", "edge-b.example.test", "customer-a.example.test", "customer-b.example.test", "vpn-a.example.test", "vpn-b.example.test"})
+	_, _ = issue("client", 3, "site-a", x509.ExtKeyUsageClientAuth, nil)
+	peerPath := filepath.Join(dir, "peers.yaml")
+	data, err := configfile.Marshal(peerPath, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
+		ID: "site-a", Routes: []string{"10.77.0.2/32"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("peers.yaml", data)
 	return ServerConfig{
 		Listen: "0.0.0.0:4433",
 		Instances: []ServerInstance{{
 			Name: "edge-a", ServerName: "edge-a.example.test", TUN: "mq0",
 			Address: "10.77.0.1/24", MTU: 1400, MaxFrame: 1414,
-			Peers: peerPath, Cert: certPath, Key: keyPath, ClientCA: certPath,
+			Peers: peerPath, Cert: certPath, Key: keyPath, ClientCA: caPath,
 		}},
 	}, peerPath
 }
@@ -81,9 +106,9 @@ func TestPrepareServerPeerHotReloadKeepsListenerAndTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := first.instances["edge-a"]
-	sum := sha256.Sum256([]byte("test-client"))
+
 	data, err := configfile.Marshal(path, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-		ID: "site-a", CertificateSHA256: hex.EncodeToString(sum[:]),
+		ID:     "site-a",
 		Routes: []string{"10.77.0.2/32", "192.168.20.0/24"},
 	}}})
 	if err != nil {
@@ -204,8 +229,8 @@ func TestServerTunnelPoolRequiresAuthorizedPeers(t *testing.T) {
 	if _, err := prepareServer(cfg); err == nil {
 		t.Fatal("tunnel pool without dynamic peers accepted")
 	}
-	fp := sha256.Sum256([]byte("test-client"))
-	file := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{ID: "site-a", CertificateSHA256: hex.EncodeToString(fp[:]), DynamicTunnelIP: true}}}
+
+	file := p2mp.FileConfig{Peers: []p2mp.PeerConfig{{ID: "site-a", DynamicTunnelIP: true}}}
 	raw, err := configfile.Marshal(peerPath, file)
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +331,15 @@ func TestPreparedSingleIPCertAndTLSWithoutSNI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := keyPair(cfg.Instances[0].Cert, cfg.Instances[0].Key)
+	// This test intentionally trusts its self-signed IP SAN Server cert
+	// as a root. For mTLS the Client must send its separate CA-issued CN
+	// leaf, never the Server's own certificate as a Client identity.
+	if !root.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})) {
+		t.Fatal("could not trust the isolated IP SAN Server test identity")
+	}
+	cert, err := keyPair(
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.pem"),
+		filepath.Join(filepath.Dir(cfg.Instances[0].Cert), "client.key"))
 	if err != nil {
 		t.Fatal(err)
 	}

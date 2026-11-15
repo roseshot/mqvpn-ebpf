@@ -14,7 +14,7 @@ func TestWANListDoesNotUseTwoPathCeiling(t *testing.T) {
 	for i := range list {
 		list[i] = clientWAN{Interface: "wan" + stringFromInt(i)}
 	}
-	planned, err := planClientWANs(list, nil, "", "", "", "", false)
+	planned, err := planClientWANs(list, nil)
 	if err != nil || len(planned) != 80 || planned[79].Interface != "wan79" {
 		t.Fatalf("WAN list unexpectedly capped: len=%d err=%v", len(planned), err)
 	}
@@ -26,7 +26,7 @@ func stringFromInt(n int) string {
 	return strconv.Itoa(n)
 }
 
-func TestWANListCLIAndLegacyNormalization(t *testing.T) {
+func TestWANListCLIAndDefaultSelection(t *testing.T) {
 	var cli clientWANFlags
 	for _, spec := range []string{
 		"192.0.2.2@wan0",
@@ -38,17 +38,12 @@ func TestWANListCLIAndLegacyNormalization(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err := planClientWANs(nil, cli, "", "", "", "", false)
+	out, err := planClientWANs(nil, cli)
 	if err != nil || len(out) != 4 || out[3].Interface != "wan3" {
 		t.Fatalf("repeatable CLI lost WAN4: %+v, %v", out, err)
 	}
-	old, err := planClientWANs(nil, nil, "192.0.2.2", "wan0",
-		"198.51.100.2", "wan1", false)
-	if err != nil || len(old) != 2 || old[1].Interface != "wan1" {
-		t.Fatalf("legacy config lost: %+v %v", old, err)
-	}
-	single, err := planClientWANs(nil, nil, "", "", "", "", false)
-	if err != nil || len(single) != 1 {
+	single, err := planClientWANs(nil, nil)
+	if err != nil || len(single) != 1 || single[0] != (clientWAN{}) {
 		t.Fatalf("default single WAN lost: %+v %v", single, err)
 	}
 }
@@ -63,22 +58,38 @@ func TestWANListRejectsAmbiguityAndDuplicates(t *testing.T) {
 		{"missing-secondary", []clientWAN{{Interface: "wan0"}, {}}},
 		{"invalid-IP", []clientWAN{{SourceIP: "bad", Interface: "wan0"}}},
 		{"unspecified-IP", []clientWAN{{SourceIP: "0.0.0.0", Interface: "wan0"}}},
+		{"multicast-source-v4", []clientWAN{{SourceIP: "239.1.2.3", Interface: "wan0"}}},
+		{"multicast-source-v6", []clientWAN{{SourceIP: "ff02::1", Interface: "wan0"}}},
+		{"mapped-multicast-source", []clientWAN{{SourceIP: "::ffff:239.1.2.3", Interface: "wan0"}}},
+		{"mapped-unspecified-source", []clientWAN{{SourceIP: "::ffff:0.0.0.0", Interface: "wan0"}}},
+		{"mapped-multicast-server", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0", ServerIP: "::ffff:239.1.2.3"}}},
+		{"mapped-ip-family-mismatch", []clientWAN{{SourceIP: "::ffff:192.0.2.2", Interface: "wan0", ServerIP: "2001:db8::1"}}},
+		{"interface-leading-space", []clientWAN{{SourceIP: "192.0.2.2", Interface: " wan0"}}},
+		{"interface-embedded-nul", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0\x00wrong"}}},
+		{"interface-too-long", []clientWAN{{SourceIP: "192.0.2.2", Interface: "ethernetlongname0"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := planClientWANs(tc.wans, nil, "", "", "", "", false); err == nil {
+			if _, err := planClientWANs(tc.wans, nil); err == nil {
 				t.Fatal("invalid WAN binding accepted")
 			}
 		})
 	}
-	if _, err := planClientWANs([]clientWAN{{Interface: "wan0"}},
-		nil, "", "", "", "", true); err == nil {
-		t.Fatal("YAML and legacy CLI WAN conflict accepted")
+
+}
+
+func TestWANListMappedIPv4UsesIPv4SocketFamily(t *testing.T) {
+	paths, err := planClientWANs([]clientWAN{{
+		SourceIP: "::ffff:192.0.2.2", Interface: "wan0", ServerIP: "198.51.100.1",
+	}}, nil)
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("mapped IPv4 source and IPv4 destination should share a socket family: %+v %v", paths, err)
 	}
-	if _, err := planClientWANs(nil,
-		[]clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0"}},
-		"", "", "", "", true); err == nil {
-		t.Fatal("repeated CLI --wan mixed with legacy flags")
+	if _, err := planClientWANs([]clientWAN{
+		{SourceIP: "192.0.2.2", Interface: "wan0"},
+		{SourceIP: "::ffff:192.0.2.2", Interface: "wan1"},
+	}, nil); err == nil {
+		t.Fatal("native and IPv4-mapped aliases must count as duplicate source addresses")
 	}
 }
 
