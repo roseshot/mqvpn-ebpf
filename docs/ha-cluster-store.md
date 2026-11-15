@@ -84,9 +84,9 @@ persistence, split-brain prevention or reconfiguration.
 A VPN Server **reads its own live operational state**; it must not replicate
 transient telemetry as consensus data or issue remote quorum reads each time
 a local health endpoint is queried. The existing `GET /livez` and `GET
-/readyz` already read local process state. Their present readiness check
-proves only local listener/configuration startup, **not** that consensus,
-routing or peer ownership is healthy.
+/readyz` already read local process state. The local /readyz status now also reflects required TUN interface UP,
+host IP and MTU conditions sampled every two seconds, **not** that
+consensus, WAN route convergence or peer ownership is healthy.
 
 | Node reads locally (not synchronized) | Cluster coordination (quorum required) |
 | --- | --- |
@@ -98,8 +98,11 @@ routing or peer ownership is healthy.
 The `CheckNodeLocal` primitive invokes caller-supplied node-local probes
 for configured resources. It does not depend on a `ClusterStore`, and
 different nodes may legitimately report different WAN, TUN or route health.
-Actual network/TUN probe implementations and Server manager hooks are
-separate work; the existing `/readyz` has **not** been modified here.
+The Server manager uses `CheckNodeLocal` to sample each required local
+TUN's kernel UP flag, host IP and MTU and required listener initialization
+every two seconds, independently from YAML polling. HTTP `/readyz`
+reads only the latest atomic local result. Per-WAN RTT/loss, FIB convergence,
+resource-pressure and advanced end-to-end probes remain future work.
 
 `LocalControlView.Refresh` is designed for a background worker to perform
 a **fresh linearizable** `Store.Read` and retain the last committed policy,
@@ -124,9 +127,11 @@ new sessions when that policy cannot be met. No offline fallback should mint
 leases or bypass fencing. Verified `AppliedState` must come from a trusted
 reconciler, never arbitrary YAML or Client data.
 
-The local probes, control-view cache and strict `CheckApplied` are reusable
-components, but none is yet connected to live Server `/readyz`, Client
-admission, or a production Raft backend.
+Only the local TUN/listener probes are connected to the Server manager and
+`/readyz`. The bounded-age control-view cache, strict `CheckApplied`,
+Client admission, inter-Server state sync and production Raft backend
+remain unconnected. Local readiness cannot establish quorum or authorize
+shared leases.
 
 No `ha.backend` Server config flag is introduced by this PR: advertising a
 nonfunctional backend mode would be dangerous. Production HA readiness and
