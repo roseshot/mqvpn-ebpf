@@ -22,10 +22,10 @@ import (
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 	"github.com/roseshot/mqvpn-ebpf/internal/tcebpf"
-	"github.com/roseshot/mqvpn-ebpf/internal/wan"
 )
 
 type clientTCPOptions struct {
+	platform                     clientPlatform
 	endpoint                     clientEndpoint
 	wanIP, wanInterface, tunName string
 	tunAddress                   string
@@ -59,6 +59,7 @@ func tcpTarget(o clientTCPOptions) (string, string, error) {
 // runTCPFallback sends HTTP/1.1 GET Upgrade and then exchanges RFC 9297
 // DATAGRAM Capsules bidirectionally over an authenticated TLS 1.3 stream.
 func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger) (result error) {
+	platform := platformForClient(o.platform)
 	dialAddress, requestURL, err := tcpTarget(o)
 	if err != nil {
 		return err
@@ -67,7 +68,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	if err != nil {
 		return fmt.Errorf("resolve TCP fallback destination: %w", err)
 	}
-	raw, ip, err := wan.DialTCP(ctx, o.wanIP, o.wanInterface, server)
+	raw, ip, err := platform.DialTCP(ctx, o.wanIP, o.wanInterface, server)
 	if err != nil {
 		return err
 	}
@@ -164,7 +165,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	pushedRoutes = routepush.WithDNSHostRoutes(pushedRoutes, pushedDNS, o.dnsRoutes)
 	var underlays []mtu.Underlay
 	if o.tunMTU == 0 {
-		link, err := wan.SourceUnderlay(ip, o.wanInterface)
+		link, err := platform.SourceUnderlay(ip, o.wanInterface)
 		if err != nil {
 			return fmt.Errorf("TCP fallback WAN MTU: %w", err)
 		}
@@ -174,7 +175,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	if err != nil {
 		return err
 	}
-	guard, err := routepush.ProtectServer(server.IP, ip, o.wanInterface, o.tunName, pushedRoutes, false)
+	guard, err := platform.ProtectServer(server.IP, ip, o.wanInterface, o.tunName, pushedRoutes, false)
 	if err != nil {
 		return fmt.Errorf("protect TCP VPN server underlay route: %w", err)
 	}
@@ -190,7 +191,7 @@ func runTCPFallback(ctx context.Context, o clientTCPOptions, logger *slog.Logger
 	if err != nil {
 		return err
 	}
-	pumpDevice, err := openClientNetworkSession(ctx, guard, o, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
+	pumpDevice, err := platform.OpenNetworkSession(ctx, guard, o, effectiveAddress, budget, pushedRoutes, pushedDNS, logger)
 	if err != nil {
 		return err
 	}
