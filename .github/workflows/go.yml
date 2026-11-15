@@ -103,6 +103,9 @@ jobs:
             exit 1
           }
           Write-Output "Windows native VPN admission correctly disabled pending route/DNS/underlay integration"
+          # PowerShell action wrapper exits with $LASTEXITCODE unless reset.
+          # A rejected native VPN startup is the EXPECTED successful test.
+          exit 0
 
   native:
     name: Native Go (CGO=0)
