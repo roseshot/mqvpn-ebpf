@@ -105,6 +105,8 @@ func addressRow(api addressAPI, luid uint64, prefix netip.Prefix) (windows.MibUn
 	var row windows.MibUnicastIpAddressRow
 	api.Initialize(&row)
 	row.InterfaceLuid = luid
+	row.PrefixOrigin = windows.IpPrefixOriginManual
+	row.SuffixOrigin = windows.IpSuffixOriginManual
 	row.OnLinkPrefixLength = uint8(prefix.Bits())
 	ip := prefix.Addr()
 	if ip.Is4() {
