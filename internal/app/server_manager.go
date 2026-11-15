@@ -532,7 +532,11 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 			return err
 		}
 	}
-	manager.ready.Store(true)
+	if manager.readinessListen != "" {
+		manager.refreshLocalReadiness()
+	} else {
+		manager.ready.Store(true)
+	}
 	applied := initial.fingerprint
 
 	signals := make(chan os.Signal, 1)
@@ -544,6 +548,15 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 		defer ticker.Stop()
 		tick = ticker.C
 	}
+	// Local health samples run independently from YAML reload polling.
+	// Even --reload-interval=0 must detect TUN/interface loss; /readyz
+	// reads only the cached atomic readiness bit, never the kernel or Raft.
+	var localHealthTick <-chan time.Time
+	if manager.readinessListen != "" {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		localHealthTick = ticker.C
+	}
 	reload := func() {
 		next, err := load()
 		if err != nil {
@@ -553,6 +566,12 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 		if next.fingerprint == applied {
 			logger.DebugContext(ctx, "YAML configuration unchanged")
 			return
+		}
+		if manager.readinessListen != "" {
+			// A hot-reload may replace a TUN in place. Keep /readyz false
+			// until the resulting live instance set has been probed again.
+			manager.ready.Store(false)
+			defer manager.refreshLocalReadiness()
 		}
 		if err := manager.apply(next); err != nil {
 			logger.ErrorContext(ctx, "YAML reload failed; check active instance state", "error", err)
@@ -588,6 +607,8 @@ func runManagedServer(ctx context.Context, load func() (preparedServer, error), 
 			reload()
 		case <-tick:
 			reload()
+		case <-localHealthTick:
+			manager.refreshLocalReadiness()
 		}
 	}
 }
