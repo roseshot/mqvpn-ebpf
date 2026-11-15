@@ -1,10 +1,13 @@
 # Cross-platform Client: incremental implementation boundary
 
-**Current status:** The full `mqvpn-client` application is a **Linux-only**
-executable. This phase makes the running Linux Client's operating-system
-resource calls injectable behind one narrow `clientPlatform` interface, and
-adds Windows/macOS/Android **compile-only** checks for the reusable packet
-core. It does **not** ship or claim a working native Client on those systems.
+**Current status:** `mqvpn-server` is **Linux-only**, by design.
+`mqvpn-client` runs as a complete VPN on Linux. The Windows Client executable
+can now be built, but deliberately refuses to connect until it has native
+route/DNS/underlay protection. The Windows-only `internal/wintun` package
+implements native L3 packet I/O backed by an operator-provided official
+`wintun.dll`; it is **not wired to a usable VPN network session** yet.
+macOS/Android support remains at shared protocol-core compilation only.
+This does **not** ship a working native VPN Client on any non-Linux OS.
 
 ## Reuse without copying the protocol implementation
 
@@ -33,11 +36,37 @@ Linux-only TUN, DNS, netlink, optional TCX and source-socket code is still
 used unchanged by `linuxClientPlatform`. The platform boundary must not
 hide cleanup failures or silently bypass the authenticated Server route.
 
+## Windows packet device increment
+
+`internal/wintun.Open(name)` creates a Wintun adapter and starts an L3
+ring with `Read`, `Write`, `Close` and an adapter LUID accessor. It
+loads `wintun.dll` from the executable directory (an **absolute path**),
+rather than from the current working directory or `PATH`. No Wintun
+binary is bundled or silently downloaded. Obtain the signed, properly
+licensed DLL through the [official Wintun distribution](https://www.wintun.net/);
+driver installation and adapter creation may require administrator
+privileges. Only the adapter created by this component is closed.
+
+**The DLL and packet device are not sufficient for a safe VPN session.**
+A production Windows `clientPlatform` still has to configure address/MTU,
+add authenticated VPN routes and DNS, preserve a physical route to every
+QUIC/TCP Server endpoint, and restore exactly its owned changes after
+disconnect or partial failure. It must protect against Client traffic
+recirculating into its own virtual adapter. Until that work and Windows
+end-to-end packet tests are complete, the Windows executable returns a
+native-platform-unavailable error *before opening any underlay socket*.
+
+The GitHub Actions `windows-client` job builds the complete Windows
+Client executable, compiles/tests the Wintun I/O component **without
+requiring the DLL**, and checks refusal to establish an incomplete
+Windows VPN session. The Server binary remains Linux-only and is
+intentionally not cross-compiled for Windows.
+
 ## Platform implementation order
 
 | Target | First milestone | Native work required (not present) |
 | --- | --- | --- |
-| Windows x64 | One-WAN QUIC + Wintun L3 packet device | Wintun lifetime, route guard, DNS policy, service permissions, disconnect restoration |
+| Windows x64 | Wintun packet I/O and Windows Client binary compile (implemented, fail-closed) | Windows route guard, address/MTU, DNS policy, service permissions, packet-path integration, disconnect restoration |
 | macOS arm64 | Single-host Network Extension packet tunnel | App/Packet Tunnel Provider host, entitlements, `NEPacketTunnelNetworkSettings`, route and DNS ownership |
 | Android arm64 | One-network `VpnService` | Kotlin service and Go bridge, protected sockets, `VpnService.Builder` routes/DNS/MTU, VPN permission and background lifecycle |
 
