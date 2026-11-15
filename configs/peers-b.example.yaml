@@ -1,13 +1,11 @@
 # VPN instance customer-b (mq1): intentionally overlaps with customer-a.
-# Peer IDs and certificate fingerprints are scoped to THIS instance.
+# Peer IDs and trusted Client certificate CN mappings are scoped to THIS instance.
 peers:
   - id: customer-b-site-1
-    certificate_sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     routes:
       - 10.77.0.2/32
       - 192.168.20.0/24
   - id: customer-b-site-2
-    certificate_sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
     routes:
       - 10.77.0.3/32
       - 192.168.30.0/24
