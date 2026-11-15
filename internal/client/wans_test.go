@@ -1,4 +1,4 @@
-package app
+package client
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 )
 
 func TestWANListDoesNotUseTwoPathCeiling(t *testing.T) {
-	list := make([]clientWAN, 80)
+	list := make([]wanPath, 80)
 	for i := range list {
-		list[i] = clientWAN{Interface: "wan" + stringFromInt(i)}
+		list[i] = wanPath{Interface: "wan" + stringFromInt(i)}
 	}
 	planned, err := planClientWANs(list, nil)
 	if err != nil || len(planned) != 80 || planned[79].Interface != "wan79" {
@@ -27,7 +27,7 @@ func stringFromInt(n int) string {
 }
 
 func TestWANListCLIAndDefaultSelection(t *testing.T) {
-	var cli clientWANFlags
+	var cli wanFlags
 	for _, spec := range []string{
 		"192.0.2.2@wan0",
 		"198.51.100.2@wan1",
@@ -43,7 +43,7 @@ func TestWANListCLIAndDefaultSelection(t *testing.T) {
 		t.Fatalf("repeatable CLI lost WAN4: %+v, %v", out, err)
 	}
 	single, err := planClientWANs(nil, nil)
-	if err != nil || len(single) != 1 || single[0] != (clientWAN{}) {
+	if err != nil || len(single) != 1 || single[0] != (wanPath{}) {
 		t.Fatalf("default single WAN lost: %+v %v", single, err)
 	}
 }
@@ -51,22 +51,22 @@ func TestWANListCLIAndDefaultSelection(t *testing.T) {
 func TestWANListRejectsAmbiguityAndDuplicates(t *testing.T) {
 	tests := []struct {
 		name string
-		wans []clientWAN
+		wans []wanPath
 	}{
-		{"duplicate-source", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0"}, {SourceIP: "192.0.2.2", Interface: "wan1"}}},
-		{"duplicate-interface", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0"}, {SourceIP: "198.51.100.2", Interface: "wan0"}}},
-		{"missing-secondary", []clientWAN{{Interface: "wan0"}, {}}},
-		{"invalid-IP", []clientWAN{{SourceIP: "bad", Interface: "wan0"}}},
-		{"unspecified-IP", []clientWAN{{SourceIP: "0.0.0.0", Interface: "wan0"}}},
-		{"multicast-source-v4", []clientWAN{{SourceIP: "239.1.2.3", Interface: "wan0"}}},
-		{"multicast-source-v6", []clientWAN{{SourceIP: "ff02::1", Interface: "wan0"}}},
-		{"mapped-multicast-source", []clientWAN{{SourceIP: "::ffff:239.1.2.3", Interface: "wan0"}}},
-		{"mapped-unspecified-source", []clientWAN{{SourceIP: "::ffff:0.0.0.0", Interface: "wan0"}}},
-		{"mapped-multicast-server", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0", ServerIP: "::ffff:239.1.2.3"}}},
-		{"mapped-ip-family-mismatch", []clientWAN{{SourceIP: "::ffff:192.0.2.2", Interface: "wan0", ServerIP: "2001:db8::1"}}},
-		{"interface-leading-space", []clientWAN{{SourceIP: "192.0.2.2", Interface: " wan0"}}},
-		{"interface-embedded-nul", []clientWAN{{SourceIP: "192.0.2.2", Interface: "wan0\x00wrong"}}},
-		{"interface-too-long", []clientWAN{{SourceIP: "192.0.2.2", Interface: "ethernetlongname0"}}},
+		{"duplicate-source", []wanPath{{SourceIP: "192.0.2.2", Interface: "wan0"}, {SourceIP: "192.0.2.2", Interface: "wan1"}}},
+		{"duplicate-interface", []wanPath{{SourceIP: "192.0.2.2", Interface: "wan0"}, {SourceIP: "198.51.100.2", Interface: "wan0"}}},
+		{"missing-secondary", []wanPath{{Interface: "wan0"}, {}}},
+		{"invalid-IP", []wanPath{{SourceIP: "bad", Interface: "wan0"}}},
+		{"unspecified-IP", []wanPath{{SourceIP: "0.0.0.0", Interface: "wan0"}}},
+		{"multicast-source-v4", []wanPath{{SourceIP: "239.1.2.3", Interface: "wan0"}}},
+		{"multicast-source-v6", []wanPath{{SourceIP: "ff02::1", Interface: "wan0"}}},
+		{"mapped-multicast-source", []wanPath{{SourceIP: "::ffff:239.1.2.3", Interface: "wan0"}}},
+		{"mapped-unspecified-source", []wanPath{{SourceIP: "::ffff:0.0.0.0", Interface: "wan0"}}},
+		{"mapped-multicast-server", []wanPath{{SourceIP: "192.0.2.2", Interface: "wan0", ServerIP: "::ffff:239.1.2.3"}}},
+		{"mapped-ip-family-mismatch", []wanPath{{SourceIP: "::ffff:192.0.2.2", Interface: "wan0", ServerIP: "2001:db8::1"}}},
+		{"interface-leading-space", []wanPath{{SourceIP: "192.0.2.2", Interface: " wan0"}}},
+		{"interface-embedded-nul", []wanPath{{SourceIP: "192.0.2.2", Interface: "wan0\x00wrong"}}},
+		{"interface-too-long", []wanPath{{SourceIP: "192.0.2.2", Interface: "ethernetlongname0"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -79,13 +79,13 @@ func TestWANListRejectsAmbiguityAndDuplicates(t *testing.T) {
 }
 
 func TestWANListMappedIPv4UsesIPv4SocketFamily(t *testing.T) {
-	paths, err := planClientWANs([]clientWAN{{
+	paths, err := planClientWANs([]wanPath{{
 		SourceIP: "::ffff:192.0.2.2", Interface: "wan0", ServerIP: "198.51.100.1",
 	}}, nil)
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("mapped IPv4 source and IPv4 destination should share a socket family: %+v %v", paths, err)
 	}
-	if _, err := planClientWANs([]clientWAN{
+	if _, err := planClientWANs([]wanPath{
 		{SourceIP: "192.0.2.2", Interface: "wan0"},
 		{SourceIP: "::ffff:192.0.2.2", Interface: "wan1"},
 	}, nil); err == nil {
@@ -107,7 +107,7 @@ func TestWANListYAMLConfigFourPathsAndCLIOverride(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// Missing credentials are checked only after WAN parsing, so the
 	// expected CA error proves flags reached the correct validation stage.
-	err = RunClient(context.Background(), []string{
+	err = Run(context.Background(), []string{
 		"--config", config,
 		"--ca", "/missing/ca.crt", "--cert", "/missing/client.crt",
 		"--key", "/missing/client.key",
@@ -115,7 +115,7 @@ func TestWANListYAMLConfigFourPathsAndCLIOverride(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "read CA") {
 		t.Fatalf("valid four-WAN YAML rejected before identity check: %v", err)
 	}
-	err = RunClient(context.Background(), []string{
+	err = Run(context.Background(), []string{
 		"--config", config,
 		"--wan", "192.0.2.2@wan0",
 		"--wan", "198.51.100.2@wan1",
@@ -129,7 +129,7 @@ func TestWANListYAMLConfigFourPathsAndCLIOverride(t *testing.T) {
 
 func TestWANFlagBadSpec(t *testing.T) {
 	for _, bad := range []string{"", "wan0", "@wan0", "192.0.2.2@", "192.0.2.2"} {
-		var w clientWANFlags
+		var w wanFlags
 		if err := w.Set(bad); err == nil {
 			t.Fatalf("invalid --wan %q accepted", bad)
 		}

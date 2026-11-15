@@ -1,4 +1,4 @@
-package app
+package client
 
 import (
 	"context"
@@ -37,14 +37,14 @@ func TestTCPPortIndependentOfUDPPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dial, request, err := tcpTarget(clientTCPOptions{endpoint: ep, tcpPort: 443})
+	dial, request, err := tcpTarget(tcpOptions{endpoint: ep, tcpPort: 443})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if dial != "198.51.100.77:443" || request != "https://tenant.example.com:443/.well-known/masque/ethernet/" {
 		t.Fatalf("wrong TCP default destination: %q %q", dial, request)
 	}
-	dial, request, err = tcpTarget(clientTCPOptions{endpoint: ep, tcpPort: 8443})
+	dial, request, err = tcpTarget(tcpOptions{endpoint: ep, tcpPort: 8443})
 	if err != nil {
 		t.Fatal(err)
 	}
