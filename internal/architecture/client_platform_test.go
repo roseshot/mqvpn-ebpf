@@ -15,8 +15,8 @@ import (
 // Linux syscalls are permitted in client_platform_linux.go and the Linux
 // network resource implementation, not in the shared session orchestrators.
 func TestClientEntryPointsUsePlatform(t *testing.T) {
-	for _, name := range []string{"client.go", "client_tcp.go", "client_sticky.go"} {
-		path := filepath.Join("..", "app", name)
+	for _, name := range []string{"cli.go", "tcp.go", "sticky.go"} {
+		path := filepath.Join("..", "client", name)
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
@@ -28,7 +28,7 @@ func TestClientEntryPointsUsePlatform(t *testing.T) {
 				t.Fatal(err)
 			}
 			if strings.HasSuffix(pkg, "/internal/wan") || strings.HasSuffix(pkg, "/internal/tun") {
-				t.Errorf("%s imports Linux device code %s; use clientPlatform instead", path, pkg)
+				t.Errorf("%s imports Linux device code %s; use networkPlatform instead", path, pkg)
 			}
 		}
 		ast.Inspect(file, func(node ast.Node) bool {

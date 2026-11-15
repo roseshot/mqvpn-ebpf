@@ -103,6 +103,6 @@ For configuration boundaries and operational caveats, use [the documentation ind
 
 ## Project status and help
 
-This repository builds two Go executables from `cmd/mqvpn-server` and `cmd/mqvpn-client` and keeps its Linux integration tests under `tests/integration`. The [GitHub Actions workflow](.github/workflows/go.yml) tests builds, race detection, eBPF, and encrypted multi-site forwarding on pull requests.
+This repository builds two Go executables from `cmd/mqvpn-server` and `cmd/mqvpn-client` and keeps its Linux integration tests under `tests/integration`. The Go source is organized by **Client**, **Linux-only Server**, and **shared session protocols**; see [project layout](docs/project-layout.md). The [GitHub Actions workflow](.github/workflows/go.yml) tests builds, race detection, eBPF, and encrypted multi-site forwarding on pull requests.
 
 For an unexpected behavior, start with [Troubleshooting](docs/operations.md) and the [GitHub issue tracker](https://github.com/roseshot/mqvpn-ebpf/issues). Reports should include the version/commit, Linux kernel, relevant sanitized logs and reproduction steps; **never post private keys or TLS key logs**.

@@ -55,6 +55,8 @@ sudo bash tests/integration/overlay-netns.sh udp
 | 处理 MTU、路由、证书、网络连通性问题 | [运维与故障排查](docs/operations.md) |
 | 查阅架构、其他测试与高级选项 | [完整文档目录](docs/README.md) |
 
+开发目录按 Client、仅 Linux 的 Server、共享协议会话代码拆包；参见[项目目录与包职责](docs/project-layout.md)。
+
 现有的深入技术文档以英语编写；本页提供中文项目概览和操作入口。
 
 ## 构建、测试和运行

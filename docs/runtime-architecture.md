@@ -19,7 +19,11 @@ standard-library APIs and Go modules.
 | QUIC/HTTP3/MPQUIC | Go `github.com/qoke/mp-quic-go` | Pure Go networking |
 | HTTP/1.1/TCP fallback capsules | `internal/capsule` | Pure Go framing |
 | Per-session DNS configuration and restoration | `internal/dnspush` | systemd-resolved D-Bus or per-interface resolvconf entry |
-| Client reconnect supervisor | `internal/app/client_reconnect.go` | Context-aware serial attempts and capped exponential backoff |
+| Shared TLS, MASQUE and MPQUIC negotiation | `internal/session` | OS-independent session-level rules used by Client and Server |
+| Client CLI, transport and reconnect | `internal/client` | Portable client, protected underlay behind platform adapter |
+| Linux-only Server API and instance lifecycle | `internal/server` | mTLS/SNI tenant routing, reload, health, HTTP/3 and TCP |
+| Shared Linux TCX attachment policy | `internal/tcebpf/lifecycle_linux.go` | Explicit TCX attach/fallback; Client owns TUN teardown |
+| Client reconnect supervisor | `internal/client/reconnect.go` | Context-aware serial attempts and capped exponential backoff |
 
 The Client reconnect supervisor uses sequential sessions. A TUN created
 for a Client session is deleted at disconnect. When attaching to an

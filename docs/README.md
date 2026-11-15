@@ -11,8 +11,9 @@ The guides follow the [Diátaxis](https://diataxis.fr/) idea of separating *lear
 | Guide | What you will achieve |
 | --- | --- |
 | [Get started](getting-started.md) | Build two binaries, create lab credentials, authorize a peer, connect two Linux hosts and send a first ping |
+| [Source layout and package ownership](project-layout.md) | Find the Client, Linux Server and shared protocol implementations |
 | [Architecture overview](runtime-architecture.md) | Understand the client/server, TUN, QUIC and Linux resource boundaries |
-| [Cross-platform Client boundary](client-platforms.md) | Review Windows, macOS, Android migration scope and what is actually implemented |
+| [Cross-platform Client boundary](client-platforms.md) | Review Windows, macOS, Android support scope and what is actually implemented |
 
 ## Do: configure and operate
 
