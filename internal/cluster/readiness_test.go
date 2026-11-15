@@ -11,10 +11,10 @@ func readyFixture(t *testing.T, n int, node string) (*MemoryStore, AppliedState)
 	store := NewMemoryStore()
 	committed := mustBootstrap(t, store, n)
 	return store, AppliedState{
-		ClusterID: committed.ClusterID,
-		NodeID: node,
+		ClusterID:          committed.ClusterID,
+		NodeID:             node,
 		MembershipRevision: committed.MembershipRevision,
-		Policy: committed.Policy,
+		Policy:             committed.Policy,
 	}
 }
 
@@ -83,7 +83,7 @@ func TestCheckAppliedRejectsMissingInvalidAndCanceled(t *testing.T) {
 	applied := AppliedState{
 		ClusterID: "cluster-1", NodeID: "server-0",
 		MembershipRevision: 1,
-		Policy: PolicyReference{Revision: 1, Digest: digestA, CRLDigest: digestB},
+		Policy:             PolicyReference{Revision: 1, Digest: digestA, CRLDigest: digestB},
 	}
 	if err := CheckApplied(ctx, store, applied); !errors.Is(err, ErrMissing) {
 		t.Fatalf("uninitialized cluster accepted: %v", err)
