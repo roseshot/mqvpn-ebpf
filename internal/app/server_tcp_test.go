@@ -38,7 +38,7 @@ func (d *tcpMockTun) Close() error { return nil }
 func TestTCPFallbackStrictHTTP1UpgradeAndCapsules(t *testing.T) {
 	cfg, _ := testServerFiles(t)
 	data, err := configfile.Marshal(cfg.Instances[0].Peers, p2mp.FileConfig{Peers: []p2mp.PeerConfig{{
-		ID: "site-a",
+		ID:     "site-a",
 		Routes: []string{"10.77.0.2/32"},
 	}}})
 	if err != nil {
