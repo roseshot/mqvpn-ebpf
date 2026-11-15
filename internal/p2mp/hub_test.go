@@ -67,11 +67,11 @@ func prepare(t *testing.T) (*Hub, *fakeDevice, *Session, *Session, *fakeStream, 
 	ctx, cancel := context.WithCancel(context.Background())
 	as := &fakeStream{out: make(chan []byte, 8)}
 	bs := &fakeStream{out: make(chan []byte, 8)}
-	A, err := h.AttachWithTunnelIP(ctx, cfg.Peers[0], as, false)
+	A, err := h.AttachWithTrafficRole(ctx, cfg.Peers[0], as, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	B, err := h.AttachWithTunnelIP(ctx, cfg.Peers[1], bs, false)
+	B, err := h.AttachWithTrafficRole(ctx, cfg.Peers[1], bs, false, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
