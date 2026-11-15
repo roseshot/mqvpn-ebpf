@@ -66,7 +66,9 @@ func TestClientForwardsMulticastWithoutFiltering(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1160, false, false, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	go func() {
+		done <- ClientPumpWithFeatures(ctx, device, stream, 1160, false, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
 	// Deliberately not UDP/5353, not TTL 255: transport must not impose
 	// an mDNS/port/TTL-specific policy on tunnel contents.
 	multicast := ip4([4]byte{10, 77, 0, 2}, [4]byte{224, 0, 0, 251})
