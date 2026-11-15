@@ -25,7 +25,7 @@ func TestClientCompactConfigAndDefaultEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server != "tenant.vpn.example.com" || cfg.Address != "10.77.0.2/24" || cfg.TUN != "" || cfg.SourceInterface != "" {
+	if cfg.Server != "tenant.vpn.example.com" || cfg.Address != "10.77.0.2/24" || cfg.TUN != "" || len(cfg.WANs) != 0 {
 		t.Fatalf("unexpected client defaults %+v", cfg)
 	}
 	endpoint, err := planClientEndpoint(cfg.Server, cfg.Path, cfg.ConnectIP)
@@ -40,6 +40,10 @@ func TestClientYAMLStrictValidation(t *testing.T) {
 		"server: tenant.example.com\nunknown_option: true\n",
 		"server: tenant.example.com\nurl: https://tenant.example.com/test\n",
 		"server: tenant.example.com\nserver_name: tenant.example.com\n",
+		"server: tenant.example.com\nsource_ip: 192.0.2.2\n",
+		"server: tenant.example.com\nsource_interface: eth0\n",
+		"server: tenant.example.com\nwan2_ip: 192.0.2.3\n",
+		"server: tenant.example.com\nwan2_interface: eth1\n",
 	} {
 		if _, err := loadClientFile(writeClientTestYAML(t, raw)); err == nil {
 			t.Fatalf("removed/invalid YAML accepted: %q", raw)
