@@ -171,3 +171,22 @@ func TestWindowsAddressLeaseOwnedRollbackAndConflict(t *testing.T) {
 		}
 	})
 }
+
+func TestWindowsIPHelperSymbolsAvailableWithoutAdministrator(t *testing.T) {
+	// Resolve all four system DLL entrypoints without installing an
+	// adapter, modifying any network state, or requiring elevation.
+	if _, err := newIPAddressAPI(); err != nil {
+		t.Fatalf("Windows unicast address APIs unavailable: %v", err)
+	}
+}
+
+func TestWindowsAddressRemovedAdapterCleanup(t *testing.T) {
+	fake := &fakeAddressAPI{getErr: windows.ERROR_FILE_NOT_FOUND}
+	lease, err := assignAddress(fake, 44, netip.MustParsePrefix("10.77.0.26/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil || fake.deleted != 0 {
+		t.Fatalf("removed original Wintun adapter should need no address cleanup: %v", err)
+	}
+}
