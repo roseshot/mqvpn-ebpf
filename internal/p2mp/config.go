@@ -18,8 +18,8 @@ type PeerConfig struct {
 	ID string `yaml:"id"`
 	// By default a peer's id is matched against the verified Client certificate CN.
 	// certificate_cn permits a different human-friendly peer ID.
-	CertificateCN string `yaml:"certificate_cn,omitempty"`
-	Routes []string `yaml:"routes"`
+	CertificateCN string   `yaml:"certificate_cn,omitempty"`
+	Routes        []string `yaml:"routes"`
 	// Nil means inherit the instance setting; [] explicitly suppresses it.
 	PushRoutes      []string `yaml:"push_routes,omitempty"`
 	PushDNS         []string `yaml:"push_dns,omitempty"`
