@@ -7,7 +7,7 @@ import (
 	quic "github.com/qoke/mp-quic-go"
 )
 
-func TestPathSchedulerValidationAndCompatibility(t *testing.T) {
+func TestPathSchedulerValidationAndDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		value string
 		want  string
