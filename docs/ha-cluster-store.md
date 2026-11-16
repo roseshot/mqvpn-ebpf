@@ -1,5 +1,9 @@
 # HA architecture: local operation, shared policy, fenced ownership
 
+[Documentation index](README.md) · [HA control-plane design](README.md#high-availability-control-plane-design-and-local-primitives)
+
+> **Document scope:** **Backend-neutral control-plane contract.** Separates Server-local state, shared policy manifests and exclusive peer/IP ownership; no consensus service is wired to production.
+
 **Implemented:** standalone Server-local readiness, a backend-neutral
 `cluster.Store` contract, and a **local-only** `cluster.Fence` verifier.
 
@@ -7,6 +11,13 @@
 reconciliation, distributed IP leases, inter-Server forwarding, or live
 encrypted-session takeover. Do not interpret the contract as a deployed
 N-node HA feature.
+
+## On this page
+
+- [Three responsibilities, no extra state framework](#three-responsibilities-no-extra-state-framework)
+- [ClusterStore remains deliberately narrow](#clusterstore-remains-deliberately-narrow)
+- [IP leases must not share a giant manifest transaction](#ip-leases-must-not-share-a-giant-manifest-transaction)
+- [End-to-end exit criterion](#end-to-end-exit-criterion)
 
 ## Three responsibilities, no extra state framework
 
@@ -93,10 +104,16 @@ fenced owner cutover, and inter-Server forwarding across real QUIC/TUN
 paths. Do not equate load-balancer failover with live QUIC session transfer.
 
 A deterministic, **non-distributed** keyed lease-command implementation
-(`LeaseStateMachine`) now enforces owner epochs, explicit tombstones, per-tenant
+(`LeaseStateMachine`) enforces owner epochs, explicit tombstones, per-tenant
 IP uniqueness and a safety grace interval; see [keyed lease semantics](ha-keyed-lease-state.md).
 It is not a durable backend and is not connected to Server admission.
 
 See [HA state sync](ha-cluster-state-sync.md),
 [local ownership fence](ha-ownership-fence.md), and
 [tracking issue #43](https://github.com/roseshot/mqvpn-ebpf/issues/43).
+
+## Related documentation
+
+- [State sync plan](ha-cluster-state-sync.md)
+- [Keyed leases](ha-keyed-lease-state.md)
+- [Local fence verifier](ha-ownership-fence.md)

@@ -1,15 +1,29 @@
 # HA cluster synchronization: implementation contract
 
-**Status:** Architecture and acceptance criteria. Server-only readiness/VIP
-handling is in PR #41; CN authorization, per-Peer policy inheritance and
-instance CRL checks are in the dependent PKI PR. **This page does not claim
-cross-node replication is already running.** A working VRRP address alone
+[Documentation index](README.md) · [HA control-plane design](README.md#high-availability-control-plane-design-and-local-primitives)
+
+> **Document scope:** **Design and acceptance criteria, not a deployed cluster.** Defines N-node shared policy, fencing and consistency boundaries while preserving node-local telemetry.
+
+**Status:** Architecture and acceptance criteria only. The standalone
+Server implements local readiness, mTLS peer authorization and optional
+per-instance CRL checking; these do **not** provide replicated policy,
+distributed leases or cross-node admission. A working VRRP address alone
 is not a distributed session database.
 
 For the minimal Phase B quorum/CAS interface (no required etcd), see
 [ClusterStore contract](ha-cluster-store.md). Its in-memory store is
 compiled only in Go tests; the policy verification helper remains
 unwired to Server admission. There is no production consensus backend.
+
+## On this page
+
+- [What is local (never replicated by Raft)?](#what-is-local-never-replicated-by-raft)
+- [What must be synchronized?](#what-must-be-synchronized)
+- [Cluster size and failure-domain model (N Server nodes)](#cluster-size-and-failure-domain-model-n-server-nodes)
+- [Identity and Client overrides](#identity-and-client-overrides)
+- [Transaction and fencing protocol (planned)](#transaction-and-fencing-protocol-planned)
+- [Acceptance matrix for implementation](#acceptance-matrix-for-implementation)
+- [Delivery phases](#delivery-phases)
 
 ## What is local (never replicated by Raft)?
 
@@ -201,3 +215,9 @@ traffic key logs or unfenced lease writes to a replica.
 
 Do not mark a phase as supported until its corresponding network-partition,
 certificate-revocation and multi-WAN integration tests pass.
+
+## Related documentation
+
+- [HA deployment patterns](high-availability.md)
+- [ClusterStore contract](ha-cluster-store.md)
+- [Lease state machine](ha-keyed-lease-state.md)

@@ -1,10 +1,14 @@
 # N-node HA ownership fencing: local verification primitive
 
-This is the **first implementation building block**, not an end-to-end HA
+[Documentation index](README.md) · [HA control-plane design](README.md#high-availability-control-plane-design-and-local-primitives)
+
+> **Document scope:** **Local safety verifier, not distributed fencing.** The owner-epoch checks cannot enforce cluster-wide exclusivity until an authenticated quorum commits and delivers ownership state.
+
+This is a **local implementation building block**, not an end-to-end HA
 cluster. The Go package at [internal/cluster](../internal/cluster) holds a
 node-count-independent local state machine for **quorum-issued** peer-owner
 epochs. It has no network listener, does not contact etcd, and is not yet wired
-into the P2MP hub. As of this change, the existing Server health check still
+into the P2MP hub. The existing Server health check still
 reports **local-only** readiness and dynamic tunnel pools are **not** safe to
 share across independent Servers.
 
@@ -65,10 +69,16 @@ a reconnect after an owner failover.
 
 ## Test coverage
 
-\`go test ./internal/cluster -race\` covers N=2/3/5/8 membership, scale-out,
+`go test ./internal/cluster -race` covers N=2/3/5/8 membership, scale-out,
 membership rollback and revision collision, concurrent owner conflicts,
 lease renewal/replay, IP reuse, explicit fencing, stale owner denial,
 node removal/rejoin, and cross-tenant overlap. Network-partition tests must
 be added with a **real** quorum-backed store, at least N=3/5 independent
 Server processes and authenticated inter-Server packet forwarding before
 claiming Phase B/C complete. See [Issue #43](https://github.com/roseshot/mqvpn-ebpf/issues/43).
+
+## Related documentation
+
+- [Keyed lease semantics](ha-keyed-lease-state.md)
+- [ClusterStore contract](ha-cluster-store.md)
+- [HA deployment](high-availability.md)
