@@ -173,7 +173,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3 iperf3 tcpdump tshark haproxy
+            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3 iperf3 tcpdump tshark haproxy clang llvm libbpf-dev linux-libc-dev
           # Official signed frr-stable channel, NOT the Ubuntu archive package.
           curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
             sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
