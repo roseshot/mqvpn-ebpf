@@ -39,7 +39,7 @@ make release
 sudo bash tests/integration/overlay-netns.sh udp
 ```
 
-需要 Go **1.27.4**（以 `go.mod` 为准）、`/dev/net/tun`、Linux 网络管理权限、`iproute2`、OpenSSL 和 Python 3。编译 Go 程序不需要 CGO，也不用在部署时安装 Clang。上述测试会使用临时证书和网络命名空间，**不能把测试证书作为生产环境凭据**。
+需要 Go **1.27.4**（以 `go.mod` 为准）、`/dev/net/tun`、Linux 网络管理权限、`iproute2`、OpenSSL 和 Python 3。编译 Go 程序不需要 CGO，也不用在部署时安装 Clang。上述测试会使用临时证书和网络命名空间，**不能把测试证书作为生产环境凭据**。 全套 Linux 集成测试可用 `sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh` 统一运行；包含两站点隔离网络探针，以及同一五站点拓扑下的 BGP、OSPF、多 WAN 和 TCP/UDP/VoIP 验证。
 
 ## 常见任务与对应文档
 

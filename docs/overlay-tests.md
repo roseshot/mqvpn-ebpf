@@ -196,11 +196,20 @@ library**, which is separate from mqvpn's uncapped WAN-list parser.
 
 ## Run
 
-GitHub Actions: the `overlay-integration` job in
-[the Go workflow](../.github/workflows/go.yml) runs **VXLAN, TCP, UDP,
-VoIP, four-WAN encryption and scheduling, shaped-WAN loads, and five-site
-BGP/OSPF** on `ubuntu-24.04`. The signed FRR packages and Go binaries
-are installed/built once per combined network job.
+GitHub Actions runs **one privileged integration scenario** via
+`tests/integration/scenario.sh` in the
+[Go workflow](../.github/workflows/go.yml). It verifies encryption,
+WAN shaping, failover, TCP/UDP/VoIP, VXLAN, kernel TUN/TCX, and a
+single five-site fixture with **concurrent BGP and OSPF**.
+Focused `overlay-netns.sh` modes remain available for diagnosing a
+specific impairment or security assertion.
+
+To replay the entire scenario locally (privileged Linux, FRR stable,
+Clang, TUN/VXLAN, networking tools and Go required):
+
+```bash
+sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh
+```
 
 Locally, on an isolated Linux test host with root/CAP_NET_ADMIN and
 `/dev/net/tun` (and `iproute2`, `iputils-ping`, OpenSSL, Python 3, iperf3):

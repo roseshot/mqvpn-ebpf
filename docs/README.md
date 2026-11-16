@@ -57,7 +57,7 @@ The following tests use **real Linux namespaces, TUNs and QUIC** rather than onl
 | Five sites, randomized 1–8 WANs, BGP and OSPF | [Five-site FRRouting](five-site-routing.md) |
 | Wire confidentiality and temporary diagnostic key logs | [Wire encryption verification](wire-encryption-tests.md) |
 
-The project CI also runs regular Go tests, the race detector, format/module checks, Linux TUN checks and eBPF compilation. Test-only TLS key logs or demo CA keys **must not** be used in production.
+Run the complete privileged network/eBPF/TUN/QUIC/FRR integration scenario with `sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh` on a prepared Linux host. Its final five-site phase runs BGP and OSPF together on a single authenticated MPQUIC topology; isolated two-site probes cover incompatible WAN impairment and wire-capture conditions. CI also runs Go tests, race detection, Windows/portable Client builds and formatting/module checks. Test-only TLS key logs or demo CA keys **must not** be used in production.
 
 ## Reading conventions
 

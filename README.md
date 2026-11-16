@@ -54,6 +54,8 @@ sudo bash tests/integration/overlay-netns.sh udp
 
 This test needs root or the appropriate Linux network capabilities. It creates test-only interfaces, certificates and namespaces and cleans them up. It is **not** a production deployment.
 
+For the complete reproducible integration scenario (including kernel TUN/TCX, encrypted WAN captures, VoIP and five-site simultaneous BGP/OSPF), use `sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh` after installing its Linux/FRR/Clang prerequisites. The scenario runs focused two-site fixtures and one shared five-site multi-WAN topology.
+
 For a two-host deployment, continue with the [step-by-step setup guide](docs/getting-started.md). It covers certificates, authorized peer identities, Server/Client YAML, validation, connection and a first ping. Use a trusted CA and protected keys in production—not the generated demo certificates.
 
 ## Find the right guide
