@@ -22,7 +22,7 @@ run_phase() {
   "$@"
   echo "::endgroup::"
 }
-for tool in go make ip ping modprobe python3 openssl timeout \
+for tool in go make clang ip ping modprobe python3 openssl timeout \
             tc ss iperf3 tcpdump tshark haproxy; do
   command -v "$tool" >/dev/null || { echo "missing dependency: $tool" >&2; exit 2; }
 done
@@ -51,6 +51,13 @@ run_phase "HAProxy TCP ingress configuration validation" bash -c '
   haproxy -c -f configs/haproxy-mqvpn-active-standby-tcp.cfg
 '
 
+# The kernel test explicitly loads ../../bpf/tun_tc.o from the C source.
+# Build that test-only object without replacing checked-in embedded objects.
+# The separate eBPF reproducibility job checks the tracked ELF byte-for-byte.
+run_phase "Compile TCX kernel test ELF" bash -c '
+  /usr/bin/clang -O2 -g -Wall -Werror -target bpf -D__TARGET_ARCH_x86 \
+    -I/usr/include/x86_64-linux-gnu -c bpf/tun_tc.c -o bpf/tun_tc.o
+'
 run_phase "Kernel TCX MSS rewrite and checksums" env CGO_ENABLED=0 \
   go test -mod=readonly -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
 run_phase "Kernel TUN connected routes" env CGO_ENABLED=0 \
