@@ -130,7 +130,7 @@ func New(device io.ReadWriteCloser, cfg *Config, maxFrame int, logger *slog.Logg
 	if maxFrame < 64 || maxFrame > 65535 {
 		return nil, fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	return &Hub{device: device, cfg: cfg, maxFrame: maxFrame, log: logger, peers: make(map[string]*Session), realtime: make(map[string]*Session)}, nil
 }
 

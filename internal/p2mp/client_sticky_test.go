@@ -51,7 +51,7 @@ func TestClientPumpNeverRotatesEFOrSIPOntoBulkSession(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, discardTestLogger()) }()
 	pkt := ip4([4]byte{10, 77, 0, 2}, [4]byte{10, 77, 0, 1})
 	pkt[1] = 46 << 2 // DSCP EF (RTP/RTCP)
 	device.in <- pkt
@@ -142,7 +142,7 @@ func TestClientPumpRealtimeFragmentsNeverCrossCompanionGenerations(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 2048, false, true, nil) }()
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 2048, false, true, discardTestLogger()) }()
 
 	old := append(ip4([4]byte{10, 77, 0, 1}, [4]byte{10, 77, 0, 2}), make([]byte, 1400)...)
 	binary.BigEndian.PutUint16(old[2:4], uint16(len(old)))
@@ -233,7 +233,7 @@ func TestClientPumpRejectsRealtimeFrameRevokedBeforeTUNWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, discardTestLogger()) }()
 
 	oldPacket := ip4([4]byte{10, 77, 0, 1}, [4]byte{10, 77, 0, 2})
 	oldPacket[8] = 17
@@ -303,7 +303,7 @@ func TestClientPumpIPv6SIPWithExtensionHeaderUsesStickyCompanion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, discardTestLogger()) }()
 
 	// IPv6 Destination Options precedes a UDP SIP port. It must remain
 	// on the pinned single-WAN companion instead of bulk round-robin QUIC.
@@ -369,7 +369,7 @@ func TestClientPumpAssuredQoSRemainsOnMultipathAndRealtimeIsSticky(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, nil) }()
+	go func() { done <- ClientPumpWithFeatures(ctx, device, stream, 1500, false, false, discardTestLogger()) }()
 
 	assured := ip4([4]byte{10, 77, 0, 2}, [4]byte{10, 77, 0, 1})
 	assured[1] = 34 << 2 // DSCP AF41

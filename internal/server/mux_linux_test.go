@@ -80,7 +80,7 @@ func TestSharedPortChangeRequiresRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr := newManager(t.Context(), nil)
+	mgr := newManager(t.Context(), discardServerTestLogger())
 	mgr.listen = ":4433"
 	defer mgr.xdp.Close()
 	cfg.Listen = ":4434"

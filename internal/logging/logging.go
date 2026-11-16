@@ -3,6 +3,7 @@ package logging
 import (
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"strings"
@@ -93,12 +94,19 @@ func newComponentWithWriter(writer io.Writer, opts Options, component string) *s
 	return newWithWriter(writer, opts).With("component", component)
 }
 
-// Ensure preserves the explicit logger provided by the caller, or creates a
-// deterministic stderr/info fallback for library entry points and tests.
-// It never depends on the process-global slog.Default() configuration.
-func Ensure(logger *slog.Logger) *slog.Logger {
-	if logger != nil {
-		return logger
+// Require enforces application-owned logger injection. A missing logger is
+// a programming error: creating a fallback here would silently bypass the
+// root handler's format, level, destination, and component attributes.
+func Require(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		panic("logging: nil logger; inject the application's configured logger")
 	}
-	return New(Options{Level: slog.LevelInfo, Format: "text"})
+	return logger
+}
+
+// StdLogger adapts the injected structured handler to APIs such as
+// net/http.Server.ErrorLog that require *log.Logger. It does not create a
+// new handler, change the destination, or reset the component attributes.
+func StdLogger(logger *slog.Logger, level slog.Level) *log.Logger {
+	return slog.NewLogLogger(Require(logger).Handler(), level)
 }

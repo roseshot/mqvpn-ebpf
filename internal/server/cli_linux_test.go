@@ -36,7 +36,7 @@ func TestInstanceCLISharedPortUpsertDelete(t *testing.T) {
 		"--address", "10.77.0.1/24",
 		"--peers", first.Peers, "--cert", first.Cert,
 		"--key", first.Key, "--client-ca", first.ClientCA,
-	}, nil); err != nil {
+	}, discardServerTestLogger()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := loadServerConfig(path)
@@ -51,7 +51,7 @@ func TestInstanceCLISharedPortUpsertDelete(t *testing.T) {
 	}
 	if err := runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-b", "--tun", "mq2",
-	}, nil); err != nil {
+	}, discardServerTestLogger()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err = loadServerConfig(path)
@@ -63,7 +63,7 @@ func TestInstanceCLISharedPortUpsertDelete(t *testing.T) {
 	}
 	if err := runInstanceCLI([]string{
 		"delete", "--config", path, "--name", "edge-b",
-	}, nil); err != nil {
+	}, discardServerTestLogger()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err = loadServerConfig(path)
@@ -90,7 +90,7 @@ func TestInstanceCLIDuplicateSNIAtomicReject(t *testing.T) {
 		"--address", "10.77.0.1/24",
 		"--peers", first.Peers, "--cert", first.Cert,
 		"--key", first.Key, "--client-ca", first.ClientCA,
-	}, nil)
+	}, discardServerTestLogger())
 	if err == nil {
 		t.Fatal("duplicated SNI should be rejected")
 	}
@@ -105,7 +105,7 @@ func TestRejectUnknownInstanceListenFlag(t *testing.T) {
 	path := writeTestServerYAML(t, cfg, 0600)
 	if err := runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-a", "--listen", ":4434",
-	}, nil); err == nil {
+	}, discardServerTestLogger()); err == nil {
 		t.Fatal("unknown per-instance --listen flag accepted")
 	}
 }
@@ -116,7 +116,7 @@ func TestInstanceCLIUpdatesManagedTunAddressAndMTU(t *testing.T) {
 	if err := runInstanceCLI([]string{
 		"upsert", "--config", path, "--name", "edge-a",
 		"--address", "10.77.0.254/24", "--mtu", "1000",
-	}, nil); err != nil {
+	}, discardServerTestLogger()); err != nil {
 		t.Fatal(err)
 	}
 	out, err := loadServerConfig(path)

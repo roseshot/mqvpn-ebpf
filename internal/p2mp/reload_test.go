@@ -20,7 +20,7 @@ func TestPeerMapHotReloadKeepsValidConnection(t *testing.T) {
 	before := testRuleFile(t, PeerConfig{
 		ID: "A", Routes: []string{"10.77.0.2/32"},
 	})
-	h, err := New(&fakeDevice{}, before, 1160, nil)
+	h, err := New(&fakeDevice{}, before, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestPeerMapHotReloadKeepsValidConnection(t *testing.T) {
 
 func TestPeerRevocationStopsOldSession(t *testing.T) {
 	before := testRuleFile(t, PeerConfig{ID: "A", Routes: []string{"10.77.0.2/32"}})
-	h, err := New(&fakeDevice{}, before, 1160, nil)
+	h, err := New(&fakeDevice{}, before, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPeerRevocationStopsOldSession(t *testing.T) {
 
 func TestReloadEmptyRejected(t *testing.T) {
 	before := testRuleFile(t, PeerConfig{ID: "A", Routes: []string{"10.77.0.2/32"}})
-	h, err := New(&fakeDevice{}, before, 1160, nil)
+	h, err := New(&fakeDevice{}, before, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

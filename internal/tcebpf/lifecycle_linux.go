@@ -11,7 +11,7 @@ import (
 
 // AttachConfigured fails open only in auto mode. Required remains strict.
 func AttachConfigured(ctx context.Context, ifname string, policy Config, mtu int, logger *slog.Logger) (*Attachment, error) {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	norm, err := policy.Normalize()
 	if err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func ReportAndClose(ctx context.Context, tc *Attachment, logger *slog.Logger) er
 	if tc == nil {
 		return nil
 	}
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	if counters, err := tc.Snapshot(); err == nil {
 		logger.InfoContext(ctx, "TUN TC eBPF counters", "ingress", counters.Ingress, "egress", counters.Egress)
 	} else {

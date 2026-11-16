@@ -59,18 +59,45 @@ func TestComponentLoggerJSONFieldsAndLevel(t *testing.T) {
 	}
 }
 
-func TestDefaultLoggingUsesSuppliedLogger(t *testing.T) {
+func TestRequirePreservesCallerHandler(t *testing.T) {
 	var output bytes.Buffer
-	explicit := newWithWriter(&output, Options{Level: slog.LevelDebug, Format: "text"})
-	if got := Ensure(explicit); got != explicit {
-		t.Fatal("explicit logger was replaced")
+	explicit := newComponentWithWriter(&output, Options{Level: slog.LevelWarn, Format: "json"}, "client")
+	if got := Require(explicit); got != explicit {
+		t.Fatal("configured logger was replaced")
 	}
-	Ensure(explicit).InfoContext(context.Background(), "owned logger")
-	if !strings.Contains(output.String(), "owned logger") {
-		t.Fatalf("explicit log handler was bypassed: %q", output.String())
+	Require(explicit).InfoContext(context.Background(), "filtered")
+	Require(explicit).WarnContext(context.Background(), "owned logger")
+	if strings.Contains(output.String(), "filtered") || !strings.Contains(output.String(), "owned logger") ||
+		!strings.Contains(output.String(), "\"component\":\"client\"") {
+		t.Fatalf("injected logger's level, handler or component was bypassed: %q", output.String())
 	}
-	if fallback := Ensure(nil); fallback == nil || !fallback.Enabled(context.Background(), slog.LevelInfo) ||
-		fallback.Enabled(context.Background(), slog.LevelDebug) {
-		t.Fatal("nil logger must fall back to a stable info-level stderr logger")
+}
+
+func TestRequireRejectsMissingLogger(t *testing.T) {
+	defer func() {
+		msg, ok := recover().(string)
+		if !ok || !strings.Contains(msg, "nil logger") {
+			t.Fatalf("nil logger must fail fast, not create a second handler: %v", msg)
+		}
+	}()
+	Require(nil)
+}
+
+func TestStdLoggerSharesHandlerAndComponent(t *testing.T) {
+	var output bytes.Buffer
+	root := newComponentWithWriter(&output, Options{Level: slog.LevelWarn, Format: "json"}, "server").
+		With("transport", "tcp")
+	StdLogger(root, slog.LevelWarn).Print("HTTP server error")
+
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record); err != nil {
+		t.Fatalf("adapter must use the configured JSON handler: %v, output=%q", err, output.String())
+	}
+	for field, want := range map[string]any{
+		"level": "WARN", "msg": "HTTP server error", "component": "server", "transport": "tcp",
+	} {
+		if record[field] != want {
+			t.Errorf("%s = %v; want %v", field, record[field], want)
+		}
 	}
 }

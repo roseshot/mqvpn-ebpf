@@ -97,12 +97,16 @@ func TestNoRuntimeSubprocesses(t *testing.T) {
 	}
 }
 
-// TestProductionLoggingUsesSlog rejects accidental divergence from the
-// common logging package. The only stdout print exception produces YAML
-// data for the "instance list" CLI; it is not a diagnostic log.
-func TestProductionLoggingUsesSlog(t *testing.T) {
+// TestProductionLoggingUsesInjectedSlog enforces one output factory.
+// Packages may use the slog Logger API but may not create handlers,
+// root loggers, or process-global defaults. The only stdout print exception
+// produces YAML data for the "instance list" CLI, not a diagnostic log.
+func TestProductionLoggingUsesInjectedSlog(t *testing.T) {
 	root := filepath.Join("..", "..")
 	allowedDataOutput := filepath.Join(root, "internal", "server", "cli_linux.go")
+	loggingFactory := filepath.Join(root, "internal", "logging", "logging.go")
+	clientEntry := filepath.Join(root, "cmd", "mqvpn-client", "main.go")
+	serverEntry := filepath.Join(root, "cmd", "mqvpn-server", "main.go")
 	for _, directory := range []string{"internal", filepath.Join("cmd", "mqvpn-server"), filepath.Join("cmd", "mqvpn-client")} {
 		err := filepath.WalkDir(filepath.Join(root, directory), func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -130,15 +134,31 @@ func TestProductionLoggingUsesSlog(t *testing.T) {
 					return true
 				}
 				name := pkg.Name + "." + sel.Sel.Name
-				banned := name == "slog.Default" ||
+				banned := name == "slog.Default" || name == "slog.SetDefault" ||
 					strings.HasPrefix(name, "log.Print") || strings.HasPrefix(name, "log.Fatal") ||
-					name == "log.Panic" || name == "fmt.Print" || name == "fmt.Println" ||
+					name == "log.Panic" || name == "log.Default" || name == "log.New" ||
+					name == "fmt.Print" || name == "fmt.Println" ||
 					name == "fmt.Fprint" || name == "fmt.Fprintln"
+				// Only internal/logging may instantiate a slog handler or root
+				// logger; only binary entry points may configure one.
+				if path != loggingFactory && (name == "slog.New" ||
+					name == "slog.NewJSONHandler" || name == "slog.NewTextHandler" ||
+					name == "slog.NewLogLogger") {
+					banned = true
+				}
+				if (name == "logging.New" || name == "logging.NewComponent") &&
+					path != clientEntry && path != serverEntry {
+					banned = true
+				}
+				// The old implicit fallback must never be reintroduced.
+				if name == "logging.Ensure" {
+					banned = true
+				}
 				if name == "fmt.Println" && path == allowedDataOutput {
 					banned = false
 				}
 				if banned {
-					t.Errorf("%s: unstructured or global logging %s; use the injected slog.Logger", set.Position(call.Pos()), name)
+					t.Errorf("%s: unstructured or independently configured logging %s; use the injected Logger from internal/logging", set.Position(call.Pos()), name)
 				}
 				if name == "fmt.Fprintf" && len(call.Args) > 0 {
 					if target, ok := call.Args[0].(*ast.SelectorExpr); ok {

@@ -32,7 +32,7 @@ func openClientNetworkSession(
 	dns []netip.Addr,
 	logger *slog.Logger,
 ) (*managedPumpDevice, error) {
-	logger = logging.Ensure(logger).With("subsystem", "network")
+	logger = logging.Require(logger).With("subsystem", "network")
 	device, err := tun.OpenClient(config.tunName, address, budget.TUNMTU, vpnwire.DynamicAddressRequested(config.tunAddress))
 	if err != nil {
 		return nil, classifyClientCleanup(err)
