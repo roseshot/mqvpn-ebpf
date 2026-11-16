@@ -29,7 +29,7 @@ func runClientSupervisor(ctx context.Context, enabled bool, logger *slog.Logger,
 }
 
 func runClientSupervisorWithWait(ctx context.Context, enabled bool, logger *slog.Logger, attempt func(context.Context) error, wait func(context.Context, time.Duration) error) error {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -70,7 +70,7 @@ type manager struct {
 
 func newManager(ctx context.Context, logger *slog.Logger) *manager {
 	return &manager{
-		ctx: ctx, logger: logging.Ensure(logger), xdp: xdp.NewController(),
+		ctx: ctx, logger: logging.Require(logger), xdp: xdp.NewController(),
 		mux:       newMux(),
 		instances: make(map[string]*liveInstance),
 		exits:     make(chan *liveInstance, 256),
@@ -291,7 +291,7 @@ func (m *manager) apply(next preparedServer) error {
 // The shared listener survives all reloads except an explicit change to
 // the global UDP bind address. SIGHUP / polling reload peer and TLS files.
 func runManagedServer(ctx context.Context, load func() (preparedServer, error), interval time.Duration, logger *slog.Logger) error {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	if interval < 0 {
 		return errors.New("--reload-interval cannot be negative")
 	}

@@ -14,7 +14,7 @@ import (
 )
 
 func Run(ctx context.Context, args []string, logger *slog.Logger) error {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
 	configPath := fs.String("config", "", "optional concise client YAML configuration")
 	server := fs.String("server", "", "authenticated tenant DNS hostname[:port]")
