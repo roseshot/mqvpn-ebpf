@@ -13,7 +13,7 @@
 | 加密与身份验证 | TLS 1.3 + 双向 TLS（mTLS）；Server 按证书 CN 映射已授权 Peer，可选使用 CRL 验证吊销 |
 | 多租户 | 一个 UDP/QUIC 监听端口；通过校验过的 TLS SNI 选择相互隔离的 VPN 实例 |
 | 多 WAN | 每个 Client 可配置多条有序 QUIC 路径；支持 `round_robin` 和连接级 `low_latency` 策略 |
-| Server 高可用 | Server 本地健康检测、Keepalived/VRRP UDP VIP 主备、HAProxy TCP 主备或双活；Client 无需 HA 配置 |
+| Server HA 接入 | Server 本地健康检测、Keepalived/VRRP UDP VIP 主备、HAProxy TLS/TCP 后端分流；尚无跨节点会话同步或 QUIC 真正双活；Client 无需 HA 配置 |
 | QoS | 实时、保障、尽力而为三级独立队列，按 4:2:1 加权调度 |
 | VoIP | 可选的 SIP/DSCP EF 独立 Sticky WAN，支持故障切换 |
 | 路由 | Server 按认证 Peer 的目的网段转发；支持推送路由、DNS，动态路由由外部 FRRouting 管理 |
@@ -28,7 +28,7 @@
 
 1. 阅读[双主机部署教程](docs/getting-started.md)，准备 Linux、证书和认证 Peer。
 2. 使用 `make release` 构建 Server、Client。
-3. 配置 Server 的 `server_name`、TUN 地址和 Peer 指纹，再运行 `mqvpn-server validate`。
+3. 配置 Server 的 `server_name`、TUN 地址及按客户端证书 CN 授权的 Peer 规则，再运行 `mqvpn-server validate`。
 4. 配置 Client，确保公网/内网物理地址可达，启动 VPN。
 5. 用 `ip addr`、`ip route get` 和 `ping` 检验数据是否经过 TUN。
 
