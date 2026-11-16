@@ -1,5 +1,9 @@
 # Cross-platform Client: incremental implementation boundary
 
+[Documentation index](README.md) · [Architecture and platform support](README.md#architecture-and-platform-support)
+
+> **Document scope:** **Platform capability and acceptance checklist.** Linux is the operational Client; Windows contains Wintun primitives but fails closed, and macOS/Android have portable-core compilation only.
+
 **Current status:** `mqvpn-server` is **Linux-only**, by design.
 `mqvpn-client` runs as a complete VPN on Linux. The Windows Client executable
 can now be built, but deliberately refuses to connect until it has native
@@ -8,6 +12,13 @@ implements native L3 packet I/O backed by an operator-provided official
 `wintun.dll`; it is **not wired to a usable VPN network session** yet.
 macOS/Android support remains at shared protocol-core compilation only.
 This does **not** ship a working native VPN Client on any non-Linux OS.
+
+## On this page
+
+- [Reuse without copying the protocol implementation](#reuse-without-copying-the-protocol-implementation)
+- [Windows packet device increment](#windows-packet-device-increment)
+- [Platform implementation order](#platform-implementation-order)
+- [Validation and future acceptance](#validation-and-future-acceptance)
 
 ## Reuse without copying the protocol implementation
 
@@ -116,3 +127,9 @@ lifecycle and socket protection have passed. Avoid enabling a platform
 
 See [Linux runtime architecture](runtime-architecture.md) and
 [Client configuration](client-config.md).
+
+## Related documentation
+
+- [Source layout](project-layout.md)
+- [Client configuration](client-config.md)
+- [Runtime architecture](runtime-architecture.md)

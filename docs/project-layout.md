@@ -1,5 +1,9 @@
 # Source layout and Go package ownership
 
+[Documentation index](README.md) · [Architecture and platform support](README.md#architecture-and-platform-support)
+
+> **Document scope:** **Contributor source map** for the single Go module, package dependencies, naming conventions and platform-specific boundaries.
+
 mqvpn is one Go module containing two commands. The `cmd/` directories
 are thin entry points; implementation stays in narrowly scoped
 `internal/` packages. The Linux Server never imports Client internals,
@@ -87,3 +91,9 @@ need native packet tunnel adapters to become operational.
 References: [Go module layout](https://go.dev/doc/modules/layout),
 [Go package names](https://go.dev/blog/package-names), and
 [Go code review naming guidance](https://go.dev/wiki/CodeReviewComments).
+
+## Related documentation
+
+- [Runtime architecture](runtime-architecture.md)
+- [Platform support](client-platforms.md)
+- [Development test entrypoints](overlay-tests.md)
