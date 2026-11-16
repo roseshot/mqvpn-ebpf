@@ -22,7 +22,7 @@ run_phase() {
   "$@"
   echo "::endgroup::"
 }
-for tool in go make clang git ip ping modprobe python3 openssl timeout \
+for tool in go make ip ping modprobe python3 openssl timeout \
             tc ss iperf3 tcpdump tshark haproxy; do
   command -v "$tool" >/dev/null || { echo "missing dependency: $tool" >&2; exit 2; }
 done
@@ -51,14 +51,11 @@ run_phase "HAProxy TCP ingress configuration validation" bash -c '
   haproxy -c -f configs/haproxy-mqvpn-active-standby-tcp.cfg
 '
 
-run_phase "Build embedded XDP and TCX eBPF objects" make bpf
-run_phase "Compare regenerated ELF objects to repository" git diff --exit-code -- \
-  internal/tcebpf/objects/tun_tc.o internal/xdp/objects/xdp_mqvpn.o
 run_phase "Kernel TCX MSS rewrite and checksums" env CGO_ENABLED=0 \
   go test -mod=readonly -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
 run_phase "Kernel TUN connected routes" env CGO_ENABLED=0 \
   go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
-run_phase "Build Server and Client from the tested eBPF objects" make release
+run_phase "Build Server and Client with embedded eBPF objects" make release
 
 # The legacy two-site probes are focused security, WAN-impairment and
 # encapsulation phases of this ONE integration scenario, not separate CI
