@@ -202,11 +202,7 @@ func (m *mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	peerLogger.InfoContext(r.Context(), "peer disconnected")
 }
 
-func newSharedHTTP3Server(mux *mux, wans ...wanPath) *http3.Server {
-	return newSharedHTTP3ServerWithScheduler(mux, vpnwire.SchedulerRoundRobin, wans...)
-}
-
-func newSharedHTTP3ServerWithScheduler(mux *mux, policy string, wans ...wanPath) *http3.Server {
+func newSharedHTTP3Server(mux *mux, policy string, wans ...wanPath) *http3.Server {
 	advertised := make([]net.IP, 0, len(wans))
 	for _, link := range wans {
 		advertised = append(advertised, net.ParseIP(link.IP))
