@@ -327,33 +327,37 @@ for protocol in "${routing_modes[@]}"; do
   done
 done
 
-# Every one of 20 remote /32 destinations must come from the selected
-# routing daemon (no static FIB routes are used), not merely ping reachability.
-converged=0
-for attempt in $(seq 1 180); do
-  missing=0
-  for i in 0 1 2 3 4; do
-    for j in 0 1 2 3 4; do
-      (( i == j )) && continue
-      route="$(ip -n "${nodes[i]}" -4 route show "${loopback[j]}/32")"
-      if [[ "$route" != *"proto $mode"* || "$route" != *"dev mq0"* ]]; then
-        missing=$((missing + 1))
-      fi
+# Verify BGP and OSPF in the SAME five-site VPN fixture. Separate prefixes
+# ensure one daemon cannot mask a missing route from the other.
+for protocol in "${routing_modes[@]}"; do
+  destinations=("${loopback[@]}")
+  if [[ "$mode" == scenario && "$protocol" == ospf ]]; then
+    destinations=("${ospf_loopback[@]}")
+  fi
+  converged=0
+  for attempt in $(seq 1 180); do
+    missing=0
+    for i in 0 1 2 3 4; do
+      for j in 0 1 2 3 4; do
+        (( i == j )) && continue
+        route="$(ip -n "${nodes[i]}" -4 route show "${destinations[j]}/32")"
+        if [[ "$route" != *"proto $protocol"* || "$route" != *"dev mq0"* ]]; then
+          missing=$((missing + 1))
+        fi
+      done
     done
+    if (( missing == 0 )); then converged=1; break; fi
+    for pid in "${pids[@]}"; do
+      kill -0 "$pid" 2>/dev/null || fail "VPN or FRR daemon exited during $protocol convergence"
+    done
+    sleep 0.5
   done
-  if (( missing == 0 )); then converged=1; break; fi
-  for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null || fail "VPN or FRR daemon exited during convergence"; done
-  sleep 0.5
+  (( converged )) || fail "20 remote loopback routes not installed by $protocol (missing=$missing)"
+  echo "PASS five-site $protocol: 20/20 remote prefixes installed in Linux FIB"
 done
-(( converged )) || fail "20 remote loopback routes not installed by $mode (missing=$missing)"
-echo "PASS five-site $mode: 20/20 remote prefixes installed in Linux FIB by FRR"
 
-# Daemons were started with explicit per-daemon -f files. Only create the
-# vtysh configuration namespace AFTER they have loaded those configs:
-# if frr.conf existed before startup, FRR could ignore -f and start
-# without BGP/OSPF settings. Empty, FRR-valid comments avoid the
-# misleading "Can't open vtysh.conf" / "frr.conf processing failure: 11"
-# messages without hiding stderr or changing the running configuration.
+# Only create frr.conf/vtysh.conf after BOTH daemons have loaded their
+# explicit -f configurations. Otherwise FRR can ignore daemon files.
 for space in "${spaces[@]}"; do
   install -d -m 0750 -o frr -g frr "/etc/frr/$space"
   printf '!\n' >"/etc/frr/$space/vtysh.conf"
@@ -362,42 +366,78 @@ for space in "${spaces[@]}"; do
   chmod 0640 "/etc/frr/$space/vtysh.conf" "/etc/frr/$space/frr.conf"
 done
 
-# Query live daemon state as JSON and assert each expected neighbor
-# individually. A nonempty summary/zero vtysh exit code alone could mask
-# an Idle BGP peer or a 2-Way/Exchange OSPF adjacency.
-for i in 0 1 2 3 4; do
-  neighbors=()
-  if (( i == 0 )); then
-    neighbors=("${tunnel[@]:1}")
-  else
-    neighbors=("${tunnel[0]}")
+for protocol in "${routing_modes[@]}"; do
+  destinations=("${loopback[@]}")
+  if [[ "$mode" == scenario && "$protocol" == ospf ]]; then
+    destinations=("${ospf_loopback[@]}")
   fi
-  if [[ "$mode" == bgp ]]; then
-    command="show bgp ipv4 unicast summary json"
-  else
-    command="show ip ospf neighbor json"
-  fi
-  if ! ip netns exec "${nodes[i]}" vtysh -N "${spaces[i]}" \
-      -c "$command" >"$work/site$i-neighbors.json" 2>"$work/site$i-vtysh.log"; then
-    fail "$mode live neighbor query failed at site$i"
-  fi
-  # Even warnings indicate that vtysh configuration is incomplete; never
-  # discard them just to make an integration check appear green.
-  [[ ! -s "$work/site$i-vtysh.log" ]] || fail "$mode vtysh configuration warning at site$i"
-  python3 "$root/tests/integration/check_frr_neighbors.py" "$mode" \
-    "$work/site$i-neighbors.json" "${neighbors[@]}" ||
-    fail "$mode neighbor state assertion at site$i"
-done
-echo "PASS five-site $mode: all 8 expected bidirectional FRR adjacencies are Established/Full with clean vtysh configuration"
-
-# Cross-site traffic must pass through the real Server TUN forwarding path;
-# there are no Client↔Client physical WAN links.
-for i in 0 1 2 3 4; do
-  for j in 0 1 2 3 4; do
-    (( i == j )) && continue
-    ip netns exec "${nodes[i]}" ping -n -I "${loopback[i]}" \
-      -c 2 -W 2 "${loopback[j]}" >"$work/ping-$i-$j.log" 2>&1 ||
-      fail "site$i to site$j forwarding over $mode learned route"
+  for i in 0 1 2 3 4; do
+    neighbors=()
+    if (( i == 0 )); then
+      neighbors=("${tunnel[@]:1}")
+    else
+      neighbors=("${tunnel[0]}")
+    fi
+    if [[ "$protocol" == bgp ]]; then
+      command="show bgp ipv4 unicast summary json"
+    else
+      command="show ip ospf neighbor json"
+    fi
+    if ! ip netns exec "${nodes[i]}" vtysh -N "${spaces[i]}" \
+        -c "$command" >"$work/site$i-$protocol-neighbors.json" \
+        2>"$work/site$i-$protocol-vtysh.log"; then
+      fail "$protocol live neighbor query failed at site$i"
+    fi
+    [[ ! -s "$work/site$i-$protocol-vtysh.log" ]] ||
+      fail "$protocol vtysh configuration warning at site$i"
+    python3 "$root/tests/integration/check_frr_neighbors.py" "$protocol" \
+      "$work/site$i-$protocol-neighbors.json" "${neighbors[@]}" ||
+      fail "$protocol neighbor state assertion at site$i"
   done
+  echo "PASS five-site $protocol: all 8 expected adjacencies are Established/Full"
+  # The 20 source-bound tests use only authenticated TUN sessions for
+  # cross-Client forwarding. No direct Client-to-Client WAN links exist.
+  for i in 0 1 2 3 4; do
+    for j in 0 1 2 3 4; do
+      (( i == j )) && continue
+      ip netns exec "${nodes[i]}" ping -n -I "${destinations[i]}" \
+        -c 2 -W 2 "${destinations[j]}" >"$work/$protocol-ping-$i-$j.log" 2>&1 ||
+        fail "site$i to site$j forwarding over $protocol learned route"
+    done
+  done
+  echo "PASS five-site $protocol: 20/20 source-bound encrypted forwarding tests"
 done
-echo "PASS five-site $mode: 20/20 directed loopback-to-loopback ping tests over encrypted P2MP TUN"
+
+# Real payloads on the same five-site network: 256 KiB TCP integrity,
+# full-MTU inner UDP, and bidirectional SIP/G.711/RTCP (DSCP EF).
+run_l3_probe() {
+  local proto="$1" receiver="$2" sender="$3"
+  local label="$proto-site${sender}-site${receiver}"
+  local marker="$work/$label.ready"
+  local probe_pid ready=0
+  ip netns exec "${nodes[receiver]}" python3 "$root/tests/integration/transport_probe.py" \
+    listen "$proto" "${tunnel[receiver]}" "${tunnel[sender]}" "$marker" \
+    >"$work/$label-listener.log" 2>&1 &
+  probe_pid="$!"
+  pids+=("$probe_pid")
+  for attempt in $(seq 1 100); do
+    if [[ -f "$marker" ]]; then ready=1; break; fi
+    kill -0 "$probe_pid" 2>/dev/null || fail "$label listener exited early"
+    sleep 0.05
+  done
+  (( ready )) || fail "$label listener never became ready"
+  timeout 45s ip netns exec "${nodes[sender]}" python3 "$root/tests/integration/transport_probe.py" \
+    send "$proto" "${tunnel[sender]}" "${tunnel[receiver]}" "$marker" \
+    >"$work/$label-sender.log" 2>&1 || fail "$label sender"
+  wait "$probe_pid" || fail "$label listener"
+  cat "$work/$label-listener.log" "$work/$label-sender.log"
+}
+if [[ "$mode" == scenario ]]; then
+  run_l3_probe tcp 1 2
+  run_l3_probe tcp 2 1
+  run_l3_probe udp 3 4
+  run_l3_probe udp 4 3
+  run_l3_probe voip 1 4
+  run_l3_probe voip 4 1
+  echo "PASS five-site unified scenario: BGP + OSPF + multi-WAN + TCP/UDP/VoIP"
+fi
