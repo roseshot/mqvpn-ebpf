@@ -27,9 +27,9 @@ changing the certificate-verified DNS identity.
 
 The optional `path` is a canonical absolute MASQUE CONNECT path;
 default `/.well-known/masque/ethernet/`. Server and Client must
-agree on the exact path. The `url` / `server_name` alias fields
-and `--url` / `--server-name` CLI flags are not part of the current
-configuration and will fail validation.
+agree on the exact path. Use `server`, `connect_ip` and `path`
+as the only supported endpoint fields; unknown YAML keys and CLI flags
+fail validation.
 
 ## Tunnel IP and automatic behavior
 
