@@ -3,6 +3,7 @@ package logging
 import (
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"strings"
@@ -101,4 +102,11 @@ func Require(logger *slog.Logger) *slog.Logger {
 		panic("logging: nil logger; inject the application's configured logger")
 	}
 	return logger
+}
+
+// StdLogger adapts the injected structured handler to APIs such as
+// net/http.Server.ErrorLog that require *log.Logger. It does not create a
+// new handler, change the destination, or reset the component attributes.
+func StdLogger(logger *slog.Logger, level slog.Level) *log.Logger {
+	return slog.NewLogLogger(Require(logger).Handler(), level)
 }

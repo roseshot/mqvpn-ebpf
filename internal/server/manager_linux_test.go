@@ -171,12 +171,12 @@ func TestValidateCLIUsesYAMLWithoutTUN(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateServerCLI([]string{"--config", path}, nil); err != nil {
+	if err := validateServerCLI([]string{"--config", path}, discardServerTestLogger()); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestReloadCommandRejectsInvalidPID(t *testing.T) {
-	if err := reloadServerCLI([]string{"--pid", "0"}, nil); err == nil {
+	if err := reloadServerCLI([]string{"--pid", "0"}, discardServerTestLogger()); err == nil {
 		t.Fatal("invalid PID accepted")
 	}
 }

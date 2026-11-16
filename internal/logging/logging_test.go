@@ -82,3 +82,22 @@ func TestRequireRejectsMissingLogger(t *testing.T) {
 	}()
 	Require(nil)
 }
+
+func TestStdLoggerSharesHandlerAndComponent(t *testing.T) {
+	var output bytes.Buffer
+	root := newComponentWithWriter(&output, Options{Level: slog.LevelWarn, Format: "json"}, "server").
+		With("transport", "tcp")
+	StdLogger(root, slog.LevelWarn).Print("HTTP server error")
+
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record); err != nil {
+		t.Fatalf("adapter must use the configured JSON handler: %v, output=%q", err, output.String())
+	}
+	for field, want := range map[string]any{
+		"level": "WARN", "msg": "HTTP server error", "component": "server", "transport": "tcp",
+	} {
+		if record[field] != want {
+			t.Errorf("%s = %v; want %v", field, record[field], want)
+		}
+	}
+}

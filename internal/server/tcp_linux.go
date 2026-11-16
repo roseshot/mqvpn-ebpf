@@ -16,6 +16,7 @@ import (
 
 	"github.com/roseshot/mqvpn-ebpf/internal/capsule"
 	"github.com/roseshot/mqvpn-ebpf/internal/dnspush"
+	"github.com/roseshot/mqvpn-ebpf/internal/logging"
 	"github.com/roseshot/mqvpn-ebpf/internal/p2mp"
 	"github.com/roseshot/mqvpn-ebpf/internal/routepush"
 )
@@ -165,7 +166,7 @@ func (m *manager) startTCPListener() error {
 		ReadHeaderTimeout: 10 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 		IdleTimeout:       60 * time.Second,
-		ErrorLog:          slog.NewLogLogger(m.logger.Handler(), slog.LevelWarn),
+		ErrorLog:          logging.StdLogger(m.logger, slog.LevelWarn),
 	}
 	m.tcpDone = make(chan struct{})
 	go func() {
