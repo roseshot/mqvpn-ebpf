@@ -1,9 +1,19 @@
 # Verify TUN confidentiality on the physical WAN
 
+[Documentation index](README.md) · [Testing](README.md#testing)
+
+> **Document scope:** **Security regression guide.** Compare inner TUN plaintext to captured physical WAN ciphertext and use isolated, permission-limited test TLS secrets as a positive decrypt control.
+
 The `crypto-wan4` and `crypto-tcp` integration scenarios exercise real,
 authenticated mqvpn Server/Client binaries in Linux network namespaces.
 They capture inner **TUN plaintext** and outer **WAN transport traffic**,
 then verify both negative and positive controls.
+
+## On this page
+
+- [Requirements](#requirements)
+- [Automated assertions](#automated-assertions)
+- [Limitations](#limitations)
 
 ## Requirements
 
@@ -22,7 +32,7 @@ WAN IPs** over one mTLS MPQUIC/HTTP/3 connection; the second forces
 the **single-WAN TLS 1.3 / TCP fallback** with HTTP/1.1 CONNECT-ETHERNET
 Upgrade, without relying on UDP.
 
-### Automated assertions
+## Automated assertions
 
 1. The Server and Client `mq0` TUN PCAPs both contain the exact
    `MQVPN_CANARY_001` marker and noncompressible SHAKE-256-derived data;
@@ -40,10 +50,10 @@ Upgrade, without relying on UDP.
    `-o tls.keylog_file:<path>` to confirm that the correct secrets
    decrypt the QUIC DATAGRAM canary or HTTP/1.1 Upgrade request.
 4. GitHub Actions performs these checks automatically before the
-   regular 4-WAN, VXLAN MTU 1450, TCP/UDP, SIP/RTP, WAN loss and
-   official FRR eBGP regressions.
+   WAN/transport probes and combined five-site BGP+OSPF phase of the
+   same unified integration scenario.
 
-### Limitations
+## Limitations
 
 A missing plaintext marker on the WAN **alone** is not a cryptographic
 proof: a different framing, compression, or failed capture can also
@@ -75,3 +85,9 @@ terminates captures during trap cleanup, including on failures.
 If a test fails, inspect GitHub Actions text logs for the failing
 capture or protocol check. Avoid uploading TLS secret files,
 decrypted PCAPs or real user VPN traffic into issue reports.
+
+## Related documentation
+
+- [Overlay integration tests](overlay-tests.md)
+- [TLS/TCP fallback protocol](tcp-fallback.md)
+- [Complete test scenario](five-site-routing.md)
