@@ -51,8 +51,16 @@ tests/integration/    Real Linux TUN, WAN, FRR and encrypted-traffic scenarios
   the standalone Client.
 - `p2mp`, `l3`, `capsule`, `qos` and `mtu` preserve distinct
   protocol/data-plane responsibilities instead of a giant shared package.
-- `internal/architecture` tests guard the no-subprocess rule, logging
-  discipline and the above import boundaries.
+- `internal/logging` exclusively creates root slog Handlers, sets
+  text/JSON format, minimum level, stderr destination and component fields.
+  Both command entry points configure their root logger once and inject it
+  into their runtime; business components retain `*slog.Logger` as a standard
+  Go dependency and use `With` for structured contextual fields.
+  `logging.Require` rejects a missing injected logger rather than opening
+  an independent default Text/Info output path. No global slog defaults or
+  extra logging facades are used.
+- `internal/architecture` tests guard the no-subprocess rule, exclusive
+  Handler construction, explicit logger injection and import boundaries.
 
 ## Naming conventions
 
