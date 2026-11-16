@@ -112,7 +112,7 @@ func TestAdaptiveDATAGRAMDoesNotRetryWithoutNegotiation(t *testing.T) {
 		t.Fatal("unnegotiated session retried with extension framing")
 	}
 	if f.Budget() != l3.FragmentPayloadBudget {
-		t.Fatal("legacy session budget changed")
+		t.Fatal("unnegotiated session budget changed")
 	}
 }
 
