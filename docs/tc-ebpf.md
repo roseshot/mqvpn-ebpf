@@ -1,10 +1,21 @@
 # TC eBPF: TUN TCP MSS clamp and per-interface statistics
 
+[Documentation index](README.md) · [Linux data plane](README.md#linux-data-plane)
+
+> **Document scope:** **Optional Linux TCX eBPF guide** for TUN MSS clamping and per-interface counters. The embedded object is bundled with release binaries.
+
 The Linux L3 TUN is configured with IP/CIDR, MTU and UP using Go +
 Netlink; Linux owns its connected-prefix route. TCX eBPF is an
 enabled by default in **auto** mode on the TUN itself and requires kernel >=6.6.
 All BPF program loading/attaching is pure Go via cilium/ebpf, not
 a shell command.
+
+## On this page
+
+- [Build](#build)
+- [Server (per Instance)](#server-per-instance)
+- [Client](#client)
+- [Packet rules and limits](#packet-rules-and-limits)
 
 ## Build
 
@@ -97,3 +108,9 @@ rebuilding and restarting the executable.
 WAN XDP is strictly statistics-only, always `XDP_PASS`, and has no
 XSKMAP/AF_XDP redirect path. XDP statistics cover outer encrypted
 packets; they cannot identify peer sessions or inner TCP MSS.
+
+## Related documentation
+
+- [TUN lifecycle](tun-lifecycle.md)
+- [MTU/MSS sizing](mtu-mss.md)
+- [XDP statistics](xdp-multi-instance.md)
