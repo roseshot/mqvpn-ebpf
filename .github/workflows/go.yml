@@ -143,52 +143,10 @@ jobs:
           CGO_ENABLED: "1"
         run: go test -mod=readonly -race ./...
 
-  bpf:
-    name: eBPF ELF
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install BPF compile headers
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev linux-libc-dev
-      - name: Compile and refresh embedded XDP/TCX ELF objects
-        run: make bpf
-      - name: Verify embedded objects are up to date with C source
-        run: git diff --exit-code -- internal/tcebpf/objects/tun_tc.o internal/xdp/objects/xdp_mqvpn.o
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Verify TCX MSS rewrite and checksums in the kernel
-        run: |
-          sudo modprobe tun || true
-          test -c /dev/net/tun
-          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
-
-  tun-integration:
-    name: Linux TUN connected-route integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
-      - name: Enable Linux TUN and verify kernel connected route
-        run: |
-          sudo modprobe tun || true
-          test -c /dev/net/tun
-          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
-
-  overlay-integration:
-    name: QUIC/TCP wire encryption, four-WAN and five-site FRR integration
+  integration:
+    name: Linux integration (eBPF, TUN, QUIC, WAN, FRR)
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -200,7 +158,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3 iperf3 tcpdump tshark haproxy
+            iproute2 iputils-ping kmod openssl curl ca-certificates gnupg lsb-release python3 iperf3 tcpdump tshark haproxy clang llvm libbpf-dev linux-libc-dev
           # Official signed frr-stable channel, NOT the Ubuntu archive package.
           curl -fsSL https://deb.frrouting.org/frr/keys.gpg |
             sudo tee /usr/share/keyrings/frrouting.gpg >/dev/null
@@ -227,6 +185,16 @@ jobs:
         run: |
           haproxy -c -f configs/haproxy-mqvpn-active-active-tcp.cfg
           haproxy -c -f configs/haproxy-mqvpn-active-standby-tcp.cfg
+      - name: Compile and verify embedded XDP/TCX eBPF ELF objects
+        run: |
+          make bpf
+          git diff --exit-code -- internal/tcebpf/objects/tun_tc.o internal/xdp/objects/xdp_mqvpn.o
+      - name: Verify TCX MSS rewrite and checksums in the kernel
+        run: |
+          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
+      - name: Verify Linux TUN connected routes in the kernel
+        run: |
+          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
       - name: Build actual mqvpn binaries
         run: make release
       - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
