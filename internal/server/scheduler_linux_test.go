@@ -28,7 +28,7 @@ func TestServerPathSchedulerConfigurationValidation(t *testing.T) {
 }
 
 func TestSharedHTTP3ServerSchedulerPolicy(t *testing.T) {
-	srv := newSharedHTTP3ServerWithScheduler(newMux(), vpnwire.SchedulerLowLatency)
+	srv := newSharedHTTP3Server(newMux(), vpnwire.SchedulerLowLatency)
 	if srv.QUICConfig == nil || srv.QUICConfig.MultipathControllerFactory == nil {
 		t.Fatal("missing connection-local scheduling policy factory")
 	}
@@ -44,12 +44,12 @@ func TestSharedHTTP3ServerSchedulerPolicy(t *testing.T) {
 	if ctl == ctl2 {
 		t.Fatal("independent connections share mutable path state")
 	}
-	legacy := newSharedHTTP3Server(newMux())
-	ctl3, ok := legacy.QUICConfig.MultipathControllerFactory().(*quic.DefaultMultipathController)
+	defaultServer := newSharedHTTP3Server(newMux(), vpnwire.SchedulerRoundRobin)
+	ctl3, ok := defaultServer.QUICConfig.MultipathControllerFactory().(*quic.DefaultMultipathController)
 	if !ok {
-		t.Fatal("legacy QUIC controller missing")
+		t.Fatal("default QUIC controller missing")
 	}
 	if _, ok := ctl3.GetScheduler().(*quic.RoundRobinScheduler); !ok {
-		t.Fatalf("legacy Round Robin scheduler changed: %T", ctl3.GetScheduler())
+		t.Fatalf("default Round Robin scheduler changed: %T", ctl3.GetScheduler())
 	}
 }
