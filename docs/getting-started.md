@@ -1,8 +1,22 @@
 # Get started: connect two Linux sites
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** Hands-on **two-Linux-host tutorial** using lab credentials and a single WAN. Complete this before choosing production options.
+
 **Outcome:** An authenticated `mqvpn-client` connects to `mqvpn-server` over QUIC, creates a Linux TUN interface and can ping the Server's tunnel address.
 
 This is a **lab setup on two Linux hosts**. It uses static tunnel addresses, one WAN, and test-only credentials to keep the path visible. You can add WANs, dynamic addresses and FRRouting after the first connection works.
+
+## On this page
+
+- [Before you start](#before-you-start)
+- [Build the binaries](#build-the-binaries)
+- [Create a lab CA and certificates](#create-a-lab-ca-and-certificates)
+- [Configure the Server](#configure-the-server)
+- [Connect the Client](#connect-the-client)
+- [Verify your first tunnel](#verify-your-first-tunnel)
+- [Where to go next](#where-to-go-next)
 
 ## Before you start
 
