@@ -1,5 +1,9 @@
 # Server-side high availability (HA)
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** **Server-side HA deployment patterns, not session replication.** Local readiness and ingress failover are distinct from distributed peer ownership, IP leases and seamless QUIC takeover.
+
 The **Client does not select, discover, or manage Server cluster members**. A normal mqvpn Client continues to use one authenticated `server` name (and, optionally, its existing `connect_ip`). All HA election, health evaluation, ingress steering and service-address ownership are controlled by the **Server deployment**.
 
 For versioned configuration/CRL distribution, fenced session ownership,
@@ -18,6 +22,17 @@ number of VPN Servers and the number of Raft voters must not be conflated.
 
 
 This guide distinguishes **availability of a Server service** from **lossless continuity of an existing QUIC session**. Changing the backend of an encrypted session generally requires the existing Client to establish a fresh TLS/QUIC connection after its normal reconnect cycle. The latter is already implemented in the Client; no HA-specific Client code or YAML is added here.
+
+## On this page
+
+- [Choose the topology](#choose-the-topology)
+- [Non-negotiable cluster invariants](#non-negotiable-cluster-invariants)
+- [Node-local status is not replicated](#node-local-status-is-not-replicated)
+- [1. Enable Server readiness checks](#1-enable-server-readiness-checks)
+- [2. Autonomous active/standby with Keepalived/VRRP](#2-autonomous-activestandby-with-keepalivedvrrp)
+- [3. External HAProxy for TLS/TCP fallback](#3-external-haproxy-for-tlstcp-fallback)
+- [4. Active/active for QUIC: what remains to be built](#4-activeactive-for-quic-what-remains-to-be-built)
+- [Operational validation plan](#operational-validation-plan)
 
 ## Choose the topology
 
@@ -169,4 +184,10 @@ For current mqvpn releases, consider **active/standby QUIC with a VIP** the cons
 - [HAProxy UDP capability](https://www.haproxy.com/solutions/udp-load-balancing) and [HAProxy health checks](https://www.haproxy.com/documentation/haproxy-configuration-tutorials/reliability/health-checks/).
 - [Envoy UDP proxy](https://www.envoyproxy.io/docs/envoy/latest/configuration/listeners/udp_filters/udp_proxy.html) — four-tuple session affinity and its limitations.
 - [strongSwan cluster HA](https://docs.strongswan.org/docs/latest/features/highAvailability.html) — actual cross-node encrypted-session synchronization.
-- [RFC 9308 `11](https://www.rfc-editor.org/rfc/rfc9308.html#section-11) — QUIC backend state and Connection ID load-balancing.
+- [RFC 9308 §11](https://www.rfc-editor.org/rfc/rfc9308.html#section-11) — QUIC backend state and Connection ID load-balancing.
+
+## Related documentation
+
+- [HA control-plane contract](ha-cluster-state-sync.md)
+- [ClusterStore boundary](ha-cluster-store.md)
+- [Troubleshooting](operations.md)

@@ -1,5 +1,9 @@
 # Overlapping VPN subnet isolation with Linux VRF
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** **Linux administrator procedure** for overlapping tenant routes. Create VRF ownership before the daemon configures each TUN; mqvpn does not create VRFs or forwarding policy.
+
 The server uses **one UDP/QUIC port** for multiple P2MP VPN LANs. TLS
 `server_name` selects each tenant's mTLS identity, TUN and Peer session
 table. The data plane is L3 TUN; mqvpn never configures host routes.
@@ -10,6 +14,8 @@ using separate VRFs or network namespaces, not by a single main FIB.
 Because the connected-prefix route now appears automatically, attach
 each persistent TUN to its intended VRF **before** starting mqvpn.
 Otherwise two identical kernel-generated routes may compete in main.
+
+## Prepare VRFs and TUN ownership
 
 Example system administrator setup:
 
@@ -39,6 +45,8 @@ simply adding two TUNs does not put all incoming LAN packets in the intended
 routing table. Route leaking, firewall, multicast and WAN source routing
 are administrator-controlled.
 
+## Configure distinct tenant identities
+
 Use distinct `server_name` values for the shared HTTPS UDP port:
 
 ~~~yaml
@@ -67,6 +75,8 @@ instances:
 Both DNS names must resolve to the same host and each certificate must have
 its corresponding SNI in the DNS Subject Alternative Name.
 
+## Responsibility boundary
+
 The daemon creates or attaches TUNs and sets their IP/CIDR, MTU and UP
 state. The Linux kernel **automatically installs the normal connected-prefix
 route in the TUN's routing domain** as well as local-address routes.
@@ -76,3 +86,9 @@ and multicast routing.
 If you need VRF isolation, precreate persistent TUN devices and attach
 them to their VRFs before starting the daemon. For ordinary single-domain
 installations no manual TUN creation is necessary.
+
+## Related documentation
+
+- [Server tenant configuration](server-config.md)
+- [TUN lifecycle](tun-lifecycle.md)
+- [Routing troubleshooting](operations.md)
