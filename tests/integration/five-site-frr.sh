@@ -318,11 +318,13 @@ for attempt in $(seq 1 80); do
 done
 (( zebra_ready )) || fail "five zebra ZAPI sockets did not initialize"
 
-for i in 0 1 2 3 4; do
-  ip netns exec "${nodes[i]}" "/usr/lib/frr/${mode}d" -N "${spaces[i]}" \
-    -u frr -g frr -f "$work/site$i-${mode}d.conf" -A 127.0.0.1 -P 0 \
-    >"$work/site$i-${mode}d.log" 2>&1 &
-  pids+=("$!")
+for protocol in "${routing_modes[@]}"; do
+  for i in 0 1 2 3 4; do
+    ip netns exec "${nodes[i]}" "/usr/lib/frr/${protocol}d" -N "${spaces[i]}" \
+      -u frr -g frr -f "$work/site$i-${protocol}d.conf" -A 127.0.0.1 -P 0 \
+      >"$work/site$i-${protocol}d.log" 2>&1 &
+    pids+=("$!")
+  done
 done
 
 # Every one of 20 remote /32 destinations must come from the selected
