@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"runtime"
 	"runtime/pprof"
 	"strings"
@@ -67,7 +66,7 @@ func TestClientForwardsMulticastWithoutFiltering(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- ClientPumpWithFeatures(ctx, device, stream, 1160, false, false, slog.New(slog.NewTextHandler(io.Discard, discardTestLogger())))
+		done <- ClientPumpWithFeatures(ctx, device, stream, 1160, false, false, discardTestLogger())
 	}()
 	// Deliberately not UDP/5353, not TTL 255: transport must not impose
 	// an mDNS/port/TTL-specific policy on tunnel contents.
@@ -118,7 +117,7 @@ func TestClientPumpReportsCleanupError(t *testing.T) {
 	stream := &testDatagrams{in: make(chan []byte, 2), out: make(chan []byte, 2)}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := ClientPumpWithFeatures(ctx, device, stream, 1160, false, false, slog.New(slog.NewTextHandler(io.Discard, discardTestLogger())))
+	err := ClientPumpWithFeatures(ctx, device, stream, 1160, false, false, discardTestLogger())
 	if !errors.Is(err, failure) {
 		t.Fatalf("ClientPump swallowed TUN Close failure: %v", err)
 	}
