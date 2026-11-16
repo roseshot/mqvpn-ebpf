@@ -39,7 +39,7 @@ func TestClientEndpointPinnedUnderlayDoesNotChangeTenantIdentity(t *testing.T) {
 	}
 }
 
-func TestClientRejectsRemovedURLAndSNICompatibility(t *testing.T) {
+func TestClientRejectsMalformedServerAuthority(t *testing.T) {
 	for _, server := range []string{
 		"https://tenant.example.com/vpn", "http://tenant.example.com",
 		"tenant.example.com/vpn",
@@ -49,7 +49,7 @@ func TestClientRejectsRemovedURLAndSNICompatibility(t *testing.T) {
 		"*.example.com", "tenant..example.com", "", "tenant.example.com%eth0",
 	} {
 		if _, err := planClientEndpoint(server, "", ""); err == nil {
-			t.Fatalf("unsafe/removed server form %q accepted", server)
+			t.Fatalf("invalid server authority %q accepted", server)
 		}
 	}
 	for _, ip := range []string{"not-an-ip", "0.0.0.0", "224.0.0.1", "fe80::1%eth0"} {
