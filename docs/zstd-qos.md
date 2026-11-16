@@ -1,5 +1,9 @@
 # Zstd DATAGRAM compression and SIP/RTP priority
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Negotiated compression and priority reference.** Zstd applies per packet when eligible; latency-sensitive SIP/RTP and signaling traffic bypass compression.
+
 The VPN keeps CONNECT-ETHERNET over authenticated QUIC/HTTP/3 (and the
 HTTP/1.1/TLS Capsule fallback). eBPF programs are unchanged.
 
@@ -75,3 +79,9 @@ Security: compressing attacker-controlled and sensitive plaintext in a
 shared secret-bearing context may create a size side channel. Only stateless
 per-packet frames are used here; assess application confidentiality needs
 before enabling compression for sensitive workloads.
+
+## Related documentation
+
+- [QoS queue policy](qos-queues.md)
+- [DATAGRAM fragmentation](fragmentation.md)
+- [Wire-encryption tests](wire-encryption-tests.md)
