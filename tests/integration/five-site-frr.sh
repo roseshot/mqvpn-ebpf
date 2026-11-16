@@ -144,6 +144,9 @@ done
   for i in 1 2 3 4; do
     printf '  - id: site%d\n    certificate_cn: mqvpn-site%d\n    routes:\n      - %s/32\n      - %s/32\n' \
       "$i" "$i" "${tunnel[i]}" "${loopback[i]}"
+    if [[ "$mode" == scenario ]]; then
+      printf '      - %s/32\n' "${ospf_loopback[i]}"
+    fi
   done
 } >"$work/peers.yaml"
 
@@ -226,6 +229,9 @@ done
 echo "PASS five-site $mode: four distinct mTLS Client peers via eight Server WANs and one UDP listener"
 for i in 0 1 2 3 4; do
   ip -n "${nodes[i]}" addr add "${loopback[i]}/32" dev lo
+  if [[ "$mode" == scenario ]]; then
+    ip -n "${nodes[i]}" addr add "${ospf_loopback[i]}/32" dev lo
+  fi
   ip netns exec "${nodes[i]}" sysctl -qw net.ipv4.conf.mq0.rp_filter=0
 done
 
@@ -241,7 +247,7 @@ hostname site$i-zebra
 log stdout
 !
 EOF
-  if [[ "$mode" == bgp ]]; then
+  if [[ "$mode" == bgp || "$mode" == scenario ]]; then
     if (( i == 0 )); then asn=65000; else asn=$((65100 + i)); fi
     {
       echo "hostname site$i-bgpd"
@@ -272,7 +278,10 @@ EOF
       echo " exit-address-family"
       echo "!"
     } >"$work/site$i-bgpd.conf"
-  else
+  fi
+  if [[ "$mode" == ospf || "$mode" == scenario ]]; then
+    ospf_prefix="${loopback[i]}"
+    if [[ "$mode" == scenario ]]; then ospf_prefix="${ospf_loopback[i]}"; fi
     cat >"$work/site$i-ospfd.conf" <<EOF
 hostname site$i-ospfd
 log stdout
@@ -284,12 +293,12 @@ interface mq0
 router ospf
  ospf router-id ${tunnel[i]}
  network 10.77.0.0/24 area 0
- network ${loopback[i]}/32 area 0
+ network ${ospf_prefix}/32 area 0
 !
 EOF
   fi
 done
-chown frr:frr "$work"/site*-zebra.conf "$work"/site*-"$mode"d.conf
+chown frr:frr "$work"/site*.conf
 chmod 0640 "$work"/site*.conf
 
 for i in 0 1 2 3 4; do
