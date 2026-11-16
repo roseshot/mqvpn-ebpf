@@ -28,7 +28,7 @@ func TestTunnelPoolLeaseUniquenessAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(&fakeDevice{}, cfg, 1160, nil)
+	h, err := New(&fakeDevice{}, cfg, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(&fakeDevice{}, cfg, 1160, nil)
+	h, err := New(&fakeDevice{}, cfg, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestTunnelPoolExhaustedAndTenantIsolation(t *testing.T) {
 	if _, err := pool.allocate(h.peers); err == nil {
 		t.Fatal("duplicate address allocated")
 	}
-	other, err := New(&fakeDevice{}, cfg, 1160, nil)
+	other, err := New(&fakeDevice{}, cfg, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestTunnelPoolReusesNetworkAndSubnetBroadcastAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("all three remaining /30 IPs should be usable: %v", err)
 	}
-	h, err := New(&fakeDevice{}, cfg, 1160, nil)
+	h, err := New(&fakeDevice{}, cfg, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

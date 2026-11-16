@@ -56,7 +56,7 @@ func prepare(t *testing.T) (*Hub, *fakeDevice, *Session, *Session, *fakeStream, 
 		t.Fatal(err)
 	}
 	dev := &fakeDevice{}
-	h, err := New(dev, cfg, 1160, nil)
+	h, err := New(dev, cfg, 1160, discardTestLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
