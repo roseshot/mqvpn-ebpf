@@ -5,6 +5,8 @@ package server
 import (
 	"net"
 	"testing"
+
+	vpnwire "github.com/roseshot/mqvpn-ebpf/internal/session"
 )
 
 func fourServerWANs() []wanPath {
@@ -51,7 +53,7 @@ func TestServerWANMultiAddressValidation(t *testing.T) {
 }
 
 func TestServerHTTP3MultiWANAddressAdvertisement(t *testing.T) {
-	q := newSharedHTTP3Server(newMux(), fourServerWANs()...)
+	q := newSharedHTTP3Server(newMux(), vpnwire.SchedulerRoundRobin, fourServerWANs()...)
 	if q.QUICConfig == nil || !q.QUICConfig.EnableAddressAdvertisement ||
 		!q.QUICConfig.MultipathAutoAdvertise ||
 		len(q.QUICConfig.MultipathAutoAddrs) != 4 {
@@ -62,7 +64,7 @@ func TestServerHTTP3MultiWANAddressAdvertisement(t *testing.T) {
 			t.Fatalf("advertisement order changed: %v", q.QUICConfig.MultipathAutoAddrs)
 		}
 	}
-	if !newSharedHTTP3Server(newMux()).QUICConfig.EnableAddressAdvertisement {
+	if !newSharedHTTP3Server(newMux(), vpnwire.SchedulerRoundRobin).QUICConfig.EnableAddressAdvertisement {
 		t.Fatal("Server must negotiate ADD_ADDRESS before a later WAN upgrade")
 	}
 }
