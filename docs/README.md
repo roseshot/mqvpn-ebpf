@@ -4,7 +4,7 @@
 
 **Start with a task, not a protocol specification.** If you are setting up mqvpn for the first time, follow [Get started](getting-started.md). If a working tunnel stopped passing traffic, use [Operations and troubleshooting](operations.md).
 
-The guides follow the [Diátaxis](https://diataxis.fr/) idea of separating *learning*, *doing*, *looking up facts*, and *understanding why*. Existing deep-dive URLs remain in place.
+The guides follow the [Diátaxis](https://diataxis.fr/) idea of separating *learning*, *doing*, *looking up facts*, and *understanding why*. Deep-dive references are grouped by the task they support.
 
 ## Learn: start with a working tunnel
 
