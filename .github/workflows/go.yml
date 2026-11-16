@@ -171,64 +171,9 @@ jobs:
           dpkg -l frr frr-pythontools
           /usr/lib/frr/bgpd --version
           /usr/lib/frr/ospfd --version
-      - name: Prepare Linux TUN and VXLAN modules
-        run: |
-          sudo modprobe tun || true
-          sudo modprobe vxlan || true
-          test -c /dev/net/tun
-          bash -n tests/integration/overlay-netns.sh
-          bash -n tests/integration/five-site-frr.sh
-          bash -n scripts/mqvpn-ready.sh
-          python3 -m py_compile tests/integration/transport_probe.py tests/integration/wan_probe.py tests/integration/wire_crypto_probe.py tests/integration/verify_wire_crypto.py tests/integration/verify_sticky_wire.py tests/integration/check_frr_neighbors.py tests/integration/test_frr_neighbors.py
-          python3 -m unittest discover -s tests/integration -p 'test_frr_neighbors.py' -v
-      - name: Validate Server-side HAProxy TCP ingress examples
-        run: |
-          haproxy -c -f configs/haproxy-mqvpn-active-active-tcp.cfg
-          haproxy -c -f configs/haproxy-mqvpn-active-standby-tcp.cfg
-      - name: Compile and verify embedded XDP/TCX eBPF ELF objects
-        run: |
-          make bpf
-          git diff --exit-code -- internal/tcebpf/objects/tun_tc.o internal/xdp/objects/xdp_mqvpn.o
-      - name: Verify TCX MSS rewrite and checksums in the kernel
-        run: |
-          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags bpf_integration -run '^TestKernel' -v ./internal/tcebpf
-      - name: Verify Linux TUN connected routes in the kernel
-        run: |
-          sudo env "PATH=$PATH" "HOME=$HOME" CGO_ENABLED=0 go test -mod=readonly -tags tun_integration -run '^TestIntegration' -v ./internal/tun
-      - name: Build actual mqvpn binaries
-        run: make release
-      - name: Verify four WAN QUIC ciphertext using TUN/WAN PCAPs and temporary TLS keys
-        run: sudo bash tests/integration/overlay-netns.sh crypto-wan4
-      - name: Verify TLS/TCP fallback wire confidentiality using test-only traffic secrets
-        run: sudo bash tests/integration/overlay-netns.sh crypto-tcp
-      - name: Four independent WAN paths with asymmetric latency and packet loss
-        run: sudo bash tests/integration/overlay-netns.sh wan4
-      - name: Four heterogeneous WANs with low-RTT scheduling and bounded RTP reorder
-        run: sudo bash tests/integration/overlay-netns.sh wan4-latency
-      - name: Four-WAN strict Sticky SIP/RTP and WAN0 to WAN1 failover
-        run: sudo bash tests/integration/overlay-netns.sh wan4-sticky
-      - name: VXLAN MTU 1450 over TUN (ARP, full-MTU DF, both directions)
-        run: sudo bash tests/integration/overlay-netns.sh vxlan
-      - name: TCP over QUIC TUN (256 KiB bidirectional integrity, both server roles)
-        run: sudo bash tests/integration/overlay-netns.sh tcp
-      - name: UDP over QUIC TUN (sizes through IPv4 MTU 1500, both server roles)
-        run: sudo bash tests/integration/overlay-netns.sh udp
-      - name: SIP/RTP/RTCP over QUIC TUN (full-duplex G.711 PCMU, DSCP EF)
-        run: sudo bash tests/integration/overlay-netns.sh voip
-      - name: VoIP under concurrent bidirectional TCP/UDP load on shaped WAN
-        run: sudo bash tests/integration/overlay-netns.sh mixed
-      - name: WAN netem regional (RTT 80ms, jitter, 1% loss, concurrent TCP UDP)
-        run: sudo bash tests/integration/overlay-netns.sh wan-regional
-      - name: WAN netem poor (RTT 240ms, jitter, 3% loss)
-        run: sudo bash tests/integration/overlay-netns.sh wan-poor
-      # Reuse this job's signed FRR installation, binaries and TUN setup.
-      # The previous two-site BGP case duplicates the more complete
-      # five-site convergence/FIB/forwarding assertions, so run only these.
-      - name: Five-site randomized 1–8 WAN BGP convergence and 20-way forwarding
+      # All privileged checks now belong to one reproducible scenario.
+      # It keeps detailed phase names and fails at the first failed assertion.
+      - name: Run complete Linux VPN integration scenario
         env:
           WAN_SEED: ${{ github.run_id }}
-        run: sudo env WAN_SEED="$WAN_SEED" bash tests/integration/five-site-frr.sh bgp
-      - name: Five-site randomized 1–8 WAN OSPF convergence and 20-way forwarding
-        env:
-          WAN_SEED: ${{ github.run_id }}
-        run: sudo env WAN_SEED="$WAN_SEED" bash tests/integration/five-site-frr.sh ospf
+        run: sudo env "PATH=$PATH" "HOME=$HOME" WAN_SEED="$WAN_SEED" bash tests/integration/scenario.sh
