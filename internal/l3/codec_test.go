@@ -30,7 +30,7 @@ func TestZstdNegotiationAndRoundTrip(t *testing.T) {
 		t.Fatalf("compressed roundtrip failed: %v", err)
 	}
 	if _, err := (Codec{MaxFrame: 1514}).Unwrap(frame); err == nil {
-		t.Fatal("legacy client accepted unnegotiated compressed frame")
+		t.Fatal("unnegotiated compressed frame accepted")
 	}
 	if _, err := (Codec{Compression: true, MaxFrame: 1400}).Unwrap(frame); err == nil {
 		t.Fatal("oversized decompressed frame accepted")
