@@ -169,7 +169,7 @@ func TestHighMTUProfilesAndPeerFrameSize(t *testing.T) {
 	}
 }
 
-func TestServerTCConfigWithoutLegacyObjectRequirements(t *testing.T) {
+func TestServerTCConfigDefaultAndObjectOverride(t *testing.T) {
 	inst := sampleInstance("tc", "tc.example.test", "mq0")
 	inst.TC = &tcebpf.Config{MSSClamp: "auto", Stats: true}
 	cfg := Config{Instances: []Instance{inst}}

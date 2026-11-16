@@ -21,7 +21,7 @@ type endpoint struct {
 
 // planClientEndpoint accepts exactly one configuration model:
 // server = tenant DNS name[:port], path = optional canonical CONNECT path,
-// connect_ip = optional literal underlay destination. No URL/SNI aliases.
+// connect_ip = optional literal underlay destination.
 func planClientEndpoint(server, path, connectIP string) (endpoint, error) {
 	if server == "" || strings.ContainsAny(server, "/?#@\\%") || strings.Contains(server, "://") {
 		return endpoint{}, errors.New("server must be an authenticated DNS hostname[:port] (use path separately)")

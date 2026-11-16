@@ -4,7 +4,7 @@ import "github.com/roseshot/mqvpn-ebpf/internal/configfile"
 
 // fileConfig is the current daemon configuration. Server is always
 // the authenticated DNS identity. connect_ip optionally pins the underlay
-// destination without changing TLS SNI. No old URL/SNI aliases are accepted.
+// destination without changing TLS SNI.
 type fileConfig struct {
 	Server         string        `yaml:"server,omitempty"`
 	Path           string        `yaml:"path,omitempty"`

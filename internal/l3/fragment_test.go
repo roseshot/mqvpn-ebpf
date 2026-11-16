@@ -59,7 +59,7 @@ func TestFragmentMTU1500OutOfOrderAndDup(t *testing.T) {
 	}
 }
 
-func TestFragmentCompressedAndPriorityCompatibility(t *testing.T) {
+func TestFragmentCompressedAndPriorityTraffic(t *testing.T) {
 	codec := Codec{Compression: true, MaxFrame: 1514}
 	pkt := make([]byte, 1500)
 	pkt[0] = 0x45
@@ -165,18 +165,18 @@ func TestFragmentExpiryAndEviction(t *testing.T) {
 	}
 }
 
-func TestUnnegotiatedFragmenterPreservesExistingFrame(t *testing.T) {
+func TestUnnegotiatedFragmenterPreservesPlainFrame(t *testing.T) {
 	frame, err := (Codec{MaxFrame: 1514}).Wrap(mtuPacket(1500), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	parts, err := (&Fragmenter{}).Split(frame)
 	if err != nil || len(parts) != 1 || !bytes.Equal(parts[0], frame) {
-		t.Fatalf("legacy framing changed: %v", err)
+		t.Fatalf("unfragmented frame changed: %v", err)
 	}
 	r := &Reassembler{}
 	got, ready, err := r.Accept(frame)
 	if !ready || err != nil || !bytes.Equal(got, frame) {
-		t.Fatalf("ordinary legacy frame changed: %v", err)
+		t.Fatalf("ordinary frame changed: %v", err)
 	}
 }

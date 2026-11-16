@@ -15,8 +15,7 @@ const (
 )
 
 // NormalizePathScheduler ensures that a typo cannot silently disable the
-// intended network policy. Empty retains the established Round Robin
-// behavior for existing Client and Server installations.
+// intended network policy. Empty selects the default Round Robin policy.
 func NormalizePathScheduler(policy string) (string, error) {
 	switch policy {
 	case "", SchedulerRoundRobin:

@@ -75,10 +75,9 @@ behavior they verify; cross-endpoint behavior is tested as transport or
 integration behavior, not by reaching into another package's unexported
 functions.
 
-No `src/`, catch-all `pkg/`, `utils/`, `common/`, duplicate Go
-modules, compatibility re-exports, or transitional old-package structure
-are part of this layout. External CLI flags, YAML fields and the
-authenticated network protocol remain unchanged.
+Package ownership is explicit: this repository has no catch-all
+`src/`, `pkg/`, `utils/` or `common/` subtree, and the Client, Server
+and shared session code are maintained in their owning packages.
 
 **Platform scope:** Server runs **only on Linux**. Client is operational
 on Linux; Windows Wintun primitives exist but the Windows VPN session is

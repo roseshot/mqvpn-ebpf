@@ -112,7 +112,7 @@ func TestCurrentXDPObjectSchemaIsStrict(t *testing.T) {
 	}
 }
 
-func TestXDPStatsAreCollectedWithoutCompatibilityFallback(t *testing.T) {
+func TestXDPStatsAreCollectedFromAttachedDevices(t *testing.T) {
 	c := &Controller{devices: map[string]portDevice{"wan0": &mockDevice{}}}
 	stats, err := c.Snapshots()
 	if err != nil {
