@@ -199,7 +199,7 @@ func (m *manager) startListener() error {
 		return fmt.Errorf("bind shared HTTP/3 UDP %s: %w", m.listen, err)
 	}
 	m.packetConn = conn
-	m.server = newSharedHTTP3ServerWithScheduler(m.mux, m.pathScheduler, m.wans...)
+	m.server = newSharedHTTP3Server(m.mux, m.pathScheduler, m.wans...)
 	m.listenerDone = make(chan struct{})
 	go func() { m.listenerErr = m.server.Serve(conn); close(m.listenerDone) }()
 	m.logger.InfoContext(m.ctx, "shared HTTP/3 listener ready", "listen", conn.LocalAddr(), "instances", len(m.instances))
