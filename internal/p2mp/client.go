@@ -51,7 +51,7 @@ func ClientPumpWithFeatures(ctx context.Context, device io.ReadWriteCloser, stre
 	if maxFrame < 64 || maxFrame > 65535 {
 		return fmt.Errorf("invalid maxFrame %d", maxFrame)
 	}
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	codec := l3.Codec{Compression: compression, MaxFrame: maxFrame}

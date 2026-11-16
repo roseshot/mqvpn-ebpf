@@ -17,7 +17,7 @@ import (
 // Run requires one YAML config with a shared UDP listener.
 // The command accepts only the current multi-instance YAML contract.
 func Run(ctx context.Context, args []string, logger *slog.Logger) error {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	if len(args) > 0 {
 		switch args[0] {
 		case "validate":
@@ -41,7 +41,7 @@ func Run(ctx context.Context, args []string, logger *slog.Logger) error {
 }
 
 func validateServerCLI(args []string, logger *slog.Logger) error {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	path := fs.String("config", "", "YAML config to validate")
 	if err := fs.Parse(args); err != nil {
@@ -59,7 +59,7 @@ func validateServerCLI(args []string, logger *slog.Logger) error {
 }
 
 func reloadServerCLI(args []string, logger *slog.Logger) error {
-	logger = logging.Ensure(logger)
+	logger = logging.Require(logger)
 	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
 	pid := fs.Int("pid", 0, "PID of the running server")
 	if err := fs.Parse(args); err != nil {
