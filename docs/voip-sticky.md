@@ -1,5 +1,9 @@
 # Strict Sticky SIP / RTP / RTCP WAN affinity
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Opt-in SIP/DSCP-EF affinity guide.** A separate authenticated single-WAN QUIC companion keeps realtime traffic together; it is not per-call allocation.
+
 Enable strict realtime WAN affinity with `sticky_voip: true` on the
 **Client**, or `--sticky-voip`. The authenticated Server supports this
 opt-in automatically; non-opted-in sessions retain
@@ -18,7 +22,14 @@ wans:
   - {source_ip: 192.0.2.6, interface: wan3, server_ip: 192.0.2.5}
 ```
 
-### Transport separation
+## On this page
+
+- [Transport separation](#transport-separation)
+- [Stable selection and failure](#stable-selection-and-failure)
+- [QoS classification limitations](#qos-classification-limitations)
+- [Privileged four-WAN CI test](#privileged-four-wan-ci-test)
+
+## Transport separation
 
 | Classified traffic | QUIC transport | Path selection |
 |---|---|---|
@@ -37,7 +48,7 @@ accepts exactly one companion per explicitly sticky-enabled primary
 session. A companion cannot replace the base P2MP session, allocate a
 second tunnel lease, or bypass peer certificate authorization.
 
-### Stable selection and failure
+## Stable selection and failure
 
 The first entry in `wans` is the preferred realtime WAN. It stays pinned
 for its QUIC session lifetime, **even if another WAN's RTT briefly
@@ -77,7 +88,7 @@ the final TUN write against concurrent companion revocation. An already
 authorized TUN write finishes before revocation completes; packets from
 the retired connection cannot start new TUN writes afterward.
 
-### QoS classification limitations
+## QoS classification limitations
 
 The `qos.Priority` classifier conservatively prioritizes DSCP EF 46
 and SIP ports 5060/5061. For IPv6 SIP, it follows a bounded chain of
@@ -99,7 +110,7 @@ the same strict path affinity and is therefore not selected in sticky
 mode. The normal `low_latency` policy remains independent and does
 not itself guarantee application-specific stickiness.
 
-### Privileged four-WAN CI test
+## Privileged four-WAN CI test
 
 ```bash
 sudo bash tests/integration/overlay-netns.sh wan4-sticky
@@ -129,3 +140,9 @@ This is a transport-level **class affinity** regression test. It does
 not certify real-world MOS, zero interruption during failover, or
 per-call sticky path allocation. Security/encryption is independently
 verified by the `crypto-wan4` and `crypto-tcp` tests.
+
+## Related documentation
+
+- [QoS and bounded queues](qos-queues.md)
+- [MPQUIC scheduling](multipath-low-latency.md)
+- [VoIP diagnostics](adaptive-datagram-voip.md)
