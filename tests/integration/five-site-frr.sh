@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Five real Linux namespaces: one mqvpn P2MP hub, four authenticated Clients.
-# FRRouting exchanges BGP or OSPF routes across their QUIC/TUN sessions.
+# FRRouting exchanges BGP and OSPF routes across their QUIC/TUN sessions.
 # No static routes to any remote site's 198.18.20x.1/32 loopback are installed.
 set -euo pipefail
 mode="${1:-}"
-[[ "$mode" == bgp || "$mode" == ospf ]] || { echo "usage: $0 bgp|ospf" >&2; exit 2; }
+[[ "$mode" == bgp || "$mode" == ospf || "$mode" == scenario ]] || { echo "usage: $0 scenario|bgp|ospf" >&2; exit 2; }
+routing_modes=("$mode")
+if [[ "$mode" == scenario ]]; then routing_modes=(bgp ospf); fi
 (( EUID == 0 )) || { echo "CAP_NET_ADMIN/root required" >&2; exit 2; }
 for command in ip bridge ping openssl sha256sum python3 timeout sysctl; do
   command -v "$command" >/dev/null || { echo "missing $command" >&2; exit 2; }
@@ -39,6 +41,8 @@ echo "WAN_SEED=$WAN_SEED protocol=$mode (reproduce with WAN_SEED=$WAN_SEED)"
 bridges=()
 tunnel=(10.77.0.1 10.77.0.2 10.77.0.3 10.77.0.4 10.77.0.5)
 loopback=(198.18.200.1 198.18.201.1 198.18.202.1 198.18.203.1 198.18.204.1)
+# Unique OSPF prefixes prevent one routing protocol masking the other.
+ospf_loopback=(198.18.210.1 198.18.211.1 198.18.212.1 198.18.213.1 198.18.214.1)
 pids=()
 fail() { echo "FAIL five-site $mode: $*" >&2; exit 1; }
 cleanup() {
