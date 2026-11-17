@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) · [Architecture and platform support](README.md#architecture-and-platform-support)
 
-> **Document scope:** **Platform capability and acceptance checklist.** Linux is the operational Client; Windows contains Wintun primitives but fails closed, and macOS/Android have portable-core compilation only.
+> **Document scope:** **Platform capability and acceptance checklist.** Linux is the operational Client; Windows includes Wintun packet I/O, native address and MTU leases but the Client still fails closed, and macOS/Android have portable-core compilation only.
 
 **Current status:** `mqvpn-server` is **Linux-only**, by design.
 `mqvpn-client` runs as a complete VPN on Linux. The Windows Client executable
@@ -70,6 +70,18 @@ overwriting another manager's state. No address is adopted on create
 conflicts. The address lease is deliberately not connected to the live
 Client because route/DNS, endpoint protection, MTU and safe session cleanup
 are still missing.
+
+**Native MTU configuration (foundation, not yet wired into Client):**
+`(*wintun.Device).SetMTU(family, mtu)` uses Windows IP Helper's
+`GetIpInterfaceEntry` and `SetIpInterfaceEntry` to set an IPv4 or
+IPv6 interface MTU for the specific Wintun LUID. It returns an `MTULease`
+that restores only the previous value changed by mqvpn. If another
+manager changes the MTU, cleanup refuses to overwrite it and returns an
+error. A missing adapter requires no restoration. IPv4 requires MTU >= 576;
+IPv6 requires MTU >= 1280. Run the Windows Wintun package tests without
+a driver to verify both families, unchanged-value ownership, race-safe
+cleanup checks, and native API availability. This standalone primitive
+**does not enable Windows VPN sessions**.
 
 **The DLL and packet device are not sufficient for a safe VPN session.**
 A production Windows `networkPlatform` still has to configure address/MTU,
