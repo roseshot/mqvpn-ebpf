@@ -2,7 +2,7 @@
 
 [Project README](../README.md) · [简体中文项目简介](../README.zh-CN.md) · [Report an issue](https://github.com/roseshot/mqvpn-ebpf/issues)
 
-Use this page to find the right guide. The [project README](../README.md) summarizes what mqvpn does; the pages below explain how to deploy, operate, test, and develop it. The Server and operational Client target Linux; see [platform support](client-platforms.md) before planning another Client OS.
+Use this page to find the right guide. The [project README](../README.md) summarizes what mqvpn does; the pages below explain how to deploy, operate, test, and develop it. The Server runtime is Linux-only, while the Client protocol core is cross-platform; a complete native VPN Client currently runs on Linux. See [platform support](client-platforms.md) for each operating system's implementation status.
 
 ## Start here
 

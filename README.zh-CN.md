@@ -1,10 +1,10 @@
 # mqvpn-ebpf
 
-**面向 Linux 的多站点三层路由 VPN，基于双向认证的 MASQUE 和多路径 QUIC（MPQUIC）。**
+**采用跨平台 Client Core 与 Linux Server 的多站点三层路由 VPN，基于双向认证的 MASQUE 和多路径 QUIC（MPQUIC）。**
 
 [English](README.md) · [完整文档](docs/README.md) · [双主机入门](docs/getting-started.md) · [故障排查](docs/operations.md)
 
-`mqvpn-server` 通过 Linux TUN 连接多个经过独立身份验证的站点。`mqvpn-client` 使用 TLS 1.3 双向认证（mTLS），通过 MASQUE CONNECT-ETHERNET、HTTP/3 和 QUIC DATAGRAM 传输 IPv4/IPv6 数据包。一个 Server UDP 监听端口可以借助经过校验的 TLS SNI 承载多个相互隔离的 VPN 租户。
+`mqvpn-server` 通过 Linux TUN 连接多个经过独立身份验证的站点。`mqvpn-client` 的协议与数据包处理核心可以跨平台复用，但 TUN、路由、DNS 和物理网络连接保护需要各操作系统的原生适配。当前完整运行的 Linux Client 通过 TLS 1.3 双向认证（mTLS）、MASQUE CONNECT-ETHERNET、HTTP/3 和 QUIC DATAGRAM 传输 IPv4/IPv6 数据包。一个 Server UDP 监听端口可以借助经过校验的 TLS SNI 承载多个相互隔离的 VPN 租户。
 
 ## 项目概览
 

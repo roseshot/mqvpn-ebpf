@@ -1,10 +1,10 @@
 # mqvpn-ebpf
 
-**A routed multi-site VPN for Linux, using authenticated MASQUE over Multipath QUIC (MPQUIC).**
+**A routed multi-site VPN with a cross-platform Client Core, a Linux Server, and authenticated MASQUE over Multipath QUIC (MPQUIC).**
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Two-host setup](docs/getting-started.md) · [Troubleshooting](docs/operations.md)
 
-`mqvpn-server` connects independently authenticated sites through Linux TUN devices. `mqvpn-client` uses TLS 1.3 mutual authentication (mTLS) and carries IPv4/IPv6 over MASQUE CONNECT-ETHERNET, HTTP/3 and QUIC DATAGRAMs. Multiple isolated tenants share **one Server UDP listener**, selected through verified TLS SNI.
+`mqvpn-server` connects independently authenticated sites through Linux TUN devices. The `mqvpn-client` protocol and packet-processing core is portable across operating systems; native TUN, routing, DNS and underlay protection remain platform-specific. On Linux, the operational Client uses TLS 1.3 mutual authentication (mTLS) and carries IPv4/IPv6 over MASQUE CONNECT-ETHERNET, HTTP/3 and QUIC DATAGRAMs. Multiple isolated tenants share **one Server UDP listener**, selected through verified TLS SNI.
 
 ## Overview
 
