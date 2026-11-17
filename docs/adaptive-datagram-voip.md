@@ -1,5 +1,9 @@
 # Adaptive DATAGRAM budget and SIP/RTP diagnostics
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Transport feedback and observability reference.** Datagram-size errors adjust the local fragment budget; RTP/RTCP indicators assist diagnosis but are not MOS measurements.
+
 ## QUIC DATAGRAM size feedback
 
 The `frag-v1` extension initially uses a **1024-byte application payload
@@ -66,3 +70,9 @@ The improvement does not supersede route PMTU discovery, packet pacing,
 or WAN QoS. For real deployment, test with G.711/Opus calls and
 asymmetric 1500/1492/1420 MTU paths and track receiver loss, jitter,
 audio gaps, and CPU overhead before relying on performance claims.
+
+## Related documentation
+
+- [DATAGRAM fragmentation](fragmentation.md)
+- [Sticky voice](voip-sticky.md)
+- [Four-WAN network tests](overlay-tests.md)

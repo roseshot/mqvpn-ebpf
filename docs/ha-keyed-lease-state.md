@@ -1,5 +1,9 @@
 # Keyed peer/IP lease state machine (Phase C foundation)
 
+[Documentation index](README.md) · [HA control-plane design](README.md#high-availability-control-plane-design-and-local-primitives)
+
+> **Document scope:** **Local deterministic lease-model reference.** This in-process state machine is not durable quorum storage and is not connected to Server admission.
+
 **Status: deterministic local state-machine implementation only. Not distributed
 HA, not a Raft voter, not a persistent lease store and not connected to the
 live Server/P2MP data path.** The API is not a safe fallback for a lost quorum.
@@ -80,3 +84,9 @@ fault injection, P2MP session admission and actual cross-Server forwarding.
 
 See [HA ownership fence](ha-ownership-fence.md) and
 [tracking issue #43](https://github.com/roseshot/mqvpn-ebpf/issues/43).
+
+## Related documentation
+
+- [ClusterStore boundary](ha-cluster-store.md)
+- [Ownership fencing](ha-ownership-fence.md)
+- [Cluster acceptance plan](ha-cluster-state-sync.md)

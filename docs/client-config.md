@@ -1,9 +1,22 @@
 # Client daemon configuration
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** **Client configuration reference** for the current strict YAML and CLI contract, authenticated endpoints, ordered WAN paths and session-owned routes/DNS.
+
 The standalone `mqvpn-client` accepts
 `--config /etc/mqvpn/client.yaml`. YAML is parsed strictly:
 unknown keys, duplicate keys, and non-YAML formats are rejected.
 CLI flags override matching YAML fields.
+
+## On this page
+
+- [Required configuration](#required-configuration)
+- [Tunnel IP and automatic behavior](#tunnel-ip-and-automatic-behavior)
+- [WAN path configuration (ordered list)](#wan-path-configuration-ordered-list)
+- [Optional YAML fields](#optional-yaml-fields)
+- [Server-pushed routes](#server-pushed-routes)
+- [Server-pushed DNS](#server-pushed-dns)
 
 ## Required configuration
 
@@ -240,3 +253,10 @@ Linux itself has no kernel per-interface DNS setting, so at least
 one of systemd-resolved or resolvconf must be functional. The daemon
 does not edit `/etc/resolv.conf` directly; resolvconf may manage it.
 A DNS cleanup failure stops reconnect rather than stacking stale state.
+
+## Related documentation
+
+- [Getting started](getting-started.md)
+- [Server configuration](server-config.md)
+- [Server multi-WAN](server-multiwan.md)
+- [Troubleshooting](operations.md)

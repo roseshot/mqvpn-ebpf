@@ -1,9 +1,24 @@
 # Linux runtime architecture and process policy
 
+[Documentation index](README.md) · [Architecture and platform support](README.md#architecture-and-platform-support)
+
+> **Document scope:** **Implementation reference** for runtime ownership, Go-only Linux network operations and cleanup. Development scripts are outside the no-subprocess production rule.
+
 Production code is Go-only (`CGO_ENABLED=0`). The server and client do
 not shell out to configure network interfaces, compute MTUs, or attach
 eBPF. The permitted Linux interface operations are performed with Go
 standard-library APIs and Go modules.
+
+## On this page
+
+- [Runtime responsibility map](#runtime-responsibility-map)
+- [Client session lifecycle and rollback](#client-session-lifecycle-and-rollback)
+- [Kernel routing and TUN ownership](#kernel-routing-and-tun-ownership)
+- [Production subprocess policy](#production-subprocess-policy)
+- [Development tooling is separate](#development-tooling-is-separate)
+- [Module and package boundaries](#module-and-package-boundaries)
+
+## Runtime responsibility map
 
 | Responsibility | Package / Go module | Execution model |
 | --- | --- | --- |
@@ -25,6 +40,8 @@ standard-library APIs and Go modules.
 | Shared Linux TCX attachment policy | `internal/tcebpf/lifecycle_linux.go` | Explicit TCX attach/fallback; Client owns TUN teardown |
 | Client reconnect supervisor | `internal/client/reconnect.go` | Context-aware serial attempts and capped exponential backoff |
 
+## Client session lifecycle and rollback
+
 The Client reconnect supervisor uses sequential sessions. A TUN created
 for a Client session is deleted at disconnect. When attaching to an
 existing TUN, Client snapshots and restores the address set it touched,
@@ -38,6 +55,8 @@ stops auto-reconnect rather than stacking corrupt network state. Each attempt
 re-resolves the physical Server destination and renegotiates a dynamic
 Tunnel IP; a reconnect is not an in-place QUIC path handoff.
 
+## Kernel routing and TUN ownership
+
 The TUN driver creates or attaches the configured interface, sets
 its IP/CIDR and MTU, brings it UP and checks readiness. The Linux kernel
 adds the normal connected-prefix route as part of address configuration.
@@ -46,11 +65,15 @@ those routes and a protecting host route to the Server's actual public
 IP; it removes only the routes it created at session teardown. It does
 not install policy rules, VRFs, multicast routes or firewall settings.
 
+## Production subprocess policy
+
 The `internal/architecture` test parses all production source files
 under `internal`, `cmd/mqvpn-server` and `cmd/mqvpn-client` and fails
 if an external-process API such as `os/exec`, `os.StartProcess` or
 `syscall.Exec` is introduced. Development-only `_test.go` files,
 build tooling and scripts are outside this production restriction.
+
+## Development tooling is separate
 
 **Development/build commands are allowed:** the existing
 `scripts/gen-dev-certs.sh` invokes OpenSSL to create short-lived
@@ -59,8 +82,16 @@ the eBPF ELF. These commands run in the developer/CI environment,
 not in the VPN runtime. There is no need to replace them with custom
 Go certificate or eBPF compilers.
 
+## Module and package boundaries
+
 There is intentionally no new submodule: the repository's root
 `go.mod` declares the Go dependencies. `internal` package boundaries
 separate Linux device access, local WAN discovery, sizing policy and
 the network transport rather than spawning commands or duplicating
 Linux socket setup.
+
+## Related documentation
+
+- [Source package map](project-layout.md)
+- [TUN lifecycle](tun-lifecycle.md)
+- [Client platform support](client-platforms.md)

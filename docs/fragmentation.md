@@ -1,5 +1,9 @@
 # Optional application-layer DATAGRAM fragmentation (frag-v1)
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Negotiated MASQUE extension reference.** `frag-v1` can carry larger inner IP packets without promising per-path PMTU discovery or reliable fragment delivery.
+
 The VPN supports TUN MTU 1500 over paths with smaller QUIC DATAGRAM limits
 through an authenticated, optional `Mqvpn-Framing: frag-v1` extension.
 
@@ -81,3 +85,9 @@ Always test real SIP/RTP jitter and loss during sustained bulk
 traffic, and on MPQUIC path switching.
 
 References: RFC 9221, RFC 9297, MASQUE CONNECT-ETHERNET.
+
+## Related documentation
+
+- [MTU and MSS sizing](mtu-mss.md)
+- [Adaptive DATAGRAM feedback](adaptive-datagram-voip.md)
+- [Zstd compression](zstd-qos.md)

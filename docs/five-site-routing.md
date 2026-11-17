@@ -1,5 +1,9 @@
 # Five-site FRRouting integration
 
+[Documentation index](README.md) · [Testing](README.md#testing)
+
+> **Document scope:** **Unified five-site integration fixture.** Four authenticated Clients share one Server topology with concurrent BGP/OSPF, randomized MPQUIC paths and cross-Client application probes.
+
 The privileged CI test uses **five isolated Linux network namespaces**:
 one P2MP Server at `10.77.0.1/24` and four independently authenticated
 Clients (`10.77.0.2` through `10.77.0.5`). Each Client has an independent
@@ -24,6 +28,12 @@ loopback destinations and tunnel host addresses are provisioned in the
 Server's authenticated P2MP peer destination map so the overlay knows which
 QUIC Client owns each IP. That P2MP delivery map is **not** a Linux FIB
 route and does not replace BGP/OSPF route learning.
+
+## On this page
+
+- [Unified five-site scenario](#unified-five-site-scenario)
+- [One integration scenario entrypoint](#one-integration-scenario-entrypoint)
+- [FRR per-namespace configuration and assertion hygiene](#frr-per-namespace-configuration-and-assertion-hygiene)
 
 ## Unified five-site scenario
 
@@ -111,3 +121,9 @@ Its JSON output is parsed by `tests/integration/check_frr_neighbors.py`:
 missing or Idle BGP peers, non-Full OSPF neighbors, and invalid JSON all
 cause a failure. The helper has separate negative-case unit tests that CI
 runs before the privileged five-site scenarios.
+
+## Related documentation
+
+- [Two-site overlay probes](overlay-tests.md)
+- [Unified test entrypoint](README.md)
+- [Route troubleshooting](operations.md)

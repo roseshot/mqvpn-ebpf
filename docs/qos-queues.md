@@ -1,5 +1,9 @@
 # QoS-aware forwarding and bounded queues
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Traffic scheduling reference.** Priority queues govern packet service; they do not authorize peers or select a separate MPQUIC WAN per class.
+
 QoS classification is shared by both the Client TUN sender and Server P2MP
 return traffic. It is scheduling, **not an ACL**: no traffic class is forbidden
 from the VPN.
@@ -42,3 +46,9 @@ are validated before classifying SIP or DSCP.
 fairness, work conservation, and both directions of the transport separation.
 The privileged four-WAN integration suite continues to exercise pinned EF/SIP
 and connection-wide MPQUIC under shaped WANs.
+
+## Related documentation
+
+- [Sticky voice](voip-sticky.md)
+- [MPQUIC scheduling](multipath-low-latency.md)
+- [Zstd and packet priority](zstd-qos.md)

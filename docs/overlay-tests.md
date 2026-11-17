@@ -1,9 +1,24 @@
 # Privileged VXLAN, TCP/UDP, SIP/RTP/RTCP and FRRouting over TUN tests
 
+[Documentation index](README.md) · [Testing](README.md#testing)
+
+> **Document scope:** **Privileged two-site transport regression guide.** Use the unified `scenario.sh` for complete validation; focused overlay modes isolate mutually incompatible WAN failures and traffic conditions.
+
 These opt-in GitHub Actions tests use actual `mqvpn-server` and
 `mqvpn-client` binaries, an authenticated QUIC/HTTP/3 CONNECT-ETHERNET
 tunnel, real Linux TUN interfaces, and independent network namespaces.
 They are **not** unit tests that exchange mock TUN packets.
+
+## Test coverage map
+
+- [Test topology](#test-topology)
+  - [VXLAN over TUN](#vxlan-over-tun)
+  - [TCP and UDP data transport over TUN](#tcp-and-udp-data-transport-over-tun)
+  - [Synthetic VoIP: SIP, RTP and RTCP over TUN](#synthetic-voip-sip-rtp-and-rtcp-over-tun)
+  - [VoIP during concurrent TCP + UDP load (mixed)](#voip-during-concurrent-tcp--udp-load-mixed)
+  - [Impaired Internet WAN using Linux tc netem](#impaired-internet-wan-using-linux-tc-netem)
+  - [Four independent WANs (MPQUIC)](#four-independent-wans-mpquic)
+- [Run](#run)
 
 ## Test topology
 
@@ -242,3 +257,9 @@ the actual authenticated VPN tunnel.
 Notes: the FRR `frr-stable` channel intentionally floats to the latest
 stable package. This protects testing against upstream packaging changes
 but means CI results can change when the stable release updates.
+
+## Related documentation
+
+- [Five-site FRRouting tests](five-site-routing.md)
+- [Wire confidentiality tests](wire-encryption-tests.md)
+- [Operating and troubleshooting](operations.md)

@@ -1,5 +1,16 @@
 # TLS/TCP fallback for CONNECT-ETHERNET
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Optional transport reference.** Forced TCP or an initial QUIC handshake timeout may use a separate single-WAN TLS/TCP connection; authentication failures never trigger a silent downgrade.
+
+## On this page
+
+- [Wire protocol](#wire-protocol)
+- [Configuration](#configuration)
+- [Limits / security](#limits--security)
+- [Default TUN MTU on TCP](#default-tun-mtu-on-tcp)
+
 ## Wire protocol
 
 The primary data path is HTTP/3 Extended CONNECT over Multipath QUIC on
@@ -147,3 +158,9 @@ fallback calculates its initial TUN MTU from the actual local primary
 WAN interface MTU, capped at 1400, and sets `max_frame=MTU+14`.
 This uses the same automatic sizing planner as UDP/MPQUIC, even though
 TCP can segment Capsules into stream bytes. TCP mode does not use WAN2.
+
+## Related documentation
+
+- [Client configuration](client-config.md)
+- [Server configuration](server-config.md)
+- [MTU/MSS sizing](mtu-mss.md)

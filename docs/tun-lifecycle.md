@@ -1,9 +1,23 @@
 # Daemon-managed Linux TUN lifecycle
 
-Both `mqvpn-server` instances and `mqvpn-client` now have enough
-information to create and initialize their own L3 TUN device.
+[Documentation index](README.md) · [Linux data plane](README.md#linux-data-plane)
 
-### Server
+> **Document scope:** **Linux TUN ownership reference** for Server and Client setup, connected routes, teardown and automatic MTU sizing. Administrators still own VRFs, firewall and policy routes.
+
+Both `mqvpn-server` instances and `mqvpn-client` create and initialize
+their own L3 TUN device when the required configuration is supplied.
+
+## On this page
+
+- [Server](#server)
+- [Client](#client)
+- [Exactly what the daemon does](#exactly-what-the-daemon-does)
+- [Multi-instance overlapping subnets](#multi-instance-overlapping-subnets)
+- [TUN MTU versus inner TCP MSS](#tun-mtu-versus-inner-tcp-mss)
+- [IPv6 caveat](#ipv6-caveat)
+- [Automatic MTU and max_frame defaults](#automatic-mtu-and-max_frame-defaults)
+
+## Server
 
 ~~~yaml
 instances:
@@ -18,7 +32,7 @@ instances:
     client_ca: /etc/mqvpn/tls/ca.crt
 ~~~
 
-### Client
+## Client
 
 ~~~bash
 mqvpn-client --server customer-a.vpn.example.com \
@@ -28,7 +42,7 @@ mqvpn-client --server customer-a.vpn.example.com \
   --key /etc/mqvpn/client.key
 ~~~
 
-### Exactly what the daemon does
+## Exactly what the daemon does
 
 1. Validate TUN interface name and explicit host IP/CIDR/MTU.
 2. Open `/dev/net/tun` with `TUNSETIFF(IFF_TUN|IFF_NO_PI)`, creating
@@ -60,7 +74,7 @@ configured network policy intact.
 `CAP_NET_ADMIN` (and `/dev/net/tun` access) is needed to configure
 the device; binding UDP/TCP 443 may require `CAP_NET_BIND_SERVICE`.
 
-### Multi-instance overlapping subnets
+## Multi-instance overlapping subnets
 
 When mq0 and mq1 both use 10.77.0.1/24, the administrator must keep them
 in separate Linux routing domains (VRF/netns). If VRF binding must occur
@@ -70,7 +84,7 @@ VRF; the daemon still configures the IP, MTU and UP state on attach.
 Without VRFs, the daemon can create the TUN directly.
 See [VRF setup](overlapping-subnets-vrf.md).
 
-### TUN MTU versus inner TCP MSS
+## TUN MTU versus inner TCP MSS
 
 Use `mtu: 1360`, `max_frame: 1374` for a Server instance, and
 `--tun-mtu 1360 --max-frame 1374` on Client to opt into a 1360-byte
@@ -79,14 +93,15 @@ MSS usually equals 1300. Reaching MSS 1360 requires MTU 1400 for
 IPv4 / MTU 1420 for IPv6, with appropriately larger max_frame.
 See [MTU/MSS details](mtu-mss.md).
 
-### IPv6 caveat
+## IPv6 caveat
 
 IPv6 needs MTU >= 1280, plus `max_frame >= mtu+14`, and enough
-underlay path MTU to carry the encapsulated QUIC DATAGRAM. No
-automatic fragmentation, routes or PMTU adaptation are installed.
+underlay path MTU to carry the encapsulated QUIC DATAGRAM. Application-layer DATAGRAM fragmentation requires authenticated `frag-v1`
+negotiation; no per-path PMTU discovery or automatic kernel routing policy
+is installed.
 
 
-### Automatic MTU and max_frame defaults
+## Automatic MTU and max_frame defaults
 
 Both daemons derive TUN MTU from their selected WAN interface MTUs.
 For WAN IPv4 MTU 1500, the effective TUN MTU is 1400 and
@@ -99,3 +114,9 @@ WAN link MTU is **not** an Internet path PMTU measurement. QUIC
 DATAGRAMs can still be too large for the peer/actual path, so
 monitor logs and validate data at the desired size. Linux creates either the connected-prefix or peer-subnet route
 according to the selected TUN mode.
+
+## Related documentation
+
+- [Server configuration](server-config.md)
+- [VRF isolation](overlapping-subnets-vrf.md)
+- [MTU/MSS sizing](mtu-mss.md)

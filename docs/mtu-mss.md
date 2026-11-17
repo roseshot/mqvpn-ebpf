@@ -1,11 +1,23 @@
 # TUN MTU and TCP MSS sizing
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Packet-size planning and verification guide** for Linux TUN and TCP MSS. WAN MTU, encoded MASQUE frames and QUIC DATAGRAM limits are distinct budgets.
+
 The mqvpn data plane carries a complete IP packet from the L3 TUN in a
 synthetic Ethernet frame for MASQUE CONNECT-ETHERNET.
 
+## On this page
+
+- [WAN-based automatic TUN sizing](#wan-based-automatic-tun-sizing)
+- [Two different targets](#two-different-targets)
+- [QUIC DATAGRAM and underlay PMTU](#quic-datagram-and-underlay-pmtu)
+- [Example: 1360 TUN MTU](#example-1360-tun-mtu)
+- [Validate on Linux](#validate-on-linux)
+
 ## WAN-based automatic TUN sizing
 
-When \`mtu\` and \`max_frame\` are omitted, both daemons use the actual
+When `mtu` and `max_frame` are omitted, both daemons use the actual
 **local WAN interface MTU** to calculate an initial conservative
 TUN packet budget; maximum auto TUN MTU is **1400**.
 
@@ -192,3 +204,9 @@ at the desired MTU, including after a WAN path switch.
 References:
 - https://www.rfc-editor.org/rfc/rfc9221
 - https://www.rfc-editor.org/rfc/rfc9000
+
+## Related documentation
+
+- [DATAGRAM fragmentation](fragmentation.md)
+- [TC eBPF and MSS clamp](tc-ebpf.md)
+- [Operational troubleshooting](operations.md)

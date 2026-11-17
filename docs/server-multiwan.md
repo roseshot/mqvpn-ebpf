@@ -1,5 +1,9 @@
 # Server multi-WAN MPQUIC addresses
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** **Server underlay deployment guide.** Advertise multiple Server WAN IPs over one QUIC listener; requires routable independent paths and no per-WAN listener duplication.
+
 Server exposes multiple physical underlay addresses over **one HTTP/3/QUIC
 listener and one authenticated VPN session**. It must not spin up an
 independent QUIC listener for every public IP: connection IDs and MPQUIC
@@ -104,3 +108,9 @@ scenarios, and separately checks randomized **1–8 WAN per Client**
 five-site BGP/OSPF convergence, all eight bidirectional adjacencies,
 20/20 learned remote FIB routes and 20/20 cross-site pings per protocol.
 See [Five-site routing](five-site-routing.md).
+
+## Related documentation
+
+- [Client WAN configuration](client-config.md)
+- [Path scheduling](multipath-low-latency.md)
+- [Multi-WAN integration tests](overlay-tests.md)

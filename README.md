@@ -1,110 +1,117 @@
 # mqvpn-ebpf
 
-**A Linux site-to-site VPN using encrypted MASQUE over Multipath QUIC.** It connects multiple authenticated sites through one server, with optional multi-WAN transport, traffic prioritization, and Linux eBPF helpers.
+**A routed multi-site VPN with a cross-platform Client Core, a Linux Server, and authenticated MASQUE over Multipath QUIC (MPQUIC).**
 
-[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Get started](docs/getting-started.md) · [Troubleshooting](docs/operations.md)
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Two-host setup](docs/getting-started.md) · [Troubleshooting](docs/operations.md)
 
-## What does it do?
+`mqvpn-server` connects independently authenticated sites through Linux TUN devices. The `mqvpn-client` protocol and packet-processing core is portable across operating systems; native TUN, routing, DNS and underlay protection remain platform-specific. On Linux, the operational Client uses TLS 1.3 mutual authentication (mTLS) and carries IPv4/IPv6 over MASQUE CONNECT-ETHERNET, HTTP/3 and QUIC DATAGRAMs. Multiple isolated tenants share **one Server UDP listener**, selected through verified TLS SNI.
 
-`mqvpn-server` creates an isolated point-to-multipoint (P2MP) VPN on a Linux TUN device. `mqvpn-client` connects using mutual TLS (mTLS). The server can host several independent VPN instances behind **one UDP listener**, selected by a verified DNS name (TLS SNI).
+## Overview
 
-```text
-                   One UDP/QUIC listener
-                          |
-                  mqvpn-server / mq0
-                    10.77.0.1/24
-                   /      |       \
-            Site A     Site B     Site C
-              mq0        mq0        mq0
-         10.77.0.2   10.77.0.3   10.77.0.4
-          1–8 WANs   1–8 WANs   1–8 WANs
-```
+~~~text
+                    mqvpn-server (Linux)
+                     one UDP/QUIC listener
+                              |
+                 +------------+------------+
+                 |                         |
+           Tenant A / mq0            Tenant B / mq1
+            P2MP routing              P2MP routing
+             /     \                       |
+         Client A Client B              Client C
+           mq0      mq0                  mq0
+        (each Client can use validated MPQUIC WAN paths)
+~~~
 
-The tunnel carries **IPv4 and IPv6 packets** in MASQUE CONNECT-ETHERNET DATAGRAMs. It is a **routed L3 VPN**: FRRouting or Linux can provide IP routes, but mqvpn does not configure OSPF/BGP for you or bridge Ethernet broadcasts between sites.
+Each tenant owns a TUN and a peer-authorization map that selects the authenticated Client session for each destination prefix. **This is a routed L3 VPN, not an Ethernet bridge.** Kernel routes and optional FRRouting determine how packets reach the VPN; mqvpn does not configure OSPF, BGP, firewalls or VRFs.
 
-### At a glance
+## Capabilities and platform scope
 
-| Feature | What to expect |
+| Area | Implemented behavior and boundary |
 | --- | --- |
-| Encrypted transport | HTTP/3 over QUIC, TLS 1.3, mTLS certificate-chain validation, per-instance CN peer identity and optional CRL checks |
-| Multi-WAN | Ordered, validated MPQUIC paths; `round_robin` or connection-wide `low_latency` scheduling |
-| Server HA ingress | Optional local Server readiness probe; Keepalived UDP VIP failover or HAProxy TLS/TCP backend balancing, with no Client HA settings |
-| QoS | Separate realtime, assured and best-effort queues (4:2:1 weighted service) |
-| Sticky voice | Optional single-WAN QUIC companion for SIP/DSCP EF, with WAN failover |
-| Routing | Per-peer allowed destination prefixes; optional server-pushed routes and DNS; external FRR for dynamic routing |
-| Fallback | Optional TLS/TCP transport if the *initial* QUIC handshake times out |
-| Linux integration | Managed TUN, optional embedded TCX MSS clamp, optional statistics-only XDP |
+| Security and tenancy | TLS 1.3 mTLS; instance-local certificate checks, explicit Client certificate-CN/Peer authorization and optional CRLs; distinct SNI identities for multiple tenants |
+| Transport | HTTP/3 over QUIC, ordered validated MPQUIC paths; connection-wide `round_robin` or `low_latency` scheduling |
+| Routing | P2MP destination ownership, optional authenticated route/DNS pushes; Linux forwarding and FRR are external |
+| QoS and voice | Realtime/assured/best-effort queues (4:2:1); optional separately authenticated single-WAN SIP/DSCP-EF sticky companion |
+| TCP alternative | Optional single-WAN TLS/TCP, either explicitly selected or used after **initial** QUIC handshake timeout |
+| Linux data plane | Managed TUN, optional embedded TCX MSS clamp and counters, optional statistics-only XDP |
+| Server availability | Local readiness and external VRRP/Keepalived or HAProxy ingress patterns; **no deployed distributed peer/lease state or seamless QUIC takeover** |
+| Platforms | **Server: Linux only. Client: fully operational on Linux.** Windows binary/Wintun components do not yet provide a working VPN session; macOS/Android only compile shared core |
 
-**Important limits:** Assured and best-effort traffic share the same MPQUIC connection-wide WAN scheduler; the QoS queue does not choose an independent WAN for each packet. Sticky voice is traffic-class affinity, **not per-call** path pinning. The XDP program does **not** implement AF_XDP zero-copy, and TCP fallback is single-WAN. See [QoS and path selection](docs/qos-queues.md) and [limitations](#limits-and-security).
+mqvpn configuration has **no fixed 8-WAN limit**. The current MPQUIC dependency caps **simultaneously active paths at 64**; real underlay resources and policy routing can impose tighter limits. See [Client WAN configuration](docs/client-config.md).
 
-## Try it in a Linux lab
+## Quick start on Linux
 
-You need **Linux**, **Go 1.27.4** (see `go.mod`), and `/dev/net/tun`. Building the Go binaries does not require Clang, libbpf, or CGO; the optional eBPF objects are already embedded.
+Requirements: **Go 1.27.4** (see [go.mod](go.mod)), Linux `/dev/net/tun`, and network administration privileges for running the VPN. Go builds use `CGO_ENABLED=0` and bundled eBPF objects, so building the binaries does not require Clang or libbpf.
 
-```bash
+~~~bash
 make release
-# Creates bin/mqvpn-server and bin/mqvpn-client
-```
+# Produces bin/mqvpn-server and bin/mqvpn-client
+~~~
 
-To verify a real encrypted server/client tunnel in **isolated Linux network namespaces**, install `iproute2`, `iputils-ping`, OpenSSL and Python 3, then run:
+For your **first deployment**, follow [the two-host guide](docs/getting-started.md) to generate *lab-only* certificates, authorize a Client CN and create the Server/Client YAML. Then:
 
-```bash
-sudo bash tests/integration/overlay-netns.sh udp
-```
+~~~bash
+# Linux Server
+./bin/mqvpn-server validate --config /etc/mqvpn/server.yaml
+sudo ./bin/mqvpn-server --config /etc/mqvpn/server.yaml
 
-This test needs root or the appropriate Linux network capabilities. It creates test-only interfaces, certificates and namespaces and cleans them up. It is **not** a production deployment.
+# Another Linux host
+sudo ./bin/mqvpn-client --config /etc/mqvpn/client.yaml
+~~~
 
-For the complete reproducible integration scenario (including kernel TUN/TCX, encrypted WAN captures, VoIP and five-site simultaneous BGP/OSPF), use `sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh` after installing its Linux/FRR/Clang prerequisites. The scenario runs focused two-site fixtures and one shared five-site multi-WAN topology.
-
-For a two-host deployment, continue with the [step-by-step setup guide](docs/getting-started.md). It covers certificates, authorized peer identities, Server/Client YAML, validation, connection and a first ping. Use a trusted CA and protected keys in production—not the generated demo certificates.
+Check `mq0` and traffic using `ip addr`, `ip route get` and `ping` as shown in the guide. The Client reconnects by default; a reconnect creates a new authenticated session rather than migrating an existing one.
 
 ## Find the right guide
 
-| I want to… | Read |
+| Goal | Where to read |
 | --- | --- |
-| Set up my first server and client | [Get started](docs/getting-started.md) |
-| Configure tenants, peer routes, leases, DNS or reload | [Server configuration](docs/server-config.md) |
-| Configure a client or choose 1–8 WANs | [Client configuration](docs/client-config.md) and [Server WAN addresses](docs/server-multiwan.md) |
-| Prioritize traffic or keep voice on one WAN | [QoS queues](docs/qos-queues.md) and [Sticky SIP/RTP](docs/voip-sticky.md) |
-| Choose latency-aware MPQUIC or TCP fallback | [Path scheduling](docs/multipath-low-latency.md) and [TCP fallback](docs/tcp-fallback.md) |
-| Run five-site BGP/OSPF tests | [Five-site routing lab](docs/five-site-routing.md) |
-| Diagnose connectivity, MTU, TLS or route problems | [Operations and troubleshooting](docs/operations.md) |
-| Understand internals or run other tests | [Documentation index](docs/README.md) |
+| Establish a first tunnel | [Getting started](docs/getting-started.md) |
+| Configure tenants, TLS, Client addresses and routes | [Server configuration](docs/server-config.md) · [Client configuration](docs/client-config.md) |
+| Configure WAN paths, VRFs or packet sizes | [Server multi-WAN](docs/server-multiwan.md) · [VRF isolation](docs/overlapping-subnets-vrf.md) · [MTU/MSS](docs/mtu-mss.md) |
+| Choose scheduling, QoS, voice affinity or TCP backup | [MPQUIC scheduling](docs/multipath-low-latency.md) · [QoS](docs/qos-queues.md) · [Sticky voice](docs/voip-sticky.md) · [TCP fallback](docs/tcp-fallback.md) |
+| Plan ingress failover or understand cluster limits | [Server HA](docs/high-availability.md) · [Cluster state design](docs/ha-cluster-state-sync.md) |
+| Troubleshoot or explore internals | [Operations](docs/operations.md) · [Runtime architecture](docs/runtime-architecture.md) · [Source layout](docs/project-layout.md) |
+
+**[Full documentation index](docs/README.md):** deployment, transport, Linux data plane, HA design, platform support and tests.
 
 ## Build and validate
 
-```bash
-make release      # Build Linux server and client, CGO_ENABLED=0
-make test         # Unit tests
-make fmt-check    # Check Go formatting
-make mod-check    # Check Go module integrity
-```
+From the repository root:
 
-After preparing an authorized Server configuration:
+~~~bash
+make release                           # Linux executables
+make test                              # Go package tests
+make fmt-check                         # Go formatting
+make mod-check                         # Module integrity
+python3 scripts/check-doc-links.py     # Markdown links and heading anchors
+~~~
 
-```bash
-./bin/mqvpn-server validate --config /etc/mqvpn/server.yaml
-sudo ./bin/mqvpn-server --config /etc/mqvpn/server.yaml
-# On another host: sudo ./bin/mqvpn-client --config /etc/mqvpn/client.yaml
-```
+A basic authenticated tunnel can be tested in isolated Linux namespaces with root privileges, `iproute2`, `iputils-ping`, OpenSSL and Python 3:
 
-The client reconnects by default. Server and Client logs go to stderr; use `--log-level debug` or `--log-format json` when investigating a problem. The Server uses YAML; the Client accepts YAML and CLI overrides.
+~~~bash
+sudo bash tests/integration/overlay-netns.sh udp
+~~~
 
-See [test coverage](docs/README.md#testing) for real TUN/WAN, encrypted packet capture, four-WAN, QoS, VoIP, and randomized five-site OSPF/BGP tests.
+For the **complete reproducible Linux integration scenario**, first install the additional kernel/FRRouting, networking, `tshark` and Clang dependencies described under [Testing](docs/README.md#testing), then run:
+
+~~~bash
+sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh
+~~~
+
+This single fail-fast entrypoint covers TUN/TCX, encrypted WAN captures, WAN impairments, TCP/UDP/VoIP and a persistent **five-site BGP+OSPF** topology. Isolated two-site fixtures exercise mutually incompatible impairment conditions. [GitHub Actions](.github/workflows/go.yml) also checks race detection, portable Client builds and eBPF object reproducibility.
 
 ## Limits and security
 
-- Every Client must pass tenant-isolated mTLS validation and match a configured Peer certificate CN/identity. A trusted CA alone does **not** grant VPN access. Optional CRLs enforce certificate revocation.
-- Configure Linux forwarding, firewall rules, source-policy routing, VRFs and FRRouting **externally** when your topology needs them. Peer destination mapping is **not** a Linux kernel route.
-- A Server can host multiple tenants on one UDP port only when each tenant has a distinct, certificate-verified SNI identity. A single instance may alternatively use a certificate-verified IP SAN.
-- The default TUN MTU is selected from available WANs and capped at 1400; it does not guarantee a particular end-to-end path MTU.
-- Automatic TLS/TCP fallback only follows an **initial QUIC handshake timeout**. It never silently downgrades after authentication failure.
-- CI validates functionality in controlled Linux environments; it is not a throughput, MOS, zero-loss or production-security certification.
-
-For configuration boundaries and operational caveats, use [the documentation index](docs/README.md) rather than copying example credentials into a real deployment.
+- A trusted CA **does not automatically authorize a Client**. The verified certificate identity must match tenant-specific Peer authorization; optional CRLs enforce revocation.
+- Peer YAML `routes` map destinations to authenticated sessions; they are **not Linux kernel routes**. Administrators own forwarding, firewalls, policy routing, VRFs and FRR.
+- QoS priority **does not select an independent WAN per class**. Sticky voice pins a traffic class, **not an individual call**, through a single-WAN companion.
+- Automatic TCP fallback occurs only after an **initial QUIC handshake timeout**, never after authentication failure, and uses one WAN.
+- Server-local health checks and external VIP/ingress failover do **not** provide shared IP leases, cross-Server ownership or seamless QUIC/TLS session takeover.
+- Auto-selected TUN MTU is not an end-to-end path MTU guarantee. Validate transport size budgets and negotiated fragmentation for your paths.
+- CI is a reproducible lab regression, **not** a throughput, voice-quality, zero-loss or production-security certification. Never deploy lab CA/private keys or test TLS traffic-secret logs.
 
 ## Project status and help
 
-This repository builds two Go executables from `cmd/mqvpn-server` and `cmd/mqvpn-client` and keeps its Linux integration tests under `tests/integration`. The Go source is organized by **Client**, **Linux-only Server**, and **shared session protocols**; see [project layout](docs/project-layout.md). The [GitHub Actions workflow](.github/workflows/go.yml) tests builds, race detection, eBPF, and encrypted multi-site forwarding on pull requests.
+The entrypoints are `cmd/mqvpn-server` and `cmd/mqvpn-client`. Code is separated into Client, Linux Server and shared protocol/data-plane packages under `internal/`; see [project layout](docs/project-layout.md) and [platform support](docs/client-platforms.md).
 
-For an unexpected behavior, start with [Troubleshooting](docs/operations.md) and the [GitHub issue tracker](https://github.com/roseshot/mqvpn-ebpf/issues). Reports should include the version/commit, Linux kernel, relevant sanitized logs and reproduction steps; **never post private keys or TLS key logs**.
+Start with [symptom-based troubleshooting](docs/operations.md#troubleshooting-by-symptom), then file a [GitHub issue](https://github.com/roseshot/mqvpn-ebpf/issues) with the commit/version, Linux kernel, reproduction steps and **sanitized** logs. Never publish private keys, passwords, decrypted captures or TLS key logs.

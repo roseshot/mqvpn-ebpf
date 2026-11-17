@@ -1,8 +1,25 @@
 # Configure the Server
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** **Server configuration reference** for current YAML, tenant isolation, mTLS peer authorization and optional settings. Peer destination ownership does not replace Linux kernel routing.
+
 The Server is an authenticated **P2MP routing hub**. It owns the UDP/QUIC listener, one Linux TUN per VPN instance and a map from allowed destination prefixes to authorized peer sessions.
 
 If you are setting up your first instance, follow [Get started](getting-started.md) before adding options. This page explains the Server's current YAML configuration and its security boundaries.
+
+## On this page
+
+- [Basic configuration](#basic-configuration)
+- [Authorize peers and destination prefixes](#authorize-peers-and-destination-prefixes)
+- [Choose a Client certificate revocation policy](#choose-a-client-certificate-revocation-policy)
+- [Optional: assign tunnel IPs automatically](#optional-assign-tunnel-ips-automatically)
+- [Optional: advertise routes and DNS](#optional-advertise-routes-and-dns)
+- [Optional: Server-side high availability](#optional-server-side-high-availability)
+- [Optional: multiple physical WANs](#optional-multiple-physical-wans)
+- [Other Server choices](#other-server-choices)
+- [Reload and observe](#reload-and-observe)
+- [Production checklist](#production-checklist)
 
 ## Basic configuration
 
@@ -223,3 +240,9 @@ Removing a peer authorization revokes the matching peer session; the Hub protect
 3. Configure Linux firewall, forwarding and routing according to the intended trust boundaries.
 4. Validate YAML **before** starting; confirm the Server certificate SAN matches the Client's configured Server name.
 5. Test UDP reachability, backup transport if enabled, MTU and reconnect behavior in the target network.
+
+## Related documentation
+
+- [Client configuration](client-config.md)
+- [Operations and troubleshooting](operations.md)
+- [HA deployment](high-availability.md)

@@ -1,6 +1,20 @@
 # Operate and troubleshoot mqvpn
 
+[Documentation index](README.md) · [Deploy and operate](README.md#deploy-and-operate)
+
+> **Document scope:** **Operational runbook** for a deployed Linux VPN. Diagnose underlay, authentication, overlay and LAN routing independently before changing configuration.
+
 This guide is for a Linux operator who has deployed a Server and at least one Client. If you have not yet established a session, start with the [two-host tutorial](getting-started.md).
+
+## On this page
+
+- [Know what each layer is responsible for](#know-what-each-layer-is-responsible-for)
+- [Check a running session](#check-a-running-session)
+- [Troubleshooting by symptom](#troubleshooting-by-symptom)
+- [Verify multi-WAN paths](#verify-multi-wan-paths)
+- [Troubleshoot routing and FRR](#troubleshoot-routing-and-frr)
+- [Reload without losing track of state](#reload-without-losing-track-of-state)
+- [Run a controlled regression](#run-a-controlled-regression)
 
 ## Know what each layer is responsible for
 
@@ -108,13 +122,18 @@ Read the Server's logs after the reload request. Peer authorization and instance
 ```bash
 make test
 make release
-# Root + Linux networking tools required:
-sudo bash tests/integration/overlay-netns.sh udp
-# FRR official packages + root required:
-sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh bgp
-sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh ospf
+# Full privileged Linux/TUN/eBPF/QUIC/FRR scenario (requires test dependencies):
+sudo env WAN_SEED=20261115 bash tests/integration/scenario.sh
 ```
 
-The five-site script sets up temporary FRR namespaced configuration files and checks for clean `vtysh` output. A missing `vtysh.conf` warning, a non-Established BGP peer, a non-Full OSPF neighbor or an absent FIB route must fail the test—not be silenced.
+For targeted diagnosis only, run `sudo bash tests/integration/overlay-netns.sh udp` or `sudo env WAN_SEED=20261115 bash tests/integration/five-site-frr.sh bgp` / `ospf`. These focused commands do not replace the complete scenario.
+
+The five-site phase sets up temporary FRR namespaced configuration files and checks for clean `vtysh` output. A missing `vtysh.conf` warning, a non-Established BGP peer, a non-Full OSPF neighbor or an absent FIB route must fail the test—not be silenced.
 
 For test prerequisites and coverage, see [Overlay tests](overlay-tests.md), [Five-site FRR](five-site-routing.md), and [Wire confidentiality](wire-encryption-tests.md).
+
+## Related documentation
+
+- [Getting started](getting-started.md)
+- [Server configuration](server-config.md)
+- [Full integration scenario](five-site-routing.md)

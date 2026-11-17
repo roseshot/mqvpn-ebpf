@@ -1,5 +1,9 @@
 # MPQUIC path scheduling and four-WAN VoIP latency regression
 
+[Documentation index](README.md) · [Transport, routing, and traffic policy](README.md#transport-routing-and-traffic-policy)
+
+> **Document scope:** **Transport policy guide** for connection-wide MPQUIC scheduling. `low_latency` is a path selection heuristic, not per-RTP-flow steering or an SLA.
+
 `mqvpn-ebpf` supports two **connection-wide** MPQUIC path policies:
 
 | Policy | Config value | Effect |
@@ -96,3 +100,9 @@ RTT measurements, not a guarantee of seamless service on every type
 of link outage. Measure real-world RTP QoE before deploying it by
 default. TLS, MPQUIC authentication, QUIC wire format and TUN frame
 encapsulation are unchanged.
+
+## Related documentation
+
+- [Client configuration](client-config.md)
+- [Server multi-WAN](server-multiwan.md)
+- [Sticky voice](voip-sticky.md)
