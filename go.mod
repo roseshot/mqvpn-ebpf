@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/godbus/dbus/v5 v5.2.4
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.5
 	github.com/qoke/mp-quic-go v0.3.1
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/sys v0.47.0
